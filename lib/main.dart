@@ -212,44 +212,87 @@ class Store {
   }
 
   Future<bool> register(
-    String name,
-    String gamerTag,
-    String password,
-  ) async {
-    if (players.any(
-      (p) => p.gamerTag.toLowerCase() == gamerTag.toLowerCase(),
-    )) {
+  String name,
+  String gamerTag,
+  String password,
+) async {
+  try {
+    final cleanTag = gamerTag.trim();
+
+    final email = cleanTag
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9._-]'), '_') +
+        '@chibbyball.app';
+
+    final response = await supabase.auth.signUp(
+      email: email,
+      password: password,
+      data: {
+        'full_name': name.trim(),
+        'gamer_tag': cleanTag,
+      },
+    );
+
+    final user = response.user;
+
+    if (user == null) {
       return false;
     }
 
-    players.add(
-      Player(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        name: name,
-        gamerTag: gamerTag,
-        password: password,
-      ),
+    current = Player(
+      id: user.id,
+      name: name.trim(),
+      gamerTag: cleanTag,
+      password: '',
+      admin: false,
     );
 
-    await save();
     return true;
-  }
+  } catch (_) {
+    return false;
+    Future<Player?> login(
+  String gamerTag,
+  String password,
+) async {
+  try {
+    final cleanTag = gamerTag.trim();
 
-  Player? login(String gamerTag, String password) {
-    try {
-      final p = players.firstWhere(
-        (p) =>
-            p.gamerTag.toLowerCase() == gamerTag.toLowerCase() &&
-            p.password == password,
-      );
-      current = p;
-      return p;
-    } catch (_) {
+    final email = cleanTag
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9._-]'), '_') +
+        '@chibbyball.app';
+
+    final response = await supabase.auth.signInWithPassword(
+      email: email,
+      password: password,
+    );
+
+    final user = response.user;
+
+    if (user == null) {
       return null;
     }
+
+    final profile = await supabase
+        .from('profiles')
+        .select()
+        .eq('id', user.id)
+        .single();
+
+    current = Player(
+      id: user.id,
+      name: profile['full_name'] ?? '',
+      gamerTag: profile['gamer_tag'] ?? cleanTag,
+      password: '',
+      admin: profile['role'] == 'admin',
+    );
+
+    return current;
+  } catch (_) {
+    return null;
   }
 
-  void generateFixtures() {
+   void generateFixtures() {
     if (players.length < 3) return;
 
     matches.clear();
@@ -364,25 +407,30 @@ class _LoginPageState extends State<LoginPage> {
     Store.instance.load();
   }
 
-  void login() {
-    final p = Store.instance.login(
-      tag.text.trim(),
-      password.text,
-    );
+  Future<void> login() async {
+  final p = await Store.instance.login(
+    tag.text.trim(),
+    password.text,
+  );
 
-    if (p == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid gamer tag or password')),
-      );
-      return;
-    }
+  if (!mounted) return;
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const HomePage()),
+  if (p == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Invalid gamer tag or password'),
+      ),
     );
+    return;
   }
 
+  Navigator.pushReplacement(
+    context,
+    MaterialPageRoute(
+      builder: (_) => const HomePage(),
+    ),
+  );
+  }7
   @override
   Widget build(BuildContext context) {
     return Scaffold(
