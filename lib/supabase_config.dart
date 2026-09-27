@@ -2,7 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 const String supabaseUrl = 'https://cupiklbeuxdjwdkojfw.supabase.co';
 
-const String supabasePublishableKey = 'sb_publishable_oa2PLogsXsMEGlxQ2tBLKA_1L0AffYV'
+const String supabasePublishableKey = 'sb_publishable_oa2PLogsXsMEGlxQ2tBLKA_1L0AffYV';
 
 final SupabaseClient supabase = SupabaseClient(
   supabaseUrl,
