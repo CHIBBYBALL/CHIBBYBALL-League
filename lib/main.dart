@@ -22,6 +22,7 @@ class ChibbyballApp extends StatelessWidget {
         colorSchemeSeed: Colors.blue,
         useMaterial3: true,
       ),
+// CHIBBYBALL production build      
       home: const LoginPage(),
     );
   }
