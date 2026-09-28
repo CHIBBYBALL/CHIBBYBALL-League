@@ -17,7 +17,6 @@ Future<void> main() async {
   );
 
   await Store.instance.load();
-
   runApp(const ChibbyballApp());
 }
 
@@ -44,7 +43,7 @@ class ChibbyballApp extends StatelessWidget {
 }
 
 // ============================================================
-// PLAYER
+// MODELS
 // ============================================================
 
 class Player {
@@ -53,35 +52,27 @@ class Player {
   final String gamerTag;
   final bool admin;
 
-  Player({
+  const Player({
     required this.id,
     required this.name,
     required this.gamerTag,
     this.admin = false,
   });
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'gamerTag': gamerTag,
-      'admin': admin,
-    };
-  }
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'gamerTag': gamerTag,
+        'admin': admin,
+      };
 
-  factory Player.fromJson(Map<String, dynamic> json) {
-    return Player(
-      id: json['id']?.toString() ?? '',
-      name: json['name']?.toString() ?? '',
-      gamerTag: json['gamerTag']?.toString() ?? '',
-      admin: json['admin'] == true,
-    );
-  }
+  factory Player.fromJson(Map<String, dynamic> json) => Player(
+        id: json['id']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        gamerTag: json['gamerTag']?.toString() ?? '',
+        admin: json['admin'] == true,
+      );
 }
-
-// ============================================================
-// MATCH
-// ============================================================
 
 class MatchItem {
   final String id;
@@ -91,16 +82,12 @@ class MatchItem {
 
   int? homeScore;
   int? awayScore;
-
   int? homeClaimHome;
   int? homeClaimAway;
-
   int? awayClaimHome;
   int? awayClaimAway;
-
   String? homeProof;
   String? awayProof;
-
   String status;
 
   MatchItem({
@@ -119,41 +106,37 @@ class MatchItem {
     this.status = 'Scheduled',
   });
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'homeId': homeId,
-      'awayId': awayId,
-      'round': round,
-      'homeScore': homeScore,
-      'awayScore': awayScore,
-      'homeClaimHome': homeClaimHome,
-      'homeClaimAway': homeClaimAway,
-      'awayClaimHome': awayClaimHome,
-      'awayClaimAway': awayClaimAway,
-      'homeProof': homeProof,
-      'awayProof': awayProof,
-      'status': status,
-    };
-  }
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'homeId': homeId,
+        'awayId': awayId,
+        'round': round,
+        'homeScore': homeScore,
+        'awayScore': awayScore,
+        'homeClaimHome': homeClaimHome,
+        'homeClaimAway': homeClaimAway,
+        'awayClaimHome': awayClaimHome,
+        'awayClaimAway': awayClaimAway,
+        'homeProof': homeProof,
+        'awayProof': awayProof,
+        'status': status,
+      };
 
-  factory MatchItem.fromJson(Map<String, dynamic> json) {
-    return MatchItem(
-      id: json['id']?.toString() ?? '',
-      homeId: json['homeId']?.toString() ?? '',
-      awayId: json['awayId']?.toString() ?? '',
-      round: (json['round'] as num?)?.toInt() ?? 1,
-      homeScore: (json['homeScore'] as num?)?.toInt(),
-      awayScore: (json['awayScore'] as num?)?.toInt(),
-      homeClaimHome: (json['homeClaimHome'] as num?)?.toInt(),
-      homeClaimAway: (json['homeClaimAway'] as num?)?.toInt(),
-      awayClaimHome: (json['awayClaimHome'] as num?)?.toInt(),
-      awayClaimAway: (json['awayClaimAway'] as num?)?.toInt(),
-      homeProof: json['homeProof']?.toString(),
-      awayProof: json['awayProof']?.toString(),
-      status: json['status']?.toString() ?? 'Scheduled',
-    );
-  }
+  factory MatchItem.fromJson(Map<String, dynamic> json) => MatchItem(
+        id: json['id']?.toString() ?? '',
+        homeId: json['homeId']?.toString() ?? '',
+        awayId: json['awayId']?.toString() ?? '',
+        round: (json['round'] as num?)?.toInt() ?? 1,
+        homeScore: (json['homeScore'] as num?)?.toInt(),
+        awayScore: (json['awayScore'] as num?)?.toInt(),
+        homeClaimHome: (json['homeClaimHome'] as num?)?.toInt(),
+        homeClaimAway: (json['homeClaimAway'] as num?)?.toInt(),
+        awayClaimHome: (json['awayClaimHome'] as num?)?.toInt(),
+        awayClaimAway: (json['awayClaimAway'] as num?)?.toInt(),
+        homeProof: json['homeProof']?.toString(),
+        awayProof: json['awayProof']?.toString(),
+        status: json['status']?.toString() ?? 'Scheduled',
+      );
 }
 
 // ============================================================
@@ -162,7 +145,6 @@ class MatchItem {
 
 class Store {
   static final Store instance = Store._();
-
   Store._();
 
   final SupabaseClient supabase = Supabase.instance.client;
@@ -171,10 +153,6 @@ class Store {
   final List<MatchItem> matches = [];
 
   Player? current;
-
-  // ----------------------------------------------------------
-  // LOAD LOCAL MATCH DATA
-  // ----------------------------------------------------------
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -185,32 +163,22 @@ class Store {
     if (savedPlayers != null) {
       try {
         final decoded = jsonDecode(savedPlayers) as List;
-
         players
           ..clear()
-          ..addAll(
-            decoded.map(
-              (item) => Player.fromJson(
-                Map<String, dynamic>.from(item),
-              ),
-            ),
-          );
+          ..addAll(decoded.map(
+            (e) => Player.fromJson(Map<String, dynamic>.from(e)),
+          ));
       } catch (_) {}
     }
 
     if (savedMatches != null) {
       try {
         final decoded = jsonDecode(savedMatches) as List;
-
         matches
           ..clear()
-          ..addAll(
-            decoded.map(
-              (item) => MatchItem.fromJson(
-                Map<String, dynamic>.from(item),
-              ),
-            ),
-          );
+          ..addAll(decoded.map(
+            (e) => MatchItem.fromJson(Map<String, dynamic>.from(e)),
+          ));
       } catch (_) {}
     }
   }
@@ -220,80 +188,49 @@ class Store {
 
     await prefs.setString(
       'local_players',
-      jsonEncode(
-        players.map((player) => player.toJson()).toList(),
-      ),
+      jsonEncode(players.map((e) => e.toJson()).toList()),
     );
 
     await prefs.setString(
       'local_matches',
-      jsonEncode(
-        matches.map((match) => match.toJson()).toList(),
-      ),
+      jsonEncode(matches.map((e) => e.toJson()).toList()),
     );
   }
 
   // ----------------------------------------------------------
-  // PLAYER HELPERS
-  // ----------------------------------------------------------
-
-  Player? findPlayer(String id) {
-    for (final player in players) {
-      if (player.id == id) {
-        return player;
-      }
-    }
-
-    return null;
-  }
-
-  String playerName(String id) {
-    final player = findPlayer(id);
-
-    if (player == null) {
-      return 'Unknown Player';
-    }
-
-    return player.gamerTag;
-  }
-
-  // ----------------------------------------------------------
-  // REFRESH PLAYERS FROM SUPABASE
+  // DATABASE
   // ----------------------------------------------------------
 
   Future<void> refreshPlayers() async {
-    try {
-      final data = await supabase
-          .from('profiles')
-          .select()
-          .order('created_at');
+    final data = await supabase
+        .from('profiles')
+        .select('id, full_name, gamer_tag, role, created_at')
+        .order('created_at');
 
-      players
-        ..clear()
-        ..addAll(
-          (data as List).map(
-            (item) {
-              final row = Map<String, dynamic>.from(item);
-
-              return Player(
-                id: row['id'].toString(),
-                name: row['full_name']?.toString() ?? '',
-                gamerTag: row['gamer_tag']?.toString() ?? '',
-                admin: row['role']?.toString() == 'admin',
-              );
-            },
-          ),
+    players
+      ..clear()
+      ..addAll((data as List).map((item) {
+        final row = Map<String, dynamic>.from(item);
+        return Player(
+          id: row['id'].toString(),
+          name: row['full_name']?.toString() ?? '',
+          gamerTag: row['gamer_tag']?.toString() ?? '',
+          admin: row['role']?.toString().toLowerCase() == 'admin',
         );
+      }));
 
-      await save();
-    } catch (_) {}
+    await save();
   }
 
-  // ----------------------------------------------------------
-  // REGISTER
-  // ----------------------------------------------------------
+  String _emailFromGamerTag(String gamerTag) {
+    final safe = gamerTag
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9._-]'), '_');
+    return '$safe@chibbyball.app';
+  }
 
-  Future<bool> register(
+  Future<String?> register(
     String name,
     String gamerTag,
     String password,
@@ -302,10 +239,26 @@ class Store {
       final cleanName = name.trim();
       final cleanTag = gamerTag.trim();
 
-      if (cleanName.isEmpty ||
-          cleanTag.isEmpty ||
-          password.length < 6) {
-        return false;
+      if (cleanName.isEmpty) {
+        return 'Full name is required.';
+      }
+      if (cleanTag.isEmpty) {
+        return 'Gamer tag is required.';
+      }
+      if (password.length < 6) {
+        return 'Password must be at least 6 characters.';
+      }
+
+      // Check the public profile first so the user gets a clear
+      // duplicate-gamer-tag message instead of a generic failure.
+      final existing = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('gamer_tag', cleanTag)
+          .maybeSingle();
+
+      if (existing != null) {
+        return 'Gamer tag "$cleanTag" is already in use.';
       }
 
       final email = _emailFromGamerTag(cleanTag);
@@ -320,9 +273,25 @@ class Store {
       );
 
       final user = response.user;
-
       if (user == null) {
-        return false;
+        return 'Supabase did not create the account.';
+      }
+
+      // Keep the profile in sync even when the project does not have
+      // an automatic auth.users -> profiles trigger.
+      try {
+        await supabase.from('profiles').upsert(
+          {
+            'id': user.id,
+            'full_name': cleanName,
+            'gamer_tag': cleanTag,
+            'role': 'player',
+          },
+          onConflict: 'id',
+        );
+      } on PostgrestException catch (e) {
+        // If profile RLS/schema is the issue, expose the exact message.
+        return 'Profile error: ${e.message}';
       }
 
       current = Player(
@@ -331,22 +300,33 @@ class Store {
         gamerTag: cleanTag,
       );
 
-      await refreshPlayers();
+      // Do not fail registration merely because the player list cannot
+      // be refreshed immediately.
+      try {
+        await refreshPlayers();
+      } catch (_) {
+        players.removeWhere((p) => p.id == user.id);
+        players.add(current!);
+        await save();
+      }
 
-      return true;
-    } catch (_) {
-      return false;
+      // If email confirmation is enabled, Supabase may create the user
+      // without a session. Tell the user exactly what happened.
+      if (response.session == null) {
+        return 'Account created. Email confirmation is enabled in Supabase, so sign in after confirming the email.';
+      }
+
+      return null;
+    } on AuthException catch (e) {
+      return 'Authentication error: ${e.message}';
+    } on PostgrestException catch (e) {
+      return 'Database error: ${e.message}';
+    } catch (e) {
+      return 'Registration error: $e';
     }
   }
 
-  // ----------------------------------------------------------
-  // LOGIN
-  // ----------------------------------------------------------
-
-  Future<Player?> login(
-    String gamerTag,
-    String password,
-  ) async {
+  Future<Player?> login(String gamerTag, String password) async {
     try {
       final cleanTag = gamerTag.trim();
 
@@ -362,25 +342,35 @@ class Store {
       );
 
       final user = response.user;
-
       if (user == null) {
         return null;
       }
 
       final profile = await supabase
           .from('profiles')
-          .select()
+          .select('id, full_name, gamer_tag, role')
           .eq('id', user.id)
-          .single();
+          .maybeSingle();
+
+      if (profile == null) {
+        return Player(
+          id: user.id,
+          name: user.userMetadata?['full_name']?.toString() ?? '',
+          gamerTag:
+              user.userMetadata?['gamer_tag']?.toString() ?? cleanTag,
+        );
+      }
 
       current = Player(
         id: user.id,
         name: profile['full_name']?.toString() ?? '',
         gamerTag: profile['gamer_tag']?.toString() ?? cleanTag,
-        admin: profile['role']?.toString() == 'admin',
+        admin: profile['role']?.toString().toLowerCase() == 'admin',
       );
 
-      await refreshPlayers();
+      try {
+        await refreshPlayers();
+      } catch (_) {}
 
       return current;
     } catch (_) {
@@ -388,51 +378,37 @@ class Store {
     }
   }
 
-  String _emailFromGamerTag(String gamerTag) {
-    return '${gamerTag.toLowerCase().replaceAll(
-          RegExp(r'[^a-z0-9._-]'),
-          '_',
-        )}@chibbyball.app';
-  }
-
-  // ----------------------------------------------------------
-  // LOGOUT
-  // ----------------------------------------------------------
-
   Future<void> logout() async {
     try {
       await supabase.auth.signOut();
     } catch (_) {}
-
     current = null;
   }
 
   // ----------------------------------------------------------
-  // FIXTURE GENERATION
+  // LOCAL LEAGUE
   // ----------------------------------------------------------
 
-  void generateFixtures() {
-    final activePlayers = players
-        .where((player) => !player.admin)
-        .toList();
-
-    if (activePlayers.length < 2) {
-      return;
+  Player? findPlayer(String id) {
+    for (final player in players) {
+      if (player.id == id) return player;
     }
+    return null;
+  }
+
+  String playerName(String id) => findPlayer(id)?.gamerTag ?? 'Unknown Player';
+
+  void generateFixtures() {
+    final activePlayers = players.where((p) => !p.admin).toList();
+    if (activePlayers.length < 2) return;
 
     matches.clear();
 
-    final ids = activePlayers
-        .map((player) => player.id)
-        .toList();
-
-    if (ids.length.isOdd) {
-      ids.add('BYE');
-    }
+    final ids = activePlayers.map((p) => p.id).toList();
+    if (ids.length.isOdd) ids.add('BYE');
 
     final total = ids.length;
     final rounds = total - 1;
-
     final rotation = List<String>.from(ids);
 
     for (int round = 0; round < rounds; round++) {
@@ -440,33 +416,21 @@ class Store {
         final first = rotation[i];
         final second = rotation[total - 1 - i];
 
-        if (first == 'BYE' || second == 'BYE') {
-          continue;
-        }
-
-        final home = round.isEven ? first : second;
-        final away = round.isEven ? second : first;
+        if (first == 'BYE' || second == 'BYE') continue;
 
         matches.add(
           MatchItem(
             id: '${round + 1}-${i + 1}-${DateTime.now().microsecondsSinceEpoch}',
-            homeId: home,
-            awayId: away,
+            homeId: round.isEven ? first : second,
+            awayId: round.isEven ? second : first,
             round: round + 1,
           ),
         );
       }
 
-      rotation.insert(
-        1,
-        rotation.removeLast(),
-      );
+      rotation.insert(1, rotation.removeLast());
     }
   }
-
-  // ----------------------------------------------------------
-  // RESULT SUBMISSION
-  // ----------------------------------------------------------
 
   Future<void> submitResult({
     required MatchItem match,
@@ -479,19 +443,16 @@ class Store {
       match.homeClaimHome = homeScore;
       match.homeClaimAway = awayScore;
       match.homeProof = proofPath;
-    }
-
-    if (player.id == match.awayId) {
+    } else if (player.id == match.awayId) {
       match.awayClaimHome = homeScore;
       match.awayClaimAway = awayScore;
       match.awayProof = proofPath;
     }
 
-    final bothPlayersSubmitted =
-        match.homeProof != null &&
-        match.awayProof != null;
+    final bothSubmitted =
+        match.homeProof != null && match.awayProof != null;
 
-    if (!bothPlayersSubmitted) {
+    if (!bothSubmitted) {
       match.status = 'Awaiting Confirmation';
       await save();
       return;
@@ -512,15 +473,8 @@ class Store {
     await save();
   }
 
-  // ----------------------------------------------------------
-  // TABLE
-  // ----------------------------------------------------------
-
-  List<MatchItem> confirmedMatches() {
-    return matches
-        .where((match) => match.status == 'Confirmed')
-        .toList();
-  }
+  List<MatchItem> confirmedMatches() =>
+      matches.where((m) => m.status == 'Confirmed').toList();
 
   Map<String, Map<String, int>> buildTable() {
     final table = <String, Map<String, int>>{};
@@ -541,20 +495,15 @@ class Store {
     for (final match in confirmedMatches()) {
       final home = table[match.homeId];
       final away = table[match.awayId];
-
-      if (home == null || away == null) {
-        continue;
-      }
+      if (home == null || away == null) continue;
 
       final hs = match.homeScore ?? 0;
       final as = match.awayScore ?? 0;
 
       home['played'] = home['played']! + 1;
       away['played'] = away['played']! + 1;
-
       home['gf'] = home['gf']! + hs;
       home['ga'] = home['ga']! + as;
-
       away['gf'] = away['gf']! + as;
       away['ga'] = away['ga']! + hs;
 
@@ -583,7 +532,7 @@ class Store {
 }
 
 // ============================================================
-// LOGIN PAGE
+// LOGIN
 // ============================================================
 
 class LoginPage extends StatefulWidget {
@@ -596,7 +545,6 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final tagController = TextEditingController();
   final passwordController = TextEditingController();
-
   bool loading = false;
 
   Future<void> login() async {
@@ -606,22 +554,15 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    setState(() {
-      loading = true;
-    });
+    setState(() => loading = true);
 
     final player = await Store.instance.login(
       tagController.text.trim(),
       passwordController.text,
     );
 
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      loading = false;
-    });
+    if (!mounted) return;
+    setState(() => loading = false);
 
     if (player == null) {
       showMessage('Invalid gamer tag or password.');
@@ -630,16 +571,13 @@ class _LoginPageState extends State<LoginPage> {
 
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(
-        builder: (_) => const HomePage(),
-      ),
+      MaterialPageRoute(builder: (_) => const HomePage()),
     );
   }
 
   void showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -650,84 +588,68 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                const Icon(
-                  Icons.sports_soccer,
-                  size: 90,
-                  color: Colors.blue,
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  'CHIBBYBALL',
-                  style: TextStyle(
-                    fontSize: 34,
-                    fontWeight: FontWeight.bold,
+  Widget build(BuildContext context) => Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const Icon(Icons.sports_soccer,
+                      size: 90, color: Colors.blue),
+                  const SizedBox(height: 18),
+                  const Text('CHIBBYBALL',
+                      style:
+                          TextStyle(fontSize: 34, fontWeight: FontWeight.bold)),
+                  const Text('eFootball League'),
+                  const SizedBox(height: 40),
+                  TextField(
+                    controller: tagController,
+                    decoration: const InputDecoration(
+                      labelText: 'Gamer Tag',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.person),
+                    ),
                   ),
-                ),
-                const Text(
-                  'eFootball League',
-                  style: TextStyle(fontSize: 16),
-                ),
-                const SizedBox(height: 40),
-                TextField(
-                  controller: tagController,
-                  decoration: const InputDecoration(
-                    labelText: 'Gamer Tag',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.person),
+                  const SizedBox(height: 15),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Password',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.lock),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 15),
-                TextField(
-                  controller: passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Password',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.lock),
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: FilledButton(
+                      onPressed: loading ? null : login,
+                      child: loading
+                          ? const CircularProgressIndicator()
+                          : const Text('LOGIN'),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 22),
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: FilledButton(
-                    onPressed: loading ? null : login,
-                    child: loading
-                        ? const CircularProgressIndicator()
-                        : const Text('LOGIN'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () {
-                    Navigator.push(
+                  TextButton(
+                    onPressed: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => const RegisterPage(),
-                      ),
-                    );
-                  },
-                  child: const Text('Create Player Account'),
-                ),
-              ],
+                          builder: (_) => const RegisterPage()),
+                    ),
+                    child: const Text('Create Player Account'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-      ),
-    );
-  }
+      );
 }
 
 // ============================================================
-// REGISTER PAGE
+// REGISTER
 // ============================================================
 
 class RegisterPage extends StatefulWidget {
@@ -741,7 +663,6 @@ class _RegisterPageState extends State<RegisterPage> {
   final nameController = TextEditingController();
   final tagController = TextEditingController();
   final passwordController = TextEditingController();
-
   bool loading = false;
 
   Future<void> register() async {
@@ -756,28 +677,15 @@ class _RegisterPageState extends State<RegisterPage> {
       return;
     }
 
-    setState(() {
-      loading = true;
-    });
+    setState(() => loading = true);
 
-    final success = await Store.instance.register(
-      name,
-      tag,
-      password,
-    );
+    final error = await Store.instance.register(name, tag, password);
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
+    setState(() => loading = false);
 
-    setState(() {
-      loading = false;
-    });
-
-    if (!success) {
-      showMessage(
-        'Registration failed. Gamer tag may already be in use.',
-      );
+    if (error != null) {
+      showMessage(error);
       return;
     }
 
@@ -785,16 +693,13 @@ class _RegisterPageState extends State<RegisterPage> {
 
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(
-        builder: (_) => const HomePage(),
-      ),
+      MaterialPageRoute(builder: (_) => const HomePage()),
     );
   }
 
   void showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -806,52 +711,48 @@ class _RegisterPageState extends State<RegisterPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Player Registration'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          TextField(
-            controller: nameController,
-            decoration: const InputDecoration(
-              labelText: 'Full Name',
-              border: OutlineInputBorder(),
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Player Registration')),
+        body: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Full Name',
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
-          const SizedBox(height: 15),
-          TextField(
-            controller: tagController,
-            decoration: const InputDecoration(
-              labelText: 'Unique Gamer Tag',
-              border: OutlineInputBorder(),
+            const SizedBox(height: 15),
+            TextField(
+              controller: tagController,
+              decoration: const InputDecoration(
+                labelText: 'Unique Gamer Tag',
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
-          const SizedBox(height: 15),
-          TextField(
-            controller: passwordController,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Password',
-              border: OutlineInputBorder(),
+            const SizedBox(height: 15),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
-          const SizedBox(height: 25),
-          SizedBox(
-            height: 52,
-            child: FilledButton(
-              onPressed: loading ? null : register,
-              child: loading
-                  ? const CircularProgressIndicator()
-                  : const Text('REGISTER'),
+            const SizedBox(height: 25),
+            SizedBox(
+              height: 52,
+              child: FilledButton(
+                onPressed: loading ? null : register,
+                child: loading
+                    ? const CircularProgressIndicator()
+                    : const Text('REGISTER'),
+              ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
+          ],
+        ),
+      );
 }
 
 // ============================================================
@@ -871,12 +772,11 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final player = Store.instance.current;
-
-    final pages = [
-      const DashboardPage(),
-      const FixturesPage(),
-      const TablePage(),
-      const ProfilePage(),
+    final pages = const [
+      DashboardPage(),
+      FixturesPage(),
+      TablePage(),
+      ProfilePage(),
     ];
 
     return Scaffold(
@@ -885,46 +785,26 @@ class _HomePageState extends State<HomePage> {
         actions: [
           if (player?.admin == true)
             IconButton(
-              tooltip: 'Admin',
               icon: const Icon(Icons.admin_panel_settings),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminPage(),
-                  ),
-                ).then((_) {
-                  setState(() {});
-                });
-              },
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminPage()),
+              ).then((_) => setState(() {})),
             ),
         ],
       ),
       body: pages[selectedIndex],
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            selectedIndex = index;
-          });
-        },
+        onDestinationSelected: (index) =>
+            setState(() => selectedIndex = index),
         destinations: const [
+          NavigationDestination(icon: Icon(Icons.home), label: 'Home'),
           NavigationDestination(
-            icon: Icon(Icons.home),
-            label: 'Home',
-          ),
+              icon: Icon(Icons.sports_soccer), label: 'Fixtures'),
           NavigationDestination(
-            icon: Icon(Icons.sports_soccer),
-            label: 'Fixtures',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.leaderboard),
-            label: 'Table',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person),
-            label: 'Profile',
-          ),
+              icon: Icon(Icons.leaderboard), label: 'Table'),
+          NavigationDestination(icon: Icon(Icons.person), label: 'Profile'),
         ],
       ),
     );
@@ -946,68 +826,37 @@ class DashboardPage extends StatelessWidget {
     final myMatches = player == null
         ? <MatchItem>[]
         : store.matches
-            .where(
-              (match) =>
-                  match.homeId == player.id ||
-                  match.awayId == player.id,
-            )
+            .where((m) => m.homeId == player.id || m.awayId == player.id)
             .toList();
 
-    final confirmed = myMatches
-        .where((match) => match.status == 'Confirmed')
-        .length;
-
-    final awaiting = myMatches
-        .where(
-          (match) => match.status == 'Awaiting Confirmation',
-        )
-        .length;
-
-    final disputed = myMatches
-        .where((match) => match.status == 'Disputed')
-        .length;
+    final confirmed =
+        myMatches.where((m) => m.status == 'Confirmed').length;
+    final awaiting =
+        myMatches.where((m) => m.status == 'Awaiting Confirmation').length;
+    final disputed =
+        myMatches.where((m) => m.status == 'Disputed').length;
 
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
         Text(
           'Welcome, ${player?.gamerTag ?? ''}',
-          style: const TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-          ),
+          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 22),
-        _infoCard(
-          icon: Icons.sports_soccer,
-          title: 'Your Fixtures',
-          value: '${myMatches.length}',
-        ),
-        _infoCard(
-          icon: Icons.check_circle,
-          title: 'Confirmed Results',
-          value: '$confirmed',
-        ),
-        _infoCard(
-          icon: Icons.hourglass_top,
-          title: 'Awaiting Confirmation',
-          value: '$awaiting',
-        ),
-        _infoCard(
-          icon: Icons.warning,
-          title: 'Disputed',
-          value: '$disputed',
-        ),
+        _card(Icons.sports_soccer, 'Your Fixtures', '${myMatches.length}'),
+        _card(Icons.check_circle, 'Confirmed Results', '$confirmed'),
+        _card(Icons.hourglass_top, 'Awaiting Confirmation', '$awaiting'),
+        _card(Icons.warning, 'Disputed', '$disputed'),
         const SizedBox(height: 12),
         const Card(
           child: Padding(
             padding: EdgeInsets.all(18),
             child: Text(
               'RESULT RULE\n\n'
-              'Both players must submit the result with screenshot '
-              'proof before the match becomes confirmed.\n\n'
-              'If the two players submit different scores, the match '
-              'becomes DISPUTED for admin review.',
+              'Both players must submit the result with screenshot proof '
+              'before the match becomes confirmed.\n\n'
+              'Different scores make the match DISPUTED for admin review.',
             ),
           ),
         ),
@@ -1015,25 +864,16 @@ class DashboardPage extends StatelessWidget {
     );
   }
 
-  Widget _infoCard({
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
-    return Card(
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(title),
-        trailing: Text(
-          value,
-          style: const TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
+  Widget _card(IconData icon, String title, String value) => Card(
+        child: ListTile(
+          leading: Icon(icon),
+          title: Text(title),
+          trailing: Text(
+            value,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
         ),
-      ),
-    );
-  }
+      );
 }
 
 // ============================================================
@@ -1060,22 +900,13 @@ class _FixturesPageState extends State<FixturesPage> {
           onPressed: () async {
             store.generateFixtures();
             await store.save();
-
-            if (!mounted) {
-              return;
-            }
-
-            setState(() {});
+            if (mounted) setState(() {});
           },
         ),
       );
     }
 
-    final rounds = store.matches
-        .map((match) => match.round)
-        .toSet()
-        .toList()
-      ..sort();
+    final rounds = store.matches.map((m) => m.round).toSet().toList()..sort();
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -1085,15 +916,10 @@ class _FixturesPageState extends State<FixturesPage> {
             padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
             child: Text(
               'MATCHDAY $round',
-              style: const TextStyle(
-                fontSize: 21,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
             ),
           ),
-          ...store.matches
-              .where((match) => match.round == round)
-              .map(
+          ...store.matches.where((m) => m.round == round).map(
                 (match) => Card(
                   child: ListTile(
                     title: Text(
@@ -1106,16 +932,11 @@ class _FixturesPageState extends State<FixturesPage> {
                           : match.status,
                     ),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => ResultPage(match: match),
-                        ),
-                      ).then((_) {
-                        setState(() {});
-                      });
-                    },
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => ResultPage(match: match)),
+                    ).then((_) => setState(() {})),
                   ),
                 ),
               ),
@@ -1126,16 +947,13 @@ class _FixturesPageState extends State<FixturesPage> {
 }
 
 // ============================================================
-// RESULT PAGE
+// RESULT
 // ============================================================
 
 class ResultPage extends StatefulWidget {
   final MatchItem match;
 
-  const ResultPage({
-    super.key,
-    required this.match,
-  });
+  const ResultPage({super.key, required this.match});
 
   @override
   State<ResultPage> createState() => _ResultPageState();
@@ -1149,36 +967,22 @@ class _ResultPageState extends State<ResultPage> {
   bool loading = false;
 
   Future<void> chooseProof() async {
-    final picker = ImagePicker();
-
-    final image = await picker.pickImage(
+    final image = await ImagePicker().pickImage(
       source: ImageSource.gallery,
       imageQuality: 70,
     );
 
-    if (image == null || !mounted) {
-      return;
-    }
+    if (image == null || !mounted) return;
 
-    setState(() {
-      proof = File(image.path);
-    });
+    setState(() => proof = File(image.path));
   }
 
   Future<void> submit() async {
     final player = Store.instance.current;
+    if (player == null) return;
 
-    if (player == null) {
-      return;
-    }
-
-    final homeScore = int.tryParse(
-      homeController.text.trim(),
-    );
-
-    final awayScore = int.tryParse(
-      awayController.text.trim(),
-    );
+    final homeScore = int.tryParse(homeController.text.trim());
+    final awayScore = int.tryParse(awayController.text.trim());
 
     if (homeScore == null ||
         awayScore == null ||
@@ -1187,17 +991,13 @@ class _ResultPageState extends State<ResultPage> {
         proof == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Enter both scores and select screenshot proof.',
-          ),
+          content: Text('Enter both scores and select screenshot proof.'),
         ),
       );
       return;
     }
 
-    setState(() {
-      loading = true;
-    });
+    setState(() => loading = true);
 
     await Store.instance.submitResult(
       match: widget.match,
@@ -1207,20 +1007,12 @@ class _ResultPageState extends State<ResultPage> {
       proofPath: proof!.path,
     );
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
-    setState(() {
-      loading = false;
-    });
+    setState(() => loading = false);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Result status: ${widget.match.status}',
-        ),
-      ),
+      SnackBar(content: Text('Result status: ${widget.match.status}')),
     );
 
     Navigator.pop(context);
@@ -1239,19 +1031,13 @@ class _ResultPageState extends State<ResultPage> {
     final match = widget.match;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Submit Result'),
-      ),
+      appBar: AppBar(title: const Text('Submit Result')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
           Text(
-            '${store.playerName(match.homeId)} vs '
-            '${store.playerName(match.awayId)}',
-            style: const TextStyle(
-              fontSize: 21,
-              fontWeight: FontWeight.bold,
-            ),
+            '${store.playerName(match.homeId)} vs ${store.playerName(match.awayId)}',
+            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 10),
           Text('Status: ${match.status}'),
@@ -1260,8 +1046,7 @@ class _ResultPageState extends State<ResultPage> {
             controller: homeController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText:
-                  '${store.playerName(match.homeId)} score',
+              labelText: '${store.playerName(match.homeId)} score',
               border: const OutlineInputBorder(),
             ),
           ),
@@ -1270,8 +1055,7 @@ class _ResultPageState extends State<ResultPage> {
             controller: awayController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText:
-                  '${store.playerName(match.awayId)} score',
+              labelText: '${store.playerName(match.awayId)} score',
               border: const OutlineInputBorder(),
             ),
           ),
@@ -1289,10 +1073,7 @@ class _ResultPageState extends State<ResultPage> {
             const SizedBox(height: 15),
             SizedBox(
               height: 200,
-              child: Image.file(
-                proof!,
-                fit: BoxFit.contain,
-              ),
+              child: Image.file(proof!, fit: BoxFit.contain),
             ),
           ],
           const SizedBox(height: 22),
@@ -1300,21 +1081,6 @@ class _ResultPageState extends State<ResultPage> {
             onPressed: loading ? null : submit,
             icon: const Icon(Icons.send),
             label: const Text('SUBMIT RESULT'),
-          ),
-          const SizedBox(height: 20),
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'IMPORTANT\n\n'
-                'One player alone cannot confirm a result.\n\n'
-                'Both players must submit screenshot proof. '
-                'If their scores match, the match becomes CONFIRMED '
-                'and enters the league table.\n\n'
-                'If their scores do not match, the match becomes '
-                'DISPUTED for admin review.',
-              ),
-            ),
           ),
         ],
       ),
@@ -1326,14 +1092,9 @@ class _ResultPageState extends State<ResultPage> {
 // TABLE
 // ============================================================
 
-class TablePage extends StatefulWidget {
+class TablePage extends StatelessWidget {
   const TablePage({super.key});
 
-  @override
-  State<TablePage> createState() => _TablePageState();
-}
-
-class _TablePageState extends State<TablePage> {
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
@@ -1341,30 +1102,20 @@ class _TablePageState extends State<TablePage> {
 
     final ordered = table.keys.toList()
       ..sort((a, b) {
-        final first = table[a]!;
-        final second = table[b]!;
+        final x = table[a]!;
+        final y = table[b]!;
 
-        final pointsCompare =
-            second['points']!.compareTo(first['points']!);
+        final p = y['points']!.compareTo(x['points']!);
+        if (p != 0) return p;
 
-        if (pointsCompare != 0) {
-          return pointsCompare;
-        }
+        final gd = y['gd']!.compareTo(x['gd']!);
+        if (gd != 0) return gd;
 
-        final gdCompare =
-            second['gd']!.compareTo(first['gd']!);
-
-        if (gdCompare != 0) {
-          return gdCompare;
-        }
-
-        return second['gf']!.compareTo(first['gf']!);
+        return y['gf']!.compareTo(x['gf']!);
       });
 
     if (ordered.isEmpty) {
-      return const Center(
-        child: Text('No players in the league yet.'),
-      );
+      return const Center(child: Text('No players in the league yet.'));
     }
 
     return ListView(
@@ -1374,10 +1125,7 @@ class _TablePageState extends State<TablePage> {
           padding: EdgeInsets.all(8),
           child: Text(
             'LEAGUE TABLE',
-            style: TextStyle(
-              fontSize: 23,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold),
           ),
         ),
         Card(
@@ -1396,11 +1144,20 @@ class _TablePageState extends State<TablePage> {
               ],
               rows: [
                 for (int i = 0; i < ordered.length; i++)
-                  _tableRow(
-                    i + 1,
-                    ordered[i],
-                    table[ordered[i]]!,
-                    store,
+                  DataRow(
+                    cells: [
+                      DataCell(Text('${i + 1}')),
+                      DataCell(Text(store.playerName(ordered[i]))),
+                      DataCell(Text('${table[ordered[i]]!['played']}')),
+                      DataCell(Text('${table[ordered[i]]!['won']}')),
+                      DataCell(Text('${table[ordered[i]]!['drawn']}')),
+                      DataCell(Text('${table[ordered[i]]!['lost']}')),
+                      DataCell(Text('${table[ordered[i]]!['gd']}')),
+                      DataCell(Text(
+                        '${table[ordered[i]]!['points']}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      )),
+                    ],
                   ),
               ],
             ),
@@ -1410,35 +1167,6 @@ class _TablePageState extends State<TablePage> {
         const Text(
           'Only CONFIRMED matches count toward the table.',
           style: TextStyle(color: Colors.grey),
-        ),
-      ],
-    );
-  }
-
-  DataRow _tableRow(
-    int position,
-    String playerId,
-    Map<String, int> stats,
-    Store store,
-  ) {
-    return DataRow(
-      cells: [
-        DataCell(Text('$position')),
-        DataCell(
-          Text(store.playerName(playerId)),
-        ),
-        DataCell(Text('${stats['played']}')),
-        DataCell(Text('${stats['won']}')),
-        DataCell(Text('${stats['drawn']}')),
-        DataCell(Text('${stats['lost']}')),
-        DataCell(Text('${stats['gd']}')),
-        DataCell(
-          Text(
-            '${stats['points']}',
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
         ),
       ],
     );
@@ -1454,16 +1182,11 @@ class ProfilePage extends StatelessWidget {
 
   Future<void> logout(BuildContext context) async {
     await Store.instance.logout();
-
-    if (!context.mounted) {
-      return;
-    }
+    if (!context.mounted) return;
 
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(
-        builder: (_) => const LoginPage(),
-      ),
+      MaterialPageRoute(builder: (_) => const LoginPage()),
       (_) => false,
     );
   }
@@ -1477,28 +1200,19 @@ class ProfilePage extends StatelessWidget {
       children: [
         const CircleAvatar(
           radius: 45,
-          child: Icon(
-            Icons.person,
-            size: 50,
-          ),
+          child: Icon(Icons.person, size: 50),
         ),
         const SizedBox(height: 20),
         Center(
           child: Text(
             player?.gamerTag ?? '',
-            style: const TextStyle(
-              fontSize: 25,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
           ),
         ),
-        const SizedBox(height: 8),
         Center(
           child: Text(
             player?.name ?? '',
-            style: const TextStyle(
-              color: Colors.grey,
-            ),
+            style: const TextStyle(color: Colors.grey),
           ),
         ),
         const SizedBox(height: 25),
@@ -1520,9 +1234,7 @@ class ProfilePage extends StatelessWidget {
           child: ListTile(
             leading: const Icon(Icons.security),
             title: const Text('Account Role'),
-            subtitle: Text(
-              player?.admin == true ? 'Administrator' : 'Player',
-            ),
+            subtitle: Text(player?.admin == true ? 'Administrator' : 'Player'),
           ),
         ),
         const SizedBox(height: 20),
@@ -1551,37 +1263,30 @@ class _AdminPageState extends State<AdminPage> {
   bool loading = false;
 
   Future<void> refresh() async {
-    setState(() {
-      loading = true;
-    });
+    setState(() => loading = true);
 
-    await Store.instance.refreshPlayers();
-
-    if (!mounted) {
-      return;
+    try {
+      await Store.instance.refreshPlayers();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Refresh error: $e')),
+        );
+      }
     }
 
-    setState(() {
-      loading = false;
-    });
+    if (mounted) setState(() => loading = false);
   }
 
   Future<void> generateFixtures() async {
-    final store = Store.instance;
+    Store.instance.generateFixtures();
+    await Store.instance.save();
 
-    store.generateFixtures();
-    await store.save();
-
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
     setState(() {});
-
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Fixtures generated successfully.'),
-      ),
+      const SnackBar(content: Text('Fixtures generated successfully.')),
     );
   }
 
@@ -1590,9 +1295,7 @@ class _AdminPageState extends State<AdminPage> {
     final store = Store.instance;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Admin Dashboard'),
-      ),
+      appBar: AppBar(title: const Text('Admin Dashboard')),
       body: RefreshIndicator(
         onRefresh: refresh,
         child: ListView(
@@ -1600,10 +1303,7 @@ class _AdminPageState extends State<AdminPage> {
           children: [
             const Text(
               'CHIBBYBALL ADMIN',
-              style: TextStyle(
-                fontSize: 25,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 18),
             Card(
@@ -1626,9 +1326,7 @@ class _AdminPageState extends State<AdminPage> {
               child: ListTile(
                 leading: const Icon(Icons.check_circle),
                 title: const Text('Confirmed Results'),
-                trailing: Text(
-                  '${store.confirmedMatches().length}',
-                ),
+                trailing: Text('${store.confirmedMatches().length}'),
               ),
             ),
             const SizedBox(height: 15),
@@ -1652,20 +1350,13 @@ class _AdminPageState extends State<AdminPage> {
             const SizedBox(height: 25),
             const Text(
               'REGISTERED PLAYERS',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            ...store.players
-                .where((player) => !player.admin)
-                .map(
+            ...store.players.where((p) => !p.admin).map(
                   (player) => Card(
                     child: ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.person),
-                      ),
+                      leading: const CircleAvatar(child: Icon(Icons.person)),
                       title: Text(player.gamerTag),
                       subtitle: Text(player.name),
                     ),
