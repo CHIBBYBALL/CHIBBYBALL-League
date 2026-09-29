@@ -26,9 +26,7 @@ jobs:
       - name: Add Internet permission
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
-            sed -i 's#<manifest#<manifest\n    <uses-permission android:name="android.permission.INTERNET"/>#' "$MANIFEST"
-          fi
+          sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST"
 
       - name: Get dependencies
         run: flutter pub get
