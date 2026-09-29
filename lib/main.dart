@@ -737,8 +737,43 @@ class Store {
     }
   }
 
+  bool isValidConfirmedMatch(MatchItem match) {
+    if (match.status != 'Confirmed') return false;
+
+    // A confirmed result is only valid when BOTH players have submitted
+    // screenshot proof and both submissions agree on the exact score.
+    final homeReady =
+        match.homeProof != null &&
+        match.homeProof!.isNotEmpty &&
+        match.homeClaimHome != null &&
+        match.homeClaimAway != null;
+    final awayReady =
+        match.awayProof != null &&
+        match.awayProof!.isNotEmpty &&
+        match.awayClaimHome != null &&
+        match.awayClaimAway != null;
+
+    if (!homeReady || !awayReady) return false;
+
+    return match.homeClaimHome == match.awayClaimHome &&
+        match.homeClaimAway == match.awayClaimAway &&
+        match.homeScore == match.homeClaimHome &&
+        match.awayScore == match.homeClaimAway;
+  }
+
   List<MatchItem> confirmedMatches() {
-    return matches.where((m) => m.status == 'Confirmed').toList();
+    return matches.where(isValidConfirmedMatch).toList();
+  }
+
+  Future<String?> signedProofUrl(String? proofPath) async {
+    if (proofPath == null || proofPath.trim().isEmpty) return null;
+    try {
+      return await supabase.storage
+          .from('match-proofs')
+          .createSignedUrl(proofPath, 3600);
+    } catch (_) {
+      return null;
+    }
   }
 
   Map<String, int> statsForPlayer(String playerId) {
@@ -2411,6 +2446,287 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
 }
 
 // ============================================================
+// ADMIN RESULT REVIEW
+// ============================================================
+
+class AdminResultReviewPage extends StatefulWidget {
+  const AdminResultReviewPage({super.key});
+
+  @override
+  State<AdminResultReviewPage> createState() => _AdminResultReviewPageState();
+}
+
+class _AdminResultReviewPageState extends State<AdminResultReviewPage> {
+  bool loading = true;
+  String filter = 'Needs Review';
+
+  Store get store => Store.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    try {
+      await store.refreshPlayers();
+      await store.refreshLeagues();
+      await store.loadMatchesFromSupabase();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load result review: $e')),
+        );
+      }
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  List<MatchItem> _visibleMatches() {
+    final submitted = store.matches
+        .where((m) => m.homeProof != null || m.awayProof != null)
+        .toList();
+
+    if (filter == 'Disputed') {
+      return submitted.where((m) => m.status == 'Disputed').toList();
+    }
+    if (filter == 'Awaiting') {
+      return submitted.where((m) => m.status == 'Awaiting Confirmation').toList();
+    }
+    if (filter == 'Confirmed') {
+      return submitted.where(store.isValidConfirmedMatch).toList();
+    }
+
+    // Needs Review = anything submitted that is not a valid confirmed result.
+    return submitted.where((m) => !store.isValidConfirmedMatch(m)).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = _visibleMatches();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Result Review'),
+      ),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: loading
+            ? const ListView(
+                children: [
+                  SizedBox(height: 250),
+                  Center(child: CircularProgressIndicator()),
+                ],
+              )
+            : ListView(
+                padding: const EdgeInsets.all(14),
+                children: [
+                  const Text(
+                    'ADMIN RESULT REVIEW',
+                    style: TextStyle(
+                      fontSize: 23,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'See both players’ claimed scores and screenshot proof before accepting a result.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    value: filter,
+                    decoration: const InputDecoration(
+                      labelText: 'Show',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'Needs Review',
+                        child: Text('Needs Review'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Awaiting',
+                        child: Text('Awaiting Confirmation'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Disputed',
+                        child: Text('Disputed'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Confirmed',
+                        child: Text('Confirmed'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => filter = value);
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  if (visible.isEmpty)
+                    const Card(
+                      child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: Text(
+                          'No submitted results in this section.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    )
+                  else
+                    ...visible.map((match) => _reviewCard(match)),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _reviewCard(MatchItem match) {
+    final home = store.findPlayer(match.homeId);
+    final away = store.findPlayer(match.awayId);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 14),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'MATCHDAY ${match.round}',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              '${home?.gamerTag ?? 'Unknown'}  vs  ${away?.gamerTag ?? 'Unknown'}',
+              style: const TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text('Status: ${match.status.toUpperCase()}'),
+            const Divider(height: 24),
+            _submissionSection(
+              title: 'PLAYER 1 — ${home?.gamerTag ?? 'Unknown'}',
+              name: home?.name ?? '',
+              claimedHome: match.homeClaimHome,
+              claimedAway: match.homeClaimAway,
+              proofPath: match.homeProof,
+            ),
+            const SizedBox(height: 18),
+            _submissionSection(
+              title: 'PLAYER 2 — ${away?.gamerTag ?? 'Unknown'}',
+              name: away?.name ?? '',
+              claimedHome: match.awayClaimHome,
+              claimedAway: match.awayClaimAway,
+              proofPath: match.awayProof,
+            ),
+            if (match.homeClaimHome != null &&
+                match.awayClaimHome != null) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    match.homeClaimHome == match.awayClaimHome &&
+                            match.homeClaimAway == match.awayClaimAway
+                        ? 'Both players submitted the SAME score.'
+                        : 'SCORES DO NOT MATCH — ADMIN REVIEW REQUIRED.',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _submissionSection({
+    required String title,
+    required String name,
+    required int? claimedHome,
+    required int? claimedAway,
+    required String? proofPath,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        if (name.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Text(name, style: const TextStyle(color: Colors.grey)),
+          ),
+        const SizedBox(height: 7),
+        Text(
+          claimedHome == null || claimedAway == null
+              ? 'Score: Not submitted'
+              : 'Claimed score: $claimedHome - $claimedAway',
+          style: const TextStyle(fontSize: 16),
+        ),
+        const SizedBox(height: 10),
+        if (proofPath == null || proofPath.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Screenshot proof not submitted.'),
+            ),
+          )
+        else
+          FutureBuilder<String?>(
+            future: store.signedProofUrl(proofPath),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SizedBox(
+                  height: 180,
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+
+              final url = snapshot.data;
+              if (url == null) {
+                return const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('Could not load screenshot proof.'),
+                  ),
+                );
+              }
+
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  url,
+                  height: 260,
+                  width: double.infinity,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox(
+                    height: 180,
+                    child: Center(
+                      child: Text('Could not display screenshot proof.'),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+}
+
+// ============================================================
 // ADMIN
 // ============================================================
 
@@ -2558,6 +2874,22 @@ class _AdminPageState extends State<AdminPage> {
                 onPressed: loading ? null : generateFixtures,
                 icon: const Icon(Icons.auto_awesome),
                 label: const Text('GENERATE FIXTURES'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminResultReviewPage(),
+                          ),
+                        ),
+                icon: const Icon(Icons.fact_check),
+                label: const Text('RESULT REVIEW'),
               ),
             ),
             const SizedBox(height: 25),
