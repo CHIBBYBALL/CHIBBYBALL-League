@@ -334,7 +334,11 @@ class Store {
 
   Future<void> loadMatchesFromSupabase() async {
     final leagueId = await _activeLeagueId();
-    if (leagueId == null) return;
+    if (leagueId == null) {
+      matches.clear();
+      await save();
+      return;
+    }
 
     final data = await supabase
         .from('matches')
@@ -766,7 +770,19 @@ class Store {
   Map<String, Map<String, int>> buildTable() {
     final table = <String, Map<String, int>>{};
 
-    for (final player in players.where((p) => !p.admin && (activeLeagueId == null || activeLeagueMemberIds.contains(p.id)))) {
+    // The matches list is already loaded only for the active league.
+    // Include active-league members AND any players appearing in those
+    // matches so an existing confirmed result can never disappear from
+    // the table just because membership was edited later.
+    final participantIds = <String>{...activeLeagueMemberIds};
+    for (final match in matches) {
+      participantIds.add(match.homeId);
+      participantIds.add(match.awayId);
+    }
+
+    for (final player in players.where(
+      (p) => !p.admin && participantIds.contains(p.id),
+    )) {
       table[player.id] = {
         'played': 0,
         'won': 0,
