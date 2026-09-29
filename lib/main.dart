@@ -1002,24 +1002,31 @@ class DashboardPage extends StatelessWidget {
         ),
         const SizedBox(height: 22),
         _card(
+          context,
           Icons.sports_soccer,
           'Your Fixtures',
           '${myMatches.length}',
         ),
         _card(
+          context,
           Icons.check_circle,
           'Confirmed Results',
           '$confirmed',
+          statusFilter: 'Confirmed',
         ),
         _card(
+          context,
           Icons.hourglass_top,
           'Awaiting Confirmation',
           '$awaiting',
+          statusFilter: 'Awaiting Confirmation',
         ),
         _card(
+          context,
           Icons.warning,
           'Disputed',
           '$disputed',
+          statusFilter: 'Disputed',
         ),
         const SizedBox(height: 12),
         const Card(
@@ -1037,18 +1044,39 @@ class DashboardPage extends StatelessWidget {
     );
   }
 
-  Widget _card(IconData icon, String title, String value) {
+  Widget _card(
+    BuildContext context,
+    IconData icon,
+    String title,
+    String value, {
+    String? statusFilter,
+  }) {
     return Card(
       child: ListTile(
         leading: Icon(icon),
         title: Text(title),
-        trailing: Text(
-          value,
-          style: const TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-          ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right),
+          ],
         ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => FixturesPage(statusFilter: statusFilter),
+            ),
+          );
+        },
       ),
     );
   }
@@ -1059,7 +1087,9 @@ class DashboardPage extends StatelessWidget {
 // ============================================================
 
 class FixturesPage extends StatefulWidget {
-  const FixturesPage({super.key});
+  final String? statusFilter;
+
+  const FixturesPage({super.key, this.statusFilter});
 
   @override
   State<FixturesPage> createState() => _FixturesPageState();
@@ -1091,12 +1121,49 @@ class _FixturesPageState extends State<FixturesPage> {
       );
     }
 
-    final rounds = store.matches.map((m) => m.round).toSet().toList()
+    final player = store.current;
+    var visibleMatches = store.matches;
+
+    if (player != null) {
+      visibleMatches = visibleMatches
+          .where((m) => m.homeId == player.id || m.awayId == player.id)
+          .toList();
+    }
+
+    if (widget.statusFilter != null) {
+      visibleMatches = visibleMatches
+          .where((m) => m.status == widget.statusFilter)
+          .toList();
+    }
+
+    if (visibleMatches.isEmpty) {
+      return Center(
+        child: Text(
+          widget.statusFilter == null
+              ? 'No fixtures found.'
+              : 'No ${widget.statusFilter!.toLowerCase()} matches found.',
+          style: const TextStyle(fontSize: 16),
+        ),
+      );
+    }
+
+    final rounds = visibleMatches.map((m) => m.round).toSet().toList()
       ..sort();
 
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
+        if (widget.statusFilter != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+            child: Text(
+              widget.statusFilter!.toUpperCase(),
+              style: const TextStyle(
+                fontSize: 21,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
         for (final round in rounds) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
@@ -1108,7 +1175,7 @@ class _FixturesPageState extends State<FixturesPage> {
               ),
             ),
           ),
-          ...store.matches
+          ...visibleMatches
               .where((m) => m.round == round)
               .map(
                 (match) => Card(
