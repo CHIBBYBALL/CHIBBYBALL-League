@@ -3,10 +3,126 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_config.dart';
+
+
+class ScreenshotCheck {
+  final bool valid;
+  final bool hasFullTime;
+  final int? scoreA;
+  final int? scoreB;
+  final String text;
+  final String reason;
+  final Set<String> tokens;
+
+  const ScreenshotCheck({
+    required this.valid,
+    required this.hasFullTime,
+    required this.scoreA,
+    required this.scoreB,
+    required this.text,
+    required this.reason,
+    required this.tokens,
+  });
+}
+
+Set<String> _meaningfulOcrTokens(String text) {
+  const ignored = {
+    'full', 'time', 'score', 'goal', 'goals', 'match', 'home', 'away',
+    'online', 'efootball', 'konami', 'game', 'pause', 'settings', 'resume',
+    'minutes', 'minute', 'player', 'players', 'result', 'final', 'ft',
+  };
+  return text
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+      .split(RegExp(r'\s+'))
+      .where((t) => t.length >= 4 && !ignored.contains(t))
+      .toSet();
+}
+
+Future<ScreenshotCheck> analyzeResultScreenshot(
+  File file,
+  int claimedHome,
+  int claimedAway,
+) async {
+  final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+  try {
+    final image = InputImage.fromFilePath(file.path);
+    final recognized = await recognizer.processImage(image);
+    final raw = recognized.text;
+    final text = raw.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    final hasFullTime = RegExp(r'\bfull\s*time\b').hasMatch(text) ||
+        RegExp(r'(?<![a-z])ft(?![a-z])').hasMatch(text);
+
+    final normalized = text.replaceAll('—', '-').replaceAll('–', '-');
+    final scoreRegex = RegExp(r'(?<!\d)(\d{1,2})\s*[-:]\s*(\d{1,2})(?!\d)');
+    final fullTimeIndex = text.indexOf('full time');
+    final window = fullTimeIndex >= 0
+        ? normalized.substring(
+            (fullTimeIndex - 100).clamp(0, normalized.length),
+            (fullTimeIndex + 140).clamp(0, normalized.length),
+          )
+        : normalized;
+
+    final matches = scoreRegex.allMatches(window).toList();
+    RegExpMatch? chosen;
+    if (matches.isNotEmpty) {
+      chosen = matches.first;
+    } else {
+      final all = scoreRegex.allMatches(normalized).toList();
+      if (all.isNotEmpty) chosen = all.first;
+    }
+
+    final a = chosen == null ? null : int.tryParse(chosen.group(1)!);
+    final b = chosen == null ? null : int.tryParse(chosen.group(2)!);
+
+    if (!hasFullTime) {
+      return ScreenshotCheck(
+        valid: false,
+        hasFullTime: false,
+        scoreA: a,
+        scoreB: b,
+        text: raw,
+        reason: 'Screenshot does not show Full Time.',
+        tokens: _meaningfulOcrTokens(raw),
+      );
+    }
+
+    if (a == null || b == null) {
+      return ScreenshotCheck(
+        valid: false,
+        hasFullTime: true,
+        scoreA: a,
+        scoreB: b,
+        text: raw,
+        reason: 'Could not read the final score from the screenshot.',
+        tokens: _meaningfulOcrTokens(raw),
+      );
+    }
+
+    final scoreMatches = (a == claimedHome && b == claimedAway) ||
+        (a == claimedAway && b == claimedHome);
+
+    return ScreenshotCheck(
+      valid: scoreMatches,
+      hasFullTime: true,
+      scoreA: a,
+      scoreB: b,
+      text: raw,
+      reason: scoreMatches
+          ? 'Full Time and score verified.'
+          : 'Screenshot score does not match the submitted score.',
+      tokens: _meaningfulOcrTokens(raw),
+    );
+  } finally {
+    await recognizer.close();
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -694,6 +810,80 @@ class Store {
     }
   }
 
+
+  Future<String?> finalizeMatchAfterScreenshotCheck(
+    MatchItem match,
+  ) async {
+    final homeProof = match.homeProof;
+    final awayProof = match.awayProof;
+    final hh = match.homeClaimHome;
+    final ha = match.homeClaimAway;
+    final ah = match.awayClaimHome;
+    final aa = match.awayClaimAway;
+
+    if (homeProof == null || awayProof == null ||
+        hh == null || ha == null || ah == null || aa == null) {
+      return 'Both players must submit a score and screenshot first.';
+    }
+
+    if (hh != ah || ha != aa) {
+      await supabase.rpc(
+        'finalize_match_after_screenshot_check',
+        params: {'p_match_id': match.id, 'p_verified': false},
+      );
+      await loadMatchesFromSupabase();
+      return 'The two submitted scores do not match. Match marked DISPUTED.';
+    }
+
+    try {
+      final homeBytes = await supabase.storage
+          .from('match-proofs')
+          .download(homeProof);
+      final awayBytes = await supabase.storage
+          .from('match-proofs')
+          .download(awayProof);
+
+      final homeFile = File('${Directory.systemTemp.path}/chibby_home_${match.id}.jpg');
+      final awayFile = File('${Directory.systemTemp.path}/chibby_away_${match.id}.jpg');
+      await homeFile.writeAsBytes(homeBytes, flush: true);
+      await awayFile.writeAsBytes(awayBytes, flush: true);
+
+      final homeCheck = await analyzeResultScreenshot(homeFile, hh, ha);
+      final awayCheck = await analyzeResultScreenshot(awayFile, ah, aa);
+
+      final sharedMatchTokens = homeCheck.tokens.intersection(awayCheck.tokens);
+      final sameMatchText = sharedMatchTokens.isNotEmpty;
+
+      final verified = homeCheck.valid && awayCheck.valid &&
+          homeCheck.hasFullTime && awayCheck.hasFullTime &&
+          sameMatchText &&
+          homeCheck.scoreA != null && homeCheck.scoreB != null &&
+          awayCheck.scoreA != null && awayCheck.scoreB != null &&
+          ((homeCheck.scoreA == awayCheck.scoreA &&
+                  homeCheck.scoreB == awayCheck.scoreB) ||
+              (homeCheck.scoreA == awayCheck.scoreB &&
+                  homeCheck.scoreB == awayCheck.scoreA));
+
+      await supabase.rpc(
+        'finalize_match_after_screenshot_check',
+        params: {'p_match_id': match.id, 'p_verified': verified},
+      );
+      await loadMatchesFromSupabase();
+
+      if (!verified) {
+        return 'Screenshots did not pass Full Time, score, or same-match verification. Match marked DISPUTED.';
+      }
+
+      return 'Both screenshots verified. Match CONFIRMED automatically.';
+    } on StorageException catch (e) {
+      return 'Could not read proof screenshots: ${e.message}';
+    } on PostgrestException catch (e) {
+      return 'Verification save failed: ${e.message}';
+    } catch (e) {
+      return 'Screenshot verification failed: $e';
+    }
+  }
+
   Future<String?> submitResult({
     required MatchItem match,
     required Player player,
@@ -727,6 +917,21 @@ class Store {
       );
 
       await loadMatchesFromSupabase();
+
+      MatchItem? updated;
+      for (final item in matches) {
+        if (item.id == match.id) {
+          updated = item;
+          break;
+        }
+      }
+      if (updated != null && updated.homeProof != null &&
+          updated.awayProof != null) {
+        final verificationMessage =
+            await finalizeMatchAfterScreenshotCheck(updated);
+        return verificationMessage;
+      }
+
       return null;
     } on StorageException catch (e) {
       return 'Proof upload failed: ${e.message}';
@@ -737,43 +942,8 @@ class Store {
     }
   }
 
-  bool isValidConfirmedMatch(MatchItem match) {
-    if (match.status != 'Confirmed') return false;
-
-    // A confirmed result is only valid when BOTH players have submitted
-    // screenshot proof and both submissions agree on the exact score.
-    final homeReady =
-        match.homeProof != null &&
-        match.homeProof!.isNotEmpty &&
-        match.homeClaimHome != null &&
-        match.homeClaimAway != null;
-    final awayReady =
-        match.awayProof != null &&
-        match.awayProof!.isNotEmpty &&
-        match.awayClaimHome != null &&
-        match.awayClaimAway != null;
-
-    if (!homeReady || !awayReady) return false;
-
-    return match.homeClaimHome == match.awayClaimHome &&
-        match.homeClaimAway == match.awayClaimAway &&
-        match.homeScore == match.homeClaimHome &&
-        match.awayScore == match.homeClaimAway;
-  }
-
   List<MatchItem> confirmedMatches() {
-    return matches.where(isValidConfirmedMatch).toList();
-  }
-
-  Future<String?> signedProofUrl(String? proofPath) async {
-    if (proofPath == null || proofPath.trim().isEmpty) return null;
-    try {
-      return await supabase.storage
-          .from('match-proofs')
-          .createSignedUrl(proofPath, 3600);
-    } catch (_) {
-      return null;
-    }
+    return matches.where((m) => m.status == 'Confirmed').toList();
   }
 
   Map<String, int> statsForPlayer(String playerId) {
@@ -1495,6 +1665,22 @@ class _ResultPageState extends State<ResultPage> {
     );
 
     Navigator.pop(context);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final player = Store.instance.current;
+    final match = widget.match;
+    if (player?.id == match.homeId && match.homeClaimHome != null &&
+        match.homeClaimAway != null) {
+      homeController.text = '${match.homeClaimHome}';
+      awayController.text = '${match.homeClaimAway}';
+    } else if (player?.id == match.awayId && match.awayClaimHome != null &&
+        match.awayClaimAway != null) {
+      homeController.text = '${match.awayClaimHome}';
+      awayController.text = '${match.awayClaimAway}';
+    }
   }
 
   @override
@@ -2446,287 +2632,6 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
 }
 
 // ============================================================
-// ADMIN RESULT REVIEW
-// ============================================================
-
-class AdminResultReviewPage extends StatefulWidget {
-  const AdminResultReviewPage({super.key});
-
-  @override
-  State<AdminResultReviewPage> createState() => _AdminResultReviewPageState();
-}
-
-class _AdminResultReviewPageState extends State<AdminResultReviewPage> {
-  bool loading = true;
-  String filter = 'Needs Review';
-
-  Store get store => Store.instance;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => loading = true);
-    try {
-      await store.refreshPlayers();
-      await store.refreshLeagues();
-      await store.loadMatchesFromSupabase();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load result review: $e')),
-        );
-      }
-    }
-    if (mounted) setState(() => loading = false);
-  }
-
-  List<MatchItem> _visibleMatches() {
-    final submitted = store.matches
-        .where((m) => m.homeProof != null || m.awayProof != null)
-        .toList();
-
-    if (filter == 'Disputed') {
-      return submitted.where((m) => m.status == 'Disputed').toList();
-    }
-    if (filter == 'Awaiting') {
-      return submitted.where((m) => m.status == 'Awaiting Confirmation').toList();
-    }
-    if (filter == 'Confirmed') {
-      return submitted.where(store.isValidConfirmedMatch).toList();
-    }
-
-    // Needs Review = anything submitted that is not a valid confirmed result.
-    return submitted.where((m) => !store.isValidConfirmedMatch(m)).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final visible = _visibleMatches();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Result Review'),
-      ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: loading
-            ? ListView(
-                children: [
-                  const SizedBox(height: 250),
-                  const Center(child: CircularProgressIndicator()),
-                ],
-              )
-            : ListView(
-                padding: const EdgeInsets.all(14),
-                children: [
-                  const Text(
-                    'ADMIN RESULT REVIEW',
-                    style: TextStyle(
-                      fontSize: 23,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'See both players’ claimed scores and screenshot proof before accepting a result.',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<String>(
-                    value: filter,
-                    decoration: const InputDecoration(
-                      labelText: 'Show',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'Needs Review',
-                        child: Text('Needs Review'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Awaiting',
-                        child: Text('Awaiting Confirmation'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Disputed',
-                        child: Text('Disputed'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Confirmed',
-                        child: Text('Confirmed'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) setState(() => filter = value);
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  if (visible.isEmpty)
-                    const Card(
-                      child: Padding(
-                        padding: EdgeInsets.all(20),
-                        child: Text(
-                          'No submitted results in this section.',
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    )
-                  else
-                    ...visible.map((match) => _reviewCard(match)),
-                ],
-              ),
-      ),
-    );
-  }
-
-  Widget _reviewCard(MatchItem match) {
-    final home = store.findPlayer(match.homeId);
-    final away = store.findPlayer(match.awayId);
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'MATCHDAY ${match.round}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              '${home?.gamerTag ?? 'Unknown'}  vs  ${away?.gamerTag ?? 'Unknown'}',
-              style: const TextStyle(
-                fontSize: 19,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text('Status: ${match.status.toUpperCase()}'),
-            const Divider(height: 24),
-            _submissionSection(
-              title: 'PLAYER 1 — ${home?.gamerTag ?? 'Unknown'}',
-              name: home?.name ?? '',
-              claimedHome: match.homeClaimHome,
-              claimedAway: match.homeClaimAway,
-              proofPath: match.homeProof,
-            ),
-            const SizedBox(height: 18),
-            _submissionSection(
-              title: 'PLAYER 2 — ${away?.gamerTag ?? 'Unknown'}',
-              name: away?.name ?? '',
-              claimedHome: match.awayClaimHome,
-              claimedAway: match.awayClaimAway,
-              proofPath: match.awayProof,
-            ),
-            if (match.homeClaimHome != null &&
-                match.awayClaimHome != null) ...[
-              const SizedBox(height: 16),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    match.homeClaimHome == match.awayClaimHome &&
-                            match.homeClaimAway == match.awayClaimAway
-                        ? 'Both players submitted the SAME score.'
-                        : 'SCORES DO NOT MATCH — ADMIN REVIEW REQUIRED.',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _submissionSection({
-    required String title,
-    required String name,
-    required int? claimedHome,
-    required int? claimedAway,
-    required String? proofPath,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        if (name.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 3),
-            child: Text(name, style: const TextStyle(color: Colors.grey)),
-          ),
-        const SizedBox(height: 7),
-        Text(
-          claimedHome == null || claimedAway == null
-              ? 'Score: Not submitted'
-              : 'Claimed score: $claimedHome - $claimedAway',
-          style: const TextStyle(fontSize: 16),
-        ),
-        const SizedBox(height: 10),
-        if (proofPath == null || proofPath.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('Screenshot proof not submitted.'),
-            ),
-          )
-        else
-          FutureBuilder<String?>(
-            future: store.signedProofUrl(proofPath),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const SizedBox(
-                  height: 180,
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              final url = snapshot.data;
-              if (url == null) {
-                return const Card(
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('Could not load screenshot proof.'),
-                  ),
-                );
-              }
-
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  url,
-                  height: 260,
-                  width: double.infinity,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox(
-                    height: 180,
-                    child: Center(
-                      child: Text('Could not display screenshot proof.'),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-      ],
-    );
-  }
-}
-
-// ============================================================
 // ADMIN
 // ============================================================
 
@@ -2874,22 +2779,6 @@ class _AdminPageState extends State<AdminPage> {
                 onPressed: loading ? null : generateFixtures,
                 icon: const Icon(Icons.auto_awesome),
                 label: const Text('GENERATE FIXTURES'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AdminResultReviewPage(),
-                          ),
-                        ),
-                icon: const Icon(Icons.fact_check),
-                label: const Text('RESULT REVIEW'),
               ),
             ),
             const SizedBox(height: 25),
