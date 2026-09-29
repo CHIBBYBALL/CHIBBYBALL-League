@@ -2514,10 +2514,10 @@ class _AdminResultReviewPageState extends State<AdminResultReviewPage> {
       body: RefreshIndicator(
         onRefresh: _load,
         child: loading
-            ? const ListView(
+            ? ListView(
                 children: [
-                  SizedBox(height: 250),
-                  Center(child: CircularProgressIndicator()),
+                  const SizedBox(height: 250),
+                  const Center(child: CircularProgressIndicator()),
                 ],
               )
             : ListView(
