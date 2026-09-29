@@ -70,6 +70,21 @@ class Player {
       );
 }
 
+
+class LeagueInfo {
+  final String id;
+  final String name;
+  final String status;
+  final DateTime? createdAt;
+
+  const LeagueInfo({
+    required this.id,
+    required this.name,
+    required this.status,
+    this.createdAt,
+  });
+}
+
 class MatchItem {
   final String id;
   final String homeId;
@@ -148,6 +163,11 @@ class Store {
   final List<Player> players = [];
   final List<MatchItem> matches = [];
   Player? current;
+  final List<LeagueInfo> leagues = [];
+  String? activeLeagueId;
+  String? activeLeagueName;
+  String? activeLeagueStatus;
+  Set<String> activeLeagueMemberIds = {};
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -183,20 +203,133 @@ class Store {
 
     try {
       await refreshPlayers();
+      await refreshLeagues();
       await loadMatchesFromSupabase();
     } catch (_) {}
   }
 
-  Future<String?> _activeLeagueId() async {
-    final row = await supabase
+  Future<void> refreshLeagues() async {
+    final data = await supabase
         .from('leagues')
-        .select('id')
-        .eq('status', 'active')
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
+        .select('id, name, status, created_at')
+        .order('created_at', ascending: false);
 
-    return row?['id']?.toString();
+    leagues
+      ..clear()
+      ..addAll((data as List).map((item) {
+        final row = Map<String, dynamic>.from(item);
+        return LeagueInfo(
+          id: row['id'].toString(),
+          name: row['name']?.toString() ?? '',
+          status: row['status']?.toString() ?? 'open',
+          createdAt: row['created_at'] == null
+              ? null
+              : DateTime.tryParse(row['created_at'].toString()),
+        );
+      }));
+
+    final active = leagues.where((l) => l.status == 'active').toList();
+    if (active.isNotEmpty) {
+      activeLeagueId = active.first.id;
+      activeLeagueName = active.first.name;
+      activeLeagueStatus = active.first.status;
+      try {
+        activeLeagueMemberIds = (await leagueMemberIds(activeLeagueId!)).toSet();
+      } catch (_) {
+        activeLeagueMemberIds = {};
+      }
+    } else {
+      activeLeagueId = null;
+      activeLeagueName = null;
+      activeLeagueStatus = null;
+      activeLeagueMemberIds = {};
+    }
+  }
+
+  Future<String?> _activeLeagueId() async {
+    if (activeLeagueId != null) return activeLeagueId;
+    await refreshLeagues();
+    return activeLeagueId;
+  }
+
+  Future<String?> createLeague(String name) async {
+    final clean = name.trim();
+    if (clean.isEmpty) return 'League name is required.';
+    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.from('leagues').insert({
+        'name': clean,
+        'status': 'open',
+      });
+      await refreshLeagues();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not create league: ${e.message}';
+    } catch (e) {
+      return 'Could not create league: $e';
+    }
+  }
+
+  Future<String?> setLeagueStatus(String leagueId, String status) async {
+    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    try {
+      if (status == 'active') {
+        await supabase
+            .from('leagues')
+            .update({'status': 'open'})
+            .eq('status', 'active')
+            .neq('id', leagueId);
+      }
+      await supabase.from('leagues').update({'status': status}).eq('id', leagueId);
+      await refreshLeagues();
+      await loadMatchesFromSupabase();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not update league: ${e.message}';
+    } catch (e) {
+      return 'Could not update league: $e';
+    }
+  }
+
+  Future<List<String>> leagueMemberIds(String leagueId) async {
+    final data = await supabase
+        .from('league_members')
+        .select('player_id')
+        .eq('league_id', leagueId);
+    return (data as List)
+        .map((e) => Map<String, dynamic>.from(e)['player_id'].toString())
+        .toList();
+  }
+
+  Future<String?> addLeagueMember(String leagueId, String playerId) async {
+    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.from('league_members').upsert({
+        'league_id': leagueId,
+        'player_id': playerId,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not add player: ${e.message}';
+    } catch (e) {
+      return 'Could not add player: $e';
+    }
+  }
+
+  Future<String?> removeLeagueMember(String leagueId, String playerId) async {
+    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase
+          .from('league_members')
+          .delete()
+          .eq('league_id', leagueId)
+          .eq('player_id', playerId);
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not remove player: ${e.message}';
+    } catch (e) {
+      return 'Could not remove player: $e';
+    }
   }
 
   Future<void> loadMatchesFromSupabase() async {
@@ -412,6 +545,7 @@ class Store {
 
       try {
         await refreshPlayers();
+        await refreshLeagues();
         await loadMatchesFromSupabase();
       } catch (_) {
         players.removeWhere((p) => p.id == user.id);
@@ -470,6 +604,7 @@ class Store {
 
       try {
         await refreshPlayers();
+        await refreshLeagues();
         await loadMatchesFromSupabase();
       } catch (_) {}
 
@@ -498,15 +633,16 @@ class Store {
   }
 
   Future<String?> generateFixtures() async {
-    final activePlayers = players.where((p) => !p.admin).toList();
-
-    if (activePlayers.length < 2) {
-      return 'At least 2 players are required.';
-    }
-
     final leagueId = await _activeLeagueId();
     if (leagueId == null) {
       return 'No active league found.';
+    }
+
+    final memberIds = await leagueMemberIds(leagueId);
+    final activePlayers = players.where((p) => !p.admin && memberIds.contains(p.id)).toList();
+
+    if (activePlayers.length < 2) {
+      return 'Add at least 2 players to the active league first.';
     }
 
     await loadMatchesFromSupabase();
@@ -630,7 +766,7 @@ class Store {
   Map<String, Map<String, int>> buildTable() {
     final table = <String, Map<String, int>>{};
 
-    for (final player in players.where((p) => !p.admin)) {
+    for (final player in players.where((p) => !p.admin && (activeLeagueId == null || activeLeagueMemberIds.contains(p.id)))) {
       table[player.id] = {
         'played': 0,
         'won': 0,
@@ -1763,6 +1899,291 @@ class PlayerStatsPage extends StatelessWidget {
 }
 
 // ============================================================
+// LEAGUE MANAGEMENT
+// ============================================================
+
+class LeagueManagementPage extends StatefulWidget {
+  const LeagueManagementPage({super.key});
+
+  @override
+  State<LeagueManagementPage> createState() => _LeagueManagementPageState();
+}
+
+class _LeagueManagementPageState extends State<LeagueManagementPage> {
+  final nameController = TextEditingController();
+  bool loading = false;
+  String? selectedLeagueId;
+  Set<String> memberIds = {};
+
+  Store get store => Store.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    setState(() => loading = true);
+    try {
+      await store.refreshPlayers();
+      await store.refreshLeagues();
+      if (store.leagues.isNotEmpty) {
+        selectedLeagueId ??= store.leagues.first.id;
+        if (!store.leagues.any((l) => l.id == selectedLeagueId)) {
+          selectedLeagueId = store.leagues.first.id;
+        }
+        memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Refresh error: $e')),
+        );
+      }
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _createLeague() async {
+    final name = nameController.text.trim();
+    if (name.isEmpty) return;
+    setState(() => loading = true);
+    final error = await store.createLeague(name);
+    if (!mounted) return;
+    if (error == null) {
+      nameController.clear();
+      await _refresh();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('League created.')),
+      );
+    } else {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    }
+  }
+
+  Future<void> _changeStatus(String status) async {
+    if (selectedLeagueId == null) return;
+    setState(() => loading = true);
+    final error = await store.setLeagueStatus(selectedLeagueId!, status);
+    if (!mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+    await _refresh();
+  }
+
+  Future<void> _selectLeague(String id) async {
+    setState(() {
+      selectedLeagueId = id;
+      loading = true;
+    });
+    try {
+      memberIds = (await store.leagueMemberIds(id)).toSet();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load members: $e')),
+        );
+      }
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _togglePlayer(Player player, bool selected) async {
+    final leagueId = selectedLeagueId;
+    if (leagueId == null) return;
+    setState(() => loading = true);
+    final error = selected
+        ? await store.addLeagueMember(leagueId, player.id)
+        : await store.removeLeagueMember(leagueId, player.id);
+    if (error == null) {
+      if (selected) {
+        memberIds.add(player.id);
+      } else {
+        memberIds.remove(player.id);
+      }
+    }
+    if (!mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+    setState(() => loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedList = store.leagues.where((l) => l.id == selectedLeagueId).toList();
+    final selected = selectedList.isEmpty ? null : selectedList.first;
+    final playerList = store.players.where((p) => !p.admin).toList();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('League Management')),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text(
+              'CREATE NEW LEAGUE',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'League name',
+                      hintText: 'e.g. CHIBBYBALL Season 1',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  height: 56,
+                  child: FilledButton(
+                    onPressed: loading ? null : _createLeague,
+                    child: const Text('CREATE'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'LEAGUES',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            if (store.leagues.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(18),
+                  child: Text('No leagues created yet.'),
+                ),
+              )
+            else
+              ...store.leagues.map(
+                (league) => Card(
+                  child: ListTile(
+                    selected: league.id == selectedLeagueId,
+                    onTap: () => _selectLeague(league.id),
+                    leading: Icon(
+                      league.status == 'active'
+                          ? Icons.play_circle_fill
+                          : league.status == 'completed'
+                              ? Icons.check_circle
+                              : Icons.lock_open,
+                    ),
+                    title: Text(league.name),
+                    subtitle: Text('Status: ${league.status.toUpperCase()}'),
+                    trailing: league.id == selectedLeagueId
+                        ? const Icon(Icons.check)
+                        : null,
+                  ),
+                ),
+              ),
+            if (selected != null) ...[
+              const SizedBox(height: 18),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        selected.name,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text('Current status: ${selected.status.toUpperCase()}'),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: loading || selected.status == 'active'
+                                ? null
+                                : () => _changeStatus('active'),
+                            icon: const Icon(Icons.play_arrow),
+                            label: const Text('ACTIVATE'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: loading || selected.status == 'completed'
+                                ? null
+                                : () => _changeStatus('completed'),
+                            icon: const Icon(Icons.check),
+                            label: const Text('COMPLETE'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: loading || selected.status == 'open'
+                                ? null
+                                : () => _changeStatus('open'),
+                            icon: const Icon(Icons.lock_open),
+                            label: const Text('REOPEN'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'PLAYERS (${memberIds.length})',
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: Column(
+                  children: playerList.map((player) {
+                    final checked = memberIds.contains(player.id);
+                    return CheckboxListTile(
+                      value: checked,
+                      onChanged: loading
+                          ? null
+                          : (value) => _togglePlayer(player, value == true),
+                      title: Text(player.gamerTag),
+                      subtitle: Text(player.name),
+                      secondary: const Icon(Icons.person),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (selected.status == 'active')
+                const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(14),
+                    child: Text(
+                      'This is the active league. Add players here before generating fixtures.',
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
 // ADMIN
 // ============================================================
 
@@ -1855,6 +2276,26 @@ class _AdminPageState extends State<AdminPage> {
               ),
             ),
             const SizedBox(height: 15),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const LeagueManagementPage(),
+                          ),
+                        ).then((_) async {
+                          await store.refreshLeagues();
+                          await store.loadMatchesFromSupabase();
+                          if (mounted) setState(() {});
+                        }),
+                icon: const Icon(Icons.emoji_events),
+                label: const Text('MANAGE LEAGUES'),
+              ),
+            ),
+            const SizedBox(height: 10),
             SizedBox(
               height: 50,
               child: FilledButton.icon(
