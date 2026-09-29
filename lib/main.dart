@@ -1412,6 +1412,11 @@ class TablePage extends StatelessWidget {
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
+              columnSpacing: 10,
+              horizontalMargin: 8,
+              dataRowMinHeight: 48,
+              dataRowMaxHeight: 56,
+              headingRowHeight: 48,
               columns: const [
                 DataColumn(label: Text('#')),
                 DataColumn(label: Text('PLAYER')),
@@ -1428,7 +1433,13 @@ class TablePage extends StatelessWidget {
                     cells: [
                       DataCell(Text('${i + 1}')),
                       DataCell(
-                        Text(store.playerName(ordered[i])),
+                        SizedBox(
+                          width: 82,
+                          child: Text(
+                            store.playerName(ordered[i]),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
                       DataCell(
                         Text('${table[ordered[i]]!['played']}'),
