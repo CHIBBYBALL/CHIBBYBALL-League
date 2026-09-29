@@ -601,6 +601,32 @@ class Store {
     return matches.where((m) => m.status == 'Confirmed').toList();
   }
 
+  Map<String, int> statsForPlayer(String playerId) {
+    final table = buildTable();
+    return Map<String, int>.from(table[playerId] ?? {
+      'played': 0,
+      'won': 0,
+      'drawn': 0,
+      'lost': 0,
+      'gf': 0,
+      'ga': 0,
+      'gd': 0,
+      'points': 0,
+    });
+  }
+
+  List<MatchItem> confirmedMatchesForPlayer(String playerId) {
+    final result = confirmedMatches()
+        .where((m) => m.homeId == playerId || m.awayId == playerId)
+        .toList();
+    result.sort((a, b) {
+      final roundCompare = b.round.compareTo(a.round);
+      if (roundCompare != 0) return roundCompare;
+      return b.id.compareTo(a.id);
+    });
+    return result;
+  }
+
   Map<String, Map<String, int>> buildTable() {
     final table = <String, Map<String, int>>{};
 
@@ -1552,13 +1578,186 @@ class ProfilePage extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.bar_chart),
+            title: const Text('My Stats & Match History'),
+            subtitle: const Text('View your confirmed results and league statistics.'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const PlayerStatsPage(),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
         FilledButton.icon(
           onPressed: () => logout(context),
           icon: const Icon(Icons.logout),
           label: const Text('LOG OUT'),
         ),
       ],
+    );
+  }
+}
+
+// ============================================================
+// PLAYER STATS & MATCH HISTORY
+// ============================================================
+
+class PlayerStatsPage extends StatelessWidget {
+  const PlayerStatsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final store = Store.instance;
+    final player = store.current;
+
+    if (player == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('My Stats')),
+        body: const Center(child: Text('No player is signed in.')),
+      );
+    }
+
+    final stats = store.statsForPlayer(player.id);
+    final history = store.confirmedMatchesForPlayer(player.id);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Stats & History')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Center(
+            child: Text(
+              player.gamerTag,
+              style: const TextStyle(
+                fontSize: 25,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.65,
+            children: [
+              _statCard('Played', stats['played']!),
+              _statCard('Points', stats['points']!),
+              _statCard('Wins', stats['won']!),
+              _statCard('Draws', stats['drawn']!),
+              _statCard('Losses', stats['lost']!),
+              _statCard('Goals For', stats['gf']!),
+              _statCard('Goals Against', stats['ga']!),
+              _statCard('Goal Difference', stats['gd']!),
+            ],
+          ),
+          const SizedBox(height: 25),
+          const Text(
+            'CONFIRMED MATCH HISTORY',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (history.isEmpty)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: Text(
+                  'No confirmed matches yet.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
+          else
+            for (final match in history) _historyCard(store, player, match),
+          const SizedBox(height: 12),
+          const Text(
+            'Only CONFIRMED matches are included in these statistics.',
+            style: TextStyle(color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _statCard(String label, int value) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '$value',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(label, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Widget _historyCard(
+    Store store,
+    Player player,
+    MatchItem match,
+  ) {
+    final isHome = match.homeId == player.id;
+    final opponentId = isHome ? match.awayId : match.homeId;
+    final opponent = store.playerName(opponentId);
+    final homeScore = match.homeScore ?? 0;
+    final awayScore = match.awayScore ?? 0;
+    final myScore = isHome ? homeScore : awayScore;
+    final opponentScore = isHome ? awayScore : homeScore;
+
+    String result;
+    IconData icon;
+    if (myScore > opponentScore) {
+      result = 'WIN';
+      icon = Icons.emoji_events;
+    } else if (myScore < opponentScore) {
+      result = 'LOSS';
+      icon = Icons.close;
+    } else {
+      result = 'DRAW';
+      icon = Icons.remove;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ListTile(
+        leading: CircleAvatar(child: Icon(icon, size: 20)),
+        title: Text(
+          '${player.gamerTag} vs $opponent',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text('Matchday ${match.round} • $result'),
+        trailing: Text(
+          '$homeScore - $awayScore',
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
     );
   }
 }
