@@ -180,6 +180,107 @@ class Store {
           );
       } catch (_) {}
     }
+
+    try {
+      await refreshPlayers();
+      await loadMatchesFromSupabase();
+    } catch (_) {}
+  }
+
+  Future<String?> _activeLeagueId() async {
+    final row = await supabase
+        .from('leagues')
+        .select('id')
+        .eq('status', 'active')
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    return row?['id']?.toString();
+  }
+
+  Future<void> loadMatchesFromSupabase() async {
+    final leagueId = await _activeLeagueId();
+    if (leagueId == null) return;
+
+    final data = await supabase
+        .from('matches')
+        .select(
+          'id, round, home_player_id, away_player_id, status, home_score, away_score',
+        )
+        .eq('league_id', leagueId)
+        .order('round')
+        .order('created_at');
+
+    final rows = (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    final loaded = <MatchItem>[];
+
+    if (rows.isNotEmpty) {
+      final matchIds = rows.map((r) => r['id'].toString()).toList();
+      final submissions = await supabase
+          .from('match_submissions')
+          .select(
+            'match_id, player_id, claimed_home_score, claimed_away_score, proof_path',
+          )
+          .inFilter('match_id', matchIds);
+
+      final submissionsByMatch = <String, List<Map<String, dynamic>>>{};
+      for (final item in (submissions as List)) {
+        final row = Map<String, dynamic>.from(item);
+        final id = row['match_id'].toString();
+        submissionsByMatch.putIfAbsent(id, () => []).add(row);
+      }
+
+      for (final row in rows) {
+        final match = MatchItem(
+          id: row['id'].toString(),
+          homeId: row['home_player_id'].toString(),
+          awayId: row['away_player_id'].toString(),
+          round: (row['round'] as num).toInt(),
+          homeScore: (row['home_score'] as num?)?.toInt(),
+          awayScore: (row['away_score'] as num?)?.toInt(),
+          status: _dbStatusToLocal(row['status']?.toString()),
+        );
+
+        for (final sub in submissionsByMatch[match.id] ?? []) {
+          final playerId = sub['player_id'].toString();
+          final home = (sub['claimed_home_score'] as num?)?.toInt();
+          final away = (sub['claimed_away_score'] as num?)?.toInt();
+          final proof = sub['proof_path']?.toString();
+
+          if (playerId == match.homeId) {
+            match.homeClaimHome = home;
+            match.homeClaimAway = away;
+            match.homeProof = proof;
+          } else if (playerId == match.awayId) {
+            match.awayClaimHome = home;
+            match.awayClaimAway = away;
+            match.awayProof = proof;
+          }
+        }
+
+        loaded.add(match);
+      }
+    }
+
+    matches
+      ..clear()
+      ..addAll(loaded);
+
+    await save();
+  }
+
+  String _dbStatusToLocal(String? status) {
+    switch (status) {
+      case 'awaiting_confirmation':
+        return 'Awaiting Confirmation';
+      case 'confirmed':
+        return 'Confirmed';
+      case 'disputed':
+        return 'Disputed';
+      default:
+        return 'Scheduled';
+    }
   }
 
   Future<void> save() async {
@@ -311,6 +412,7 @@ class Store {
 
       try {
         await refreshPlayers();
+        await loadMatchesFromSupabase();
       } catch (_) {
         players.removeWhere((p) => p.id == user.id);
         players.add(current!);
@@ -368,6 +470,7 @@ class Store {
 
       try {
         await refreshPlayers();
+        await loadMatchesFromSupabase();
       } catch (_) {}
 
       return current;
@@ -394,85 +497,104 @@ class Store {
     return findPlayer(id)?.gamerTag ?? 'Unknown Player';
   }
 
-  void generateFixtures() {
+  Future<String?> generateFixtures() async {
     final activePlayers = players.where((p) => !p.admin).toList();
 
-    if (activePlayers.length < 2) return;
+    if (activePlayers.length < 2) {
+      return 'At least 2 players are required.';
+    }
 
-    matches.clear();
+    final leagueId = await _activeLeagueId();
+    if (leagueId == null) {
+      return 'No active league found.';
+    }
+
+    await loadMatchesFromSupabase();
+    if (matches.isNotEmpty) {
+      return 'Fixtures already exist in Supabase.';
+    }
 
     final ids = activePlayers.map((p) => p.id).toList();
-
-    if (ids.length.isOdd) {
-      ids.add('BYE');
-    }
+    if (ids.length.isOdd) ids.add('BYE');
 
     final total = ids.length;
     final rounds = total - 1;
     final rotation = List<String>.from(ids);
+    final rows = <Map<String, dynamic>>[];
 
     for (int round = 0; round < rounds; round++) {
       for (int i = 0; i < total ~/ 2; i++) {
         final first = rotation[i];
         final second = rotation[total - 1 - i];
-
         if (first == 'BYE' || second == 'BYE') continue;
 
-        matches.add(
-          MatchItem(
-            id: '${round + 1}-${i + 1}-${DateTime.now().microsecondsSinceEpoch}',
-            homeId: round.isEven ? first : second,
-            awayId: round.isEven ? second : first,
-            round: round + 1,
-          ),
-        );
+        final homeId = round.isEven ? first : second;
+        final awayId = round.isEven ? second : first;
+
+        rows.add({
+          'league_id': leagueId,
+          'round': round + 1,
+          'home_player_id': homeId,
+          'away_player_id': awayId,
+          'status': 'scheduled',
+        });
       }
 
       rotation.insert(1, rotation.removeLast());
     }
+
+    try {
+      await supabase.from('matches').insert(rows);
+      await loadMatchesFromSupabase();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not save fixtures: ${e.message}';
+    } catch (e) {
+      return 'Could not save fixtures: $e';
+    }
   }
 
-  Future<void> submitResult({
+  Future<String?> submitResult({
     required MatchItem match,
     required Player player,
     required int homeScore,
     required int awayScore,
-    required String proofPath,
+    required File proofFile,
   }) async {
-    if (player.id == match.homeId) {
-      match.homeClaimHome = homeScore;
-      match.homeClaimAway = awayScore;
-      match.homeProof = proofPath;
-    } else if (player.id == match.awayId) {
-      match.awayClaimHome = homeScore;
-      match.awayClaimAway = awayScore;
-      match.awayProof = proofPath;
-    } else {
-      return;
+    if (player.id != match.homeId && player.id != match.awayId) {
+      return 'You are not a player in this match.';
     }
 
-    final bothSubmitted =
-        match.homeProof != null && match.awayProof != null;
+    try {
+      final proofPath =
+          '${player.id}/${match.id}/${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-    if (!bothSubmitted) {
-      match.status = 'Awaiting Confirmation';
-      await save();
-      return;
+      await supabase.storage.from('match-proofs').upload(
+            proofPath,
+            proofFile,
+            fileOptions: const FileOptions(upsert: true),
+          );
+
+      await supabase.from('match_submissions').upsert(
+        {
+          'match_id': match.id,
+          'player_id': player.id,
+          'claimed_home_score': homeScore,
+          'claimed_away_score': awayScore,
+          'proof_path': proofPath,
+        },
+        onConflict: 'match_id,player_id',
+      );
+
+      await loadMatchesFromSupabase();
+      return null;
+    } on StorageException catch (e) {
+      return 'Proof upload failed: ${e.message}';
+    } on PostgrestException catch (e) {
+      return 'Result save failed: ${e.message}';
+    } catch (e) {
+      return 'Result submission failed: $e';
     }
-
-    final sameScore =
-        match.homeClaimHome == match.awayClaimHome &&
-        match.homeClaimAway == match.awayClaimAway;
-
-    if (sameScore) {
-      match.homeScore = match.homeClaimHome;
-      match.awayScore = match.homeClaimAway;
-      match.status = 'Confirmed';
-    } else {
-      match.status = 'Disputed';
-    }
-
-    await save();
   }
 
   List<MatchItem> confirmedMatches() {
@@ -954,10 +1076,16 @@ class _FixturesPageState extends State<FixturesPage> {
           icon: const Icon(Icons.auto_awesome),
           label: const Text('Generate Fixtures'),
           onPressed: () async {
-            store.generateFixtures();
-            await store.save();
-
-            if (mounted) setState(() {});
+            final error = await store.generateFixtures();
+            if (!mounted) return;
+            setState(() {});
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  error ?? 'Fixtures saved to Supabase successfully.',
+                ),
+              ),
+            );
           },
         ),
       );
@@ -1066,12 +1194,12 @@ class _ResultPageState extends State<ResultPage> {
 
     setState(() => loading = true);
 
-    await Store.instance.submitResult(
+    final error = await Store.instance.submitResult(
       match: widget.match,
       player: player,
       homeScore: homeScore,
       awayScore: awayScore,
-      proofPath: proof!.path,
+      proofFile: proof!,
     );
 
     if (!mounted) return;
@@ -1081,7 +1209,7 @@ class _ResultPageState extends State<ResultPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Result status: ${widget.match.status}',
+          error ?? 'Result saved. Status: ${widget.match.status}',
         ),
       ),
     );
@@ -1388,16 +1516,19 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Future<void> generateFixtures() async {
-    Store.instance.generateFixtures();
-    await Store.instance.save();
+    setState(() => loading = true);
+
+    final error = await Store.instance.generateFixtures();
 
     if (!mounted) return;
 
-    setState(() {});
+    setState(() => loading = false);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Fixtures generated successfully.'),
+      SnackBar(
+        content: Text(
+          error ?? 'Fixtures saved to Supabase successfully.',
+        ),
       ),
     );
   }
