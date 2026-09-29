@@ -2199,6 +2199,217 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
   }
 }
 
+
+// ============================================================
+// ADMIN PLAYER MANAGEMENT
+// ============================================================
+
+class PlayerManagementPage extends StatefulWidget {
+  const PlayerManagementPage({super.key});
+
+  @override
+  State<PlayerManagementPage> createState() => _PlayerManagementPageState();
+}
+
+class _PlayerManagementPageState extends State<PlayerManagementPage> {
+  final searchController = TextEditingController();
+  String? selectedLeagueId;
+  Set<String> memberIds = {};
+  bool loading = false;
+
+  Store get store => Store.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    try {
+      await store.refreshPlayers();
+      await store.refreshLeagues();
+      if (store.leagues.isNotEmpty) {
+        selectedLeagueId ??= store.leagues.first.id;
+        memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load player management: $e')),
+        );
+      }
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _selectLeague(String? id) async {
+    if (id == null) return;
+    setState(() {
+      selectedLeagueId = id;
+      loading = true;
+    });
+    try {
+      memberIds = (await store.leagueMemberIds(id)).toSet();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load league members: $e')),
+        );
+      }
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _toggleMember(Player player, bool shouldAdd) async {
+    final leagueId = selectedLeagueId;
+    if (leagueId == null) return;
+
+    setState(() => loading = true);
+    final error = shouldAdd
+        ? await store.addLeagueMember(leagueId, player.id)
+        : await store.removeLeagueMember(leagueId, player.id);
+
+    if (error == null) {
+      if (shouldAdd) {
+        memberIds.add(player.id);
+      } else {
+        memberIds.remove(player.id);
+      }
+    }
+
+    if (mounted) {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error ?? (shouldAdd
+                ? '${player.gamerTag} added to league.'
+                : '${player.gamerTag} removed from league.'),
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = searchController.text.trim().toLowerCase();
+    final players = store.players.where((p) {
+      if (p.admin) return false;
+      if (query.isEmpty) return true;
+      return p.gamerTag.toLowerCase().contains(query) ||
+          p.name.toLowerCase().contains(query);
+    }).toList();
+
+    final selectedLeague = store.leagues.where((l) => l.id == selectedLeagueId).toList();
+    final league = selectedLeague.isEmpty ? null : selectedLeague.first;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Player Management')),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text(
+              'PLAYERS',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Manage registered players and their league membership.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 18),
+            TextField(
+              controller: searchController,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Search player or gamer tag',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (store.leagues.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('Create a league first before assigning players.'),
+                ),
+              )
+            else ...[
+              DropdownButtonFormField<String>(
+                value: selectedLeagueId,
+                decoration: const InputDecoration(
+                  labelText: 'League',
+                  border: OutlineInputBorder(),
+                ),
+                items: store.leagues
+                    .map(
+                      (league) => DropdownMenuItem<String>(
+                        value: league.id,
+                        child: Text(league.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: loading ? null : _selectLeague,
+              ),
+              const SizedBox(height: 10),
+              if (league != null)
+                Text(
+                  '${memberIds.length} player${memberIds.length == 1 ? '' : 's'} in ${league.name} • ${league.status.toUpperCase()}',
+                  style: const TextStyle(color: Colors.grey),
+                ),
+            ],
+            const SizedBox(height: 16),
+            if (players.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(18),
+                  child: Text('No matching players found.'),
+                ),
+              )
+            else
+              ...players.map(
+                (player) {
+                  final isMember = memberIds.contains(player.id);
+                  return Card(
+                    child: CheckboxListTile(
+                      value: isMember,
+                      onChanged: loading || selectedLeagueId == null
+                          ? null
+                          : (value) => _toggleMember(player, value == true),
+                      secondary: CircleAvatar(
+                        child: Text(
+                          player.gamerTag.isEmpty
+                              ? '?'
+                              : player.gamerTag[0].toUpperCase(),
+                        ),
+                      ),
+                      title: Text(player.gamerTag),
+                      subtitle: Text(
+                        '${player.name} • ${player.admin ? 'Admin' : 'Player'}',
+                      ),
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ============================================================
 // ADMIN
 // ============================================================
@@ -2309,6 +2520,26 @@ class _AdminPageState extends State<AdminPage> {
                         }),
                 icon: const Icon(Icons.emoji_events),
                 label: const Text('MANAGE LEAGUES'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const PlayerManagementPage(),
+                          ),
+                        ).then((_) async {
+                          await store.refreshPlayers();
+                          await store.refreshLeagues();
+                          if (mounted) setState(() {});
+                        }),
+                icon: const Icon(Icons.manage_accounts),
+                label: const Text('MANAGE PLAYERS'),
               ),
             ),
             const SizedBox(height: 10),
