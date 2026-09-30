@@ -319,7 +319,7 @@ class Store {
     try {
       await refreshPlayers();
       await refreshLeagues();
-      await loadMatchesFromSupabase(autoVerify: true);
+      await loadMatchesFromSupabase();
     } catch (_) {}
   }
 
@@ -446,7 +446,7 @@ class Store {
     }
   }
 
-  Future<void> loadMatchesFromSupabase({bool autoVerify = false}) async {
+  Future<void> loadMatchesFromSupabase() async {
     final leagueId = await _activeLeagueId();
     if (leagueId == null) {
       matches.clear();
@@ -518,40 +518,7 @@ class Store {
       ..clear()
       ..addAll(loaded);
 
-    if (autoVerify) {
-      await autoVerifyPendingMatches();
-    }
-
     await save();
-  }
-
-  Future<void> autoVerifyPendingMatches() async {
-    // If both players have submitted proof, always run the automatic
-    // verification regardless of the current local status. This prevents a
-    // match from remaining stuck on Awaiting Confirmation after the second
-    // submission. Confirmed/Disputed matches are already final and are skipped.
-    final candidates = matches
-        .where((m) =>
-            m.status != 'Confirmed' &&
-            m.status != 'Disputed' &&
-            m.homeProof != null &&
-            m.homeProof!.isNotEmpty &&
-            m.awayProof != null &&
-            m.awayProof!.isNotEmpty &&
-            m.homeClaimHome != null &&
-            m.homeClaimAway != null &&
-            m.awayClaimHome != null &&
-            m.awayClaimAway != null)
-        .toList();
-
-    if (candidates.isEmpty) return;
-
-    for (final match in candidates) {
-      await _finalizeMatchAfterScreenshotCheck(match, reload: false);
-    }
-
-    // Reload once after all candidate matches have been finalized.
-    await loadMatchesFromSupabase(autoVerify: false);
   }
 
   String _dbStatusToLocal(String? status) {
@@ -845,13 +812,6 @@ class Store {
   Future<String?> finalizeMatchAfterScreenshotCheck(
     MatchItem match,
   ) async {
-    return _finalizeMatchAfterScreenshotCheck(match, reload: true);
-  }
-
-  Future<String?> _finalizeMatchAfterScreenshotCheck(
-    MatchItem match, {
-    required bool reload,
-  }) async {
     final homeProof = match.homeProof;
     final awayProof = match.awayProof;
     final hh = match.homeClaimHome;
@@ -869,7 +829,7 @@ class Store {
         'finalize_match_after_screenshot_check',
         params: {'p_match_id': match.id, 'p_verified': false},
       );
-      if (reload) await loadMatchesFromSupabase(autoVerify: false);
+      await loadMatchesFromSupabase();
       return 'The two submitted scores do not match. Match marked DISPUTED.';
     }
 
@@ -906,7 +866,7 @@ class Store {
         'finalize_match_after_screenshot_check',
         params: {'p_match_id': match.id, 'p_verified': verified},
       );
-      if (reload) await loadMatchesFromSupabase(autoVerify: false);
+      await loadMatchesFromSupabase();
 
       if (!verified) {
         return 'Screenshots did not pass Full Time, score, or same-match verification. Match marked DISPUTED.';
@@ -914,31 +874,11 @@ class Store {
 
       return 'Both screenshots verified. Match CONFIRMED automatically.';
     } on StorageException catch (e) {
-      // A failed screenshot read is a failed verification, not an
-      // Awaiting Confirmation state. The rule is: if either proof cannot be
-      // verified, the match is DISPUTED.
-      try {
-        await supabase.rpc(
-          'finalize_match_after_screenshot_check',
-          params: {'p_match_id': match.id, 'p_verified': false},
-        );
-        if (reload) await loadMatchesFromSupabase(autoVerify: false);
-      } catch (_) {}
-      return 'Could not verify proof screenshots: ${e.message}. Match marked DISPUTED.';
+      return 'Could not read proof screenshots: ${e.message}';
     } on PostgrestException catch (e) {
-      // If the verification result cannot be saved, do not silently leave the
-      // match looking like it is still waiting. Surface the database error.
       return 'Verification save failed: ${e.message}';
     } catch (e) {
-      // OCR/plugin/processing failures also count as a failed automatic check.
-      try {
-        await supabase.rpc(
-          'finalize_match_after_screenshot_check',
-          params: {'p_match_id': match.id, 'p_verified': false},
-        );
-        if (reload) await loadMatchesFromSupabase(autoVerify: false);
-      } catch (_) {}
-      return 'Screenshot verification failed: $e. Match marked DISPUTED.';
+      return 'Screenshot verification failed: $e';
     }
   }
 
@@ -974,7 +914,7 @@ class Store {
         onConflict: 'match_id,player_id',
       );
 
-      await loadMatchesFromSupabase(autoVerify: true);
+      await loadMatchesFromSupabase();
 
       MatchItem? updated;
       for (final item in matches) {
@@ -983,14 +923,11 @@ class Store {
           break;
         }
       }
-
-      if (updated != null) {
-        if (updated.status == 'Disputed') {
-          return 'Screenshots did not pass Full Time, score, or same-match verification. Match marked DISPUTED.';
-        }
-        if (updated.status == 'Confirmed') {
-          return 'Both screenshots verified. Match CONFIRMED automatically.';
-        }
+      if (updated != null && updated.homeProof != null &&
+          updated.awayProof != null) {
+        final verificationMessage =
+            await finalizeMatchAfterScreenshotCheck(updated);
+        return verificationMessage;
       }
 
       return null;
@@ -1669,6 +1606,17 @@ class _ResultPageState extends State<ResultPage> {
   File? proof;
   bool loading = false;
 
+  Future<Uint8List?> _loadProof(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    try {
+      return await Store.instance.supabase.storage
+          .from('match-proofs')
+          .download(path);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> chooseProof() async {
     final image = await ImagePicker().pickImage(
       source: ImageSource.gallery,
@@ -1705,7 +1653,7 @@ class _ResultPageState extends State<ResultPage> {
 
     setState(() => loading = true);
 
-    final error = await Store.instance.submitResult(
+    final message = await Store.instance.submitResult(
       match: widget.match,
       player: player,
       homeScore: homeScore,
@@ -1720,7 +1668,7 @@ class _ResultPageState extends State<ResultPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          error ?? 'Result saved. Status: ${widget.match.status}',
+          message ?? 'Result saved.',
         ),
       ),
     );
@@ -1733,11 +1681,13 @@ class _ResultPageState extends State<ResultPage> {
     super.initState();
     final player = Store.instance.current;
     final match = widget.match;
-    if (player?.id == match.homeId && match.homeClaimHome != null &&
+    if (player?.id == match.homeId &&
+        match.homeClaimHome != null &&
         match.homeClaimAway != null) {
       homeController.text = '${match.homeClaimHome}';
       awayController.text = '${match.homeClaimAway}';
-    } else if (player?.id == match.awayId && match.awayClaimHome != null &&
+    } else if (player?.id == match.awayId &&
+        match.awayClaimHome != null &&
         match.awayClaimAway != null) {
       homeController.text = '${match.awayClaimHome}';
       awayController.text = '${match.awayClaimAway}';
@@ -1749,6 +1699,107 @@ class _ResultPageState extends State<ResultPage> {
     homeController.dispose();
     awayController.dispose();
     super.dispose();
+  }
+
+  Widget _storedProofCard({
+    required String title,
+    required String? path,
+  }) {
+    if (path == null || path.isEmpty) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Text('$title\nNo screenshot submitted.'),
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            FutureBuilder<Uint8List?>(
+              future: _loadProof(path),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SizedBox(
+                    height: 180,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+
+                final bytes = snapshot.data;
+                if (bytes == null) {
+                  return const SizedBox(
+                    height: 120,
+                    child: Center(
+                      child: Text('Could not load this screenshot.'),
+                    ),
+                  );
+                }
+
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: InteractiveViewer(
+                    minScale: 0.8,
+                    maxScale: 4,
+                    child: Image.memory(
+                      bytes,
+                      width: double.infinity,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _verificationExplanation(MatchItem match) {
+    String message;
+    IconData icon;
+
+    switch (match.status) {
+      case 'Disputed':
+        message =
+            'Automatic verification failed. One or more submitted screenshots did not pass the Full Time, score, or same-match checks.';
+        icon = Icons.error_outline;
+        break;
+      case 'Confirmed':
+        message =
+            'Both players submitted screenshots that passed the automatic Full Time, score, and same-match checks.';
+        icon = Icons.verified_outlined;
+        break;
+      case 'Awaiting Confirmation':
+        message =
+            'Waiting for both players to submit their screenshot proof. The match will be checked automatically when both are available.';
+        icon = Icons.hourglass_top;
+        break;
+      default:
+        message = 'No result has been submitted yet.';
+        icon = Icons.info_outline;
+    }
+
+    return Card(
+      child: ListTile(
+        leading: Icon(icon),
+        title: const Text('Automatic verification'),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(message),
+        ),
+      ),
+    );
   }
 
   @override
@@ -1771,13 +1822,40 @@ class _ResultPageState extends State<ResultPage> {
           ),
           const SizedBox(height: 10),
           Text('Status: ${match.status}'),
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
+          _verificationExplanation(match),
+          const SizedBox(height: 16),
+
+          // Both players can see BOTH stored proof screenshots.
+          const Text(
+            'MATCH EVIDENCE',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          _storedProofCard(
+            title:
+                '${store.playerName(match.homeId)} • '
+                'Claimed ${match.homeClaimHome ?? '-'}-${match.homeClaimAway ?? '-'}',
+            path: match.homeProof,
+          ),
+          _storedProofCard(
+            title:
+                '${store.playerName(match.awayId)} • '
+                'Claimed ${match.awayClaimHome ?? '-'}-${match.awayClaimAway ?? '-'}',
+            path: match.awayProof,
+          ),
+
+          const Divider(height: 32),
+          const Text(
+            'SUBMIT / UPDATE YOUR RESULT',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 14),
           TextField(
             controller: homeController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText:
-                  '${store.playerName(match.homeId)} score',
+              labelText: '${store.playerName(match.homeId)} score',
               border: const OutlineInputBorder(),
             ),
           ),
@@ -1786,8 +1864,7 @@ class _ResultPageState extends State<ResultPage> {
             controller: awayController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText:
-                  '${store.playerName(match.awayId)} score',
+              labelText: '${store.playerName(match.awayId)} score',
               border: const OutlineInputBorder(),
             ),
           ),
@@ -2529,7 +2606,7 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
 
   Future<void> _refresh() async {
     setState(() => loading = true);
-    try { await store.refreshLeagues(); await store.loadMatchesFromSupabase(autoVerify: true); }
+    try { await store.refreshLeagues(); await store.loadMatchesFromSupabase(); }
     catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh error: $e'))); }
     if (mounted) setState(() => loading = false);
   }
@@ -2563,77 +2640,20 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
 
   @override
   Widget build(BuildContext context) {
-    final all = [...store.matches]
-      ..sort((a, b) => b.round.compareTo(a.round));
-    final visible = filter == 'All'
-        ? all
-        : all.where((m) => m.status == filter).toList();
-
-    final children = <Widget>[
-      const Card(
-        child: Padding(
-          padding: EdgeInsets.all(14),
-          child: Text(
-            'View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.',
-          ),
-        ),
-      ),
-      const SizedBox(height: 8),
-      SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final value in [
-              'All',
-              'Awaiting Confirmation',
-              'Confirmed',
-              'Disputed',
-            ])
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: ChoiceChip(
-                  label: Text(value),
-                  selected: filter == value,
-                  onSelected: (_) => setState(() => filter = value),
-                ),
-              ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 8),
-    ];
-
-    if (visible.isEmpty) {
-      children.add(
-        const Card(
-          child: Padding(
-            padding: EdgeInsets.all(18),
-            child: Text('No results to review.'),
-          ),
-        ),
-      );
-    } else {
-      children.addAll(
-        visible.map((m) => _reviewCard(context, m)),
-      );
-    }
-
+    final all = [...store.matches]..sort((a, b) => b.round.compareTo(a.round));
+    final visible = filter == 'All' ? all : all.where((m) => m.status == filter).toList();
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Result Review'),
-        actions: [
-          IconButton(
-            onPressed: loading ? null : _refresh,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Result Review'), actions: [IconButton(onPressed: loading ? null : _refresh, icon: const Icon(Icons.refresh))]),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.all(12),
-          children: children,
-        ),
+        child: ListView(padding: const EdgeInsets.all(12), children: [
+          const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.'))),
+          const SizedBox(height: 8),
+          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['All', 'Awaiting Confirmation', 'Confirmed', 'Disputed'].map((value) => Padding(padding: const EdgeInsets.only(right: 8), child: ChoiceChip(label: Text(value), selected: filter == value, onSelected: (_) => setState(() => filter = value))).toList()))),
+          const SizedBox(height: 8),
+          if (visible.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No results to review.')))
+          else ...visible.map((m) => _reviewCard(context, m)),
+        ]),
       ),
     );
   }
