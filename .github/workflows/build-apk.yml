@@ -26,53 +26,60 @@ jobs:
       - name: Add Internet permission
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
+
           if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
             sed -i '/<manifest[^>]*>/a\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
           fi
 
-      - name: Add ML Kit Android dependencies
+      - name: Add ML Kit language dependencies
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
           deps = [
-              'implementation "com.google.mlkit:text-recognition:16.0.1"',
-              'implementation "com.google.mlkit:text-recognition-chinese:16.0.1"',
-              'implementation "com.google.mlkit:text-recognition-devanagari:16.0.1"',
-              'implementation "com.google.mlkit:text-recognition-japanese:16.0.1"',
-              'implementation "com.google.mlkit:text-recognition-korean:16.0.1"',
+              "com.google.mlkit:text-recognition-chinese:16.0.1",
+              "com.google.mlkit:text-recognition-devanagari:16.0.1",
+              "com.google.mlkit:text-recognition-japanese:16.0.1",
+              "com.google.mlkit:text-recognition-korean:16.0.1",
           ]
 
-          candidates = [
-              Path("android/app/build.gradle"),
-              Path("android/app/build.gradle.kts"),
-          ]
+          groovy = Path("android/app/build.gradle")
+          kotlin = Path("android/app/build.gradle.kts")
 
-          gradle_file = next((p for p in candidates if p.exists()), None)
+          if groovy.exists():
+              path = groovy
+              text = path.read_text()
 
-          if gradle_file is None:
-              raise SystemExit("Could not find Android app Gradle file")
-
-          text = gradle_file.read_text()
-
-          if "com.google.mlkit:text-recognition:16.0.1" not in text:
-              marker = "dependencies {"
-              if marker not in text:
-                  raise SystemExit("Could not find dependencies block")
-
-              additions = "\n".join(
-                  f"    {d}" for d in deps
-              ) + "\n"
-
-              text = text.replace(
-                  marker,
-                  marker + "\n" + additions,
-                  1
+              lines = "\n".join(
+                  f'    implementation "{d}"'
+                  for d in deps
+                  if d not in text
               )
 
-              gradle_file.write_text(text)
+              if lines:
+                  text += "\n\ndependencies {\n" + lines + "\n}\n"
+                  path.write_text(text)
 
-          print(f"Updated {gradle_file}")
+              print("Updated build.gradle")
+
+          elif kotlin.exists():
+              path = kotlin
+              text = path.read_text()
+
+              lines = "\n".join(
+                  f'    implementation("{d}")'
+                  for d in deps
+                  if d not in text
+              )
+
+              if lines:
+                  text += "\n\ndependencies {\n" + lines + "\n}\n"
+                  path.write_text(text)
+
+              print("Updated build.gradle.kts")
+
+          else:
+              raise SystemExit("Android Gradle file not found")
           PY
 
       - name: Get dependencies
