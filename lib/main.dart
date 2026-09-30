@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -191,14 +192,12 @@ class LeagueInfo {
   final String id;
   final String name;
   final String status;
+  final bool isPaid;
+  final double entryFee;
+  final String currency;
   final DateTime? createdAt;
-
-  const LeagueInfo({
-    required this.id,
-    required this.name,
-    required this.status,
-    this.createdAt,
-  });
+  const LeagueInfo({required this.id, required this.name, required this.status, this.isPaid = false, this.entryFee = 0, this.currency = 'NGN', this.createdAt});
+  String get feeLabel => isPaid ? '$currency ${entryFee.toStringAsFixed(0)} entry fee' : 'FREE ENTRY';
 }
 
 class MatchItem {
@@ -327,7 +326,7 @@ class Store {
   Future<void> refreshLeagues() async {
     final data = await supabase
         .from('leagues')
-        .select('id, name, status, created_at')
+        .select('id, name, status, is_paid, entry_fee, currency, created_at')
         .order('created_at', ascending: false);
 
     leagues
@@ -338,6 +337,9 @@ class Store {
           id: row['id'].toString(),
           name: row['name']?.toString() ?? '',
           status: row['status']?.toString() ?? 'open',
+          isPaid: row['is_paid'] == true,
+          entryFee: (row['entry_fee'] as num?)?.toDouble() ?? 0,
+          currency: row['currency']?.toString() ?? 'NGN',
           createdAt: row['created_at'] == null
               ? null
               : DateTime.tryParse(row['created_at'].toString()),
@@ -368,22 +370,18 @@ class Store {
     return activeLeagueId;
   }
 
-  Future<String?> createLeague(String name) async {
+  Future<String?> createLeague(String name, {required bool isPaid, required double entryFee, String currency = 'NGN'}) async {
     final clean = name.trim();
     if (clean.isEmpty) return 'League name is required.';
     if (Store.instance.current?.admin != true) return 'Admin access required.';
+    if (isPaid && entryFee <= 0) return 'Enter a valid entry fee for a paid league.';
+    if (!isPaid) entryFee = 0;
     try {
-      await supabase.from('leagues').insert({
-        'name': clean,
-        'status': 'open',
-      });
+      await supabase.from('leagues').insert({'name': clean, 'status': 'open', 'is_paid': isPaid, 'entry_fee': entryFee, 'currency': currency});
       await refreshLeagues();
       return null;
-    } on PostgrestException catch (e) {
-      return 'Could not create league: ${e.message}';
-    } catch (e) {
-      return 'Could not create league: $e';
-    }
+    } on PostgrestException catch (e) { return 'Could not create league: ${e.message}'; }
+      catch (e) { return 'Could not create league: $e'; }
   }
 
   Future<String?> setLeagueStatus(String leagueId, String status) async {
@@ -2148,6 +2146,8 @@ class LeagueManagementPage extends StatefulWidget {
 
 class _LeagueManagementPageState extends State<LeagueManagementPage> {
   final nameController = TextEditingController();
+  final feeController = TextEditingController();
+  bool isPaidLeague = false;
   bool loading = false;
   String? selectedLeagueId;
   Set<String> memberIds = {};
@@ -2163,6 +2163,7 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
   @override
   void dispose() {
     nameController.dispose();
+    feeController.dispose();
     super.dispose();
   }
 
@@ -2192,10 +2193,13 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
     final name = nameController.text.trim();
     if (name.isEmpty) return;
     setState(() => loading = true);
-    final error = await store.createLeague(name);
+    final fee = double.tryParse(feeController.text.trim()) ?? 0;
+    final error = await store.createLeague(name, isPaid: isPaidLeague, entryFee: fee, currency: 'NGN');
     if (!mounted) return;
     if (error == null) {
       nameController.clear();
+      feeController.clear();
+      isPaidLeague = false;
       await _refresh();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('League created.')),
@@ -2297,6 +2301,28 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('LEAGUE TYPE', style: TextStyle(fontWeight: FontWeight.bold)),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(isPaidLeague ? 'Paid League' : 'Free League'),
+                    subtitle: Text(isPaidLeague ? 'Players will see the entry fee before joining.' : 'No entry fee.'),
+                    value: isPaidLeague,
+                    onChanged: loading ? null : (value) => setState(() => isPaidLeague = value),
+                  ),
+                  if (isPaidLeague)
+                    TextField(
+                      controller: feeController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Entry fee (NGN)', hintText: 'e.g. 2000', prefixText: '₦ ', border: OutlineInputBorder()),
+                    ),
+                ]),
+              ),
+            ),
             const SizedBox(height: 24),
             const Text(
               'LEAGUES',
@@ -2324,7 +2350,7 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                               : Icons.lock_open,
                     ),
                     title: Text(league.name),
-                    subtitle: Text('Status: ${league.status.toUpperCase()}'),
+                    subtitle: Text('Status: ${league.status.toUpperCase()} • ${league.feeLabel}'),
                     trailing: league.id == selectedLeagueId
                         ? const Icon(Icons.check)
                         : null,
@@ -2348,6 +2374,8 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                       ),
                       const SizedBox(height: 4),
                       Text('Current status: ${selected.status.toUpperCase()}'),
+                      const SizedBox(height: 4),
+                      Text(selected.feeLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
@@ -2417,6 +2445,100 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
         ),
       ),
     );
+  }
+}
+
+
+// ============================================================
+// ADMIN RESULT REVIEW
+// ============================================================
+
+class ResultReviewPage extends StatefulWidget {
+  const ResultReviewPage({super.key});
+  @override
+  State<ResultReviewPage> createState() => _ResultReviewPageState();
+}
+
+class _ResultReviewPageState extends State<ResultReviewPage> {
+  bool loading = false;
+  String filter = 'All';
+  Store get store => Store.instance;
+
+  Future<void> _refresh() async {
+    setState(() => loading = true);
+    try { await store.refreshLeagues(); await store.loadMatchesFromSupabase(); }
+    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh error: $e'))); }
+    if (mounted) setState(() => loading = false);
+  }
+
+  String _playerName(String id) {
+    final list = store.players.where((p) => p.id == id).toList();
+    if (list.isEmpty) return 'Unknown player';
+    return list.first.gamerTag.isEmpty ? list.first.name : list.first.gamerTag;
+  }
+
+  Future<Uint8List?> _proofBytes(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    try { return await store.supabase.storage.from('match-proofs').download(path); }
+    catch (_) { return null; }
+  }
+
+  String _verificationLabel(MatchItem m) {
+    switch (m.status) {
+      case 'Confirmed': return 'AUTOMATIC VERIFICATION: PASSED';
+      case 'Disputed': return 'AUTOMATIC VERIFICATION: FAILED';
+      case 'Awaiting Confirmation': return 'AUTOMATIC VERIFICATION: WAITING FOR BOTH PLAYERS';
+      default: return 'AUTOMATIC VERIFICATION: NOT SUBMITTED';
+    }
+  }
+
+  Color _statusColor(BuildContext context, String status) {
+    if (status == 'Confirmed') return Colors.green;
+    if (status == 'Disputed') return Theme.of(context).colorScheme.error;
+    return Theme.of(context).colorScheme.primary;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final all = [...store.matches]..sort((a, b) => b.round.compareTo(a.round));
+    final visible = filter == 'All' ? all : all.where((m) => m.status == filter).toList();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Result Review'), actions: [IconButton(onPressed: loading ? null : _refresh, icon: const Icon(Icons.refresh))]),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(padding: const EdgeInsets.all(12), children: [
+          const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.'))),
+          const SizedBox(height: 8),
+          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['All', 'Awaiting Confirmation', 'Confirmed', 'Disputed'].map((value) => Padding(padding: const EdgeInsets.only(right: 8), child: ChoiceChip(label: Text(value), selected: filter == value, onSelected: (_) => setState(() => filter = value))).toList())),
+          const SizedBox(height: 8),
+          if (visible.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No results to review.')))
+          else ...visible.map((m) => _reviewCard(context, m)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _reviewCard(BuildContext context, MatchItem m) {
+    final homeName = _playerName(m.homeId), awayName = _playerName(m.awayId);
+    final homeScore = m.homeClaimHome != null && m.homeClaimAway != null ? '${m.homeClaimHome}-${m.homeClaimAway}' : 'Not submitted';
+    final awayScore = m.awayClaimHome != null && m.awayClaimAway != null ? '${m.awayClaimHome}-${m.awayClaimAway}' : 'Not submitted';
+    return Card(margin: const EdgeInsets.only(bottom: 12), child: ExpansionTile(
+      title: Text('$homeName vs $awayName'), subtitle: Text('Round ${m.round} • ${m.status}'), childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+      children: [Align(alignment: Alignment.centerLeft, child: Text(_verificationLabel(m), style: TextStyle(fontWeight: FontWeight.bold, color: _statusColor(context, m.status)))), const SizedBox(height: 8), Row(children: [Expanded(child: _claimBox(homeName, homeScore, m.homeProof)), const SizedBox(width: 8), Expanded(child: _claimBox(awayName, awayScore, m.awayProof))])],
+    ));
+  }
+
+  Widget _claimBox(String player, String score, String? proof) {
+    return Card(margin: EdgeInsets.zero, child: Padding(padding: const EdgeInsets.all(8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(player, style: const TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 4), Text('Claimed score: $score'), const SizedBox(height: 8),
+      if (proof == null) const SizedBox(height: 100, child: Center(child: Text('No screenshot submitted.')))
+      else FutureBuilder<Uint8List?>(future: _proofBytes(proof), builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()));
+        final bytes = snapshot.data;
+        if (bytes == null) return const SizedBox(height: 100, child: Center(child: Text('Screenshot unavailable.')));
+        return ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(bytes, height: 180, width: double.infinity, fit: BoxFit.contain));
+      }),
+    ])));
   }
 }
 
@@ -2741,6 +2863,20 @@ class _AdminPageState extends State<AdminPage> {
                         }),
                 icon: const Icon(Icons.emoji_events),
                 label: const Text('MANAGE LEAGUES'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ResultReviewPage()),
+                        ),
+                icon: const Icon(Icons.fact_check),
+                label: const Text('RESULT REVIEW'),
               ),
             ),
             const SizedBox(height: 10),
