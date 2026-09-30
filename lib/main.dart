@@ -1,129 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_config.dart';
-
-
-class ScreenshotCheck {
-  final bool valid;
-  final bool hasFullTime;
-  final int? scoreA;
-  final int? scoreB;
-  final String text;
-  final String reason;
-  final Set<String> tokens;
-
-  const ScreenshotCheck({
-    required this.valid,
-    required this.hasFullTime,
-    required this.scoreA,
-    required this.scoreB,
-    required this.text,
-    required this.reason,
-    required this.tokens,
-  });
-}
-
-Set<String> _meaningfulOcrTokens(String text) {
-  const ignored = {
-    'full', 'time', 'score', 'goal', 'goals', 'match', 'home', 'away',
-    'online', 'efootball', 'konami', 'game', 'pause', 'settings', 'resume',
-    'minutes', 'minute', 'player', 'players', 'result', 'final', 'ft',
-  };
-  return text
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
-      .split(RegExp(r'\s+'))
-      .where((t) => t.length >= 4 && !ignored.contains(t))
-      .toSet();
-}
-
-Future<ScreenshotCheck> analyzeResultScreenshot(
-  File file,
-  int claimedHome,
-  int claimedAway,
-) async {
-  final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
-  try {
-    final image = InputImage.fromFilePath(file.path);
-    final recognized = await recognizer.processImage(image);
-    final raw = recognized.text;
-    final text = raw.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
-
-    final hasFullTime = RegExp(r'\bfull\s*time\b').hasMatch(text) ||
-        RegExp(r'(?<![a-z])ft(?![a-z])').hasMatch(text);
-
-    final normalized = text.replaceAll('—', '-').replaceAll('–', '-');
-    final scoreRegex = RegExp(r'(?<!\d)(\d{1,2})\s*[-:]\s*(\d{1,2})(?!\d)');
-    final fullTimeIndex = text.indexOf('full time');
-    final window = fullTimeIndex >= 0
-        ? normalized.substring(
-            (fullTimeIndex - 100).clamp(0, normalized.length),
-            (fullTimeIndex + 140).clamp(0, normalized.length),
-          )
-        : normalized;
-
-    final matches = scoreRegex.allMatches(window).toList();
-    RegExpMatch? chosen;
-    if (matches.isNotEmpty) {
-      chosen = matches.first;
-    } else {
-      final all = scoreRegex.allMatches(normalized).toList();
-      if (all.isNotEmpty) chosen = all.first;
-    }
-
-    final a = chosen == null ? null : int.tryParse(chosen.group(1)!);
-    final b = chosen == null ? null : int.tryParse(chosen.group(2)!);
-
-    if (!hasFullTime) {
-      return ScreenshotCheck(
-        valid: false,
-        hasFullTime: false,
-        scoreA: a,
-        scoreB: b,
-        text: raw,
-        reason: 'Screenshot does not show Full Time.',
-        tokens: _meaningfulOcrTokens(raw),
-      );
-    }
-
-    if (a == null || b == null) {
-      return ScreenshotCheck(
-        valid: false,
-        hasFullTime: true,
-        scoreA: a,
-        scoreB: b,
-        text: raw,
-        reason: 'Could not read the final score from the screenshot.',
-        tokens: _meaningfulOcrTokens(raw),
-      );
-    }
-
-    final scoreMatches = (a == claimedHome && b == claimedAway) ||
-        (a == claimedAway && b == claimedHome);
-
-    return ScreenshotCheck(
-      valid: scoreMatches,
-      hasFullTime: true,
-      scoreA: a,
-      scoreB: b,
-      text: raw,
-      reason: scoreMatches
-          ? 'Full Time and score verified.'
-          : 'Screenshot score does not match the submitted score.',
-      tokens: _meaningfulOcrTokens(raw),
-    );
-  } finally {
-    await recognizer.close();
-  }
-}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -185,19 +68,6 @@ class Player {
         gamerTag: json['gamerTag']?.toString() ?? '',
         admin: json['admin'] == true,
       );
-}
-
-
-class LeagueInfo {
-  final String id;
-  final String name;
-  final String status;
-  final bool isPaid;
-  final double entryFee;
-  final String currency;
-  final DateTime? createdAt;
-  const LeagueInfo({required this.id, required this.name, required this.status, this.isPaid = false, this.entryFee = 0, this.currency = 'NGN', this.createdAt});
-  String get feeLabel => isPaid ? '$currency ${entryFee.toStringAsFixed(0)} entry fee' : 'FREE ENTRY';
 }
 
 class MatchItem {
@@ -278,11 +148,6 @@ class Store {
   final List<Player> players = [];
   final List<MatchItem> matches = [];
   Player? current;
-  final List<LeagueInfo> leagues = [];
-  String? activeLeagueId;
-  String? activeLeagueName;
-  String? activeLeagueStatus;
-  Set<String> activeLeagueMemberIds = {};
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -314,223 +179,6 @@ class Store {
             ),
           );
       } catch (_) {}
-    }
-
-    try {
-      await refreshPlayers();
-      await refreshLeagues();
-      await loadMatchesFromSupabase();
-    } catch (_) {}
-  }
-
-  Future<void> refreshLeagues() async {
-    final data = await supabase
-        .from('leagues')
-        .select('id, name, status, is_paid, entry_fee, currency, created_at')
-        .order('created_at', ascending: false);
-
-    leagues
-      ..clear()
-      ..addAll((data as List).map((item) {
-        final row = Map<String, dynamic>.from(item);
-        return LeagueInfo(
-          id: row['id'].toString(),
-          name: row['name']?.toString() ?? '',
-          status: row['status']?.toString() ?? 'open',
-          isPaid: row['is_paid'] == true,
-          entryFee: (row['entry_fee'] as num?)?.toDouble() ?? 0,
-          currency: row['currency']?.toString() ?? 'NGN',
-          createdAt: row['created_at'] == null
-              ? null
-              : DateTime.tryParse(row['created_at'].toString()),
-        );
-      }));
-
-    final active = leagues.where((l) => l.status == 'active').toList();
-    if (active.isNotEmpty) {
-      activeLeagueId = active.first.id;
-      activeLeagueName = active.first.name;
-      activeLeagueStatus = active.first.status;
-      try {
-        activeLeagueMemberIds = (await leagueMemberIds(activeLeagueId!)).toSet();
-      } catch (_) {
-        activeLeagueMemberIds = {};
-      }
-    } else {
-      activeLeagueId = null;
-      activeLeagueName = null;
-      activeLeagueStatus = null;
-      activeLeagueMemberIds = {};
-    }
-  }
-
-  Future<String?> _activeLeagueId() async {
-    if (activeLeagueId != null) return activeLeagueId;
-    await refreshLeagues();
-    return activeLeagueId;
-  }
-
-  Future<String?> createLeague(String name, {required bool isPaid, required double entryFee, String currency = 'NGN'}) async {
-    final clean = name.trim();
-    if (clean.isEmpty) return 'League name is required.';
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
-    if (isPaid && entryFee <= 0) return 'Enter a valid entry fee for a paid league.';
-    if (!isPaid) entryFee = 0;
-    try {
-      await supabase.from('leagues').insert({'name': clean, 'status': 'open', 'is_paid': isPaid, 'entry_fee': entryFee, 'currency': currency});
-      await refreshLeagues();
-      return null;
-    } on PostgrestException catch (e) { return 'Could not create league: ${e.message}'; }
-      catch (e) { return 'Could not create league: $e'; }
-  }
-
-  Future<String?> setLeagueStatus(String leagueId, String status) async {
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
-    try {
-      if (status == 'active') {
-        await supabase
-            .from('leagues')
-            .update({'status': 'open'})
-            .eq('status', 'active')
-            .neq('id', leagueId);
-      }
-      await supabase.from('leagues').update({'status': status}).eq('id', leagueId);
-      await refreshLeagues();
-      await loadMatchesFromSupabase();
-      return null;
-    } on PostgrestException catch (e) {
-      return 'Could not update league: ${e.message}';
-    } catch (e) {
-      return 'Could not update league: $e';
-    }
-  }
-
-  Future<List<String>> leagueMemberIds(String leagueId) async {
-    final data = await supabase
-        .from('league_members')
-        .select('player_id')
-        .eq('league_id', leagueId);
-    return (data as List)
-        .map((e) => Map<String, dynamic>.from(e)['player_id'].toString())
-        .toList();
-  }
-
-  Future<String?> addLeagueMember(String leagueId, String playerId) async {
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
-    try {
-      await supabase.from('league_members').upsert({
-        'league_id': leagueId,
-        'player_id': playerId,
-      });
-      return null;
-    } on PostgrestException catch (e) {
-      return 'Could not add player: ${e.message}';
-    } catch (e) {
-      return 'Could not add player: $e';
-    }
-  }
-
-  Future<String?> removeLeagueMember(String leagueId, String playerId) async {
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
-    try {
-      await supabase
-          .from('league_members')
-          .delete()
-          .eq('league_id', leagueId)
-          .eq('player_id', playerId);
-      return null;
-    } on PostgrestException catch (e) {
-      return 'Could not remove player: ${e.message}';
-    } catch (e) {
-      return 'Could not remove player: $e';
-    }
-  }
-
-  Future<void> loadMatchesFromSupabase() async {
-    final leagueId = await _activeLeagueId();
-    if (leagueId == null) {
-      matches.clear();
-      await save();
-      return;
-    }
-
-    final data = await supabase
-        .from('matches')
-        .select(
-          'id, round, home_player_id, away_player_id, status, home_score, away_score',
-        )
-        .eq('league_id', leagueId)
-        .order('round')
-        .order('created_at');
-
-    final rows = (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
-    final loaded = <MatchItem>[];
-
-    if (rows.isNotEmpty) {
-      final matchIds = rows.map((r) => r['id'].toString()).toList();
-      final submissions = await supabase
-          .from('match_submissions')
-          .select(
-            'match_id, player_id, claimed_home_score, claimed_away_score, proof_path',
-          )
-          .inFilter('match_id', matchIds);
-
-      final submissionsByMatch = <String, List<Map<String, dynamic>>>{};
-      for (final item in (submissions as List)) {
-        final row = Map<String, dynamic>.from(item);
-        final id = row['match_id'].toString();
-        submissionsByMatch.putIfAbsent(id, () => []).add(row);
-      }
-
-      for (final row in rows) {
-        final match = MatchItem(
-          id: row['id'].toString(),
-          homeId: row['home_player_id'].toString(),
-          awayId: row['away_player_id'].toString(),
-          round: (row['round'] as num).toInt(),
-          homeScore: (row['home_score'] as num?)?.toInt(),
-          awayScore: (row['away_score'] as num?)?.toInt(),
-          status: _dbStatusToLocal(row['status']?.toString()),
-        );
-
-        for (final sub in submissionsByMatch[match.id] ?? []) {
-          final playerId = sub['player_id'].toString();
-          final home = (sub['claimed_home_score'] as num?)?.toInt();
-          final away = (sub['claimed_away_score'] as num?)?.toInt();
-          final proof = sub['proof_path']?.toString();
-
-          if (playerId == match.homeId) {
-            match.homeClaimHome = home;
-            match.homeClaimAway = away;
-            match.homeProof = proof;
-          } else if (playerId == match.awayId) {
-            match.awayClaimHome = home;
-            match.awayClaimAway = away;
-            match.awayProof = proof;
-          }
-        }
-
-        loaded.add(match);
-      }
-    }
-
-    matches
-      ..clear()
-      ..addAll(loaded);
-
-    await save();
-  }
-
-  String _dbStatusToLocal(String? status) {
-    switch (status) {
-      case 'awaiting_confirmation':
-        return 'Awaiting Confirmation';
-      case 'confirmed':
-        return 'Confirmed';
-      case 'disputed':
-        return 'Disputed';
-      default:
-        return 'Scheduled';
     }
   }
 
@@ -663,8 +311,6 @@ class Store {
 
       try {
         await refreshPlayers();
-        await refreshLeagues();
-        await loadMatchesFromSupabase();
       } catch (_) {
         players.removeWhere((p) => p.id == user.id);
         players.add(current!);
@@ -722,8 +368,6 @@ class Store {
 
       try {
         await refreshPlayers();
-        await refreshLeagues();
-        await loadMatchesFromSupabase();
       } catch (_) {}
 
       return current;
@@ -750,242 +394,95 @@ class Store {
     return findPlayer(id)?.gamerTag ?? 'Unknown Player';
   }
 
-  Future<String?> generateFixtures() async {
-    final leagueId = await _activeLeagueId();
-    if (leagueId == null) {
-      return 'No active league found.';
-    }
+  void generateFixtures() {
+    final activePlayers = players.where((p) => !p.admin).toList();
 
-    final memberIds = await leagueMemberIds(leagueId);
-    final activePlayers = players.where((p) => !p.admin && memberIds.contains(p.id)).toList();
+    if (activePlayers.length < 2) return;
 
-    if (activePlayers.length < 2) {
-      return 'Add at least 2 players to the active league first.';
-    }
-
-    await loadMatchesFromSupabase();
-    if (matches.isNotEmpty) {
-      return 'Fixtures already exist in Supabase.';
-    }
+    matches.clear();
 
     final ids = activePlayers.map((p) => p.id).toList();
-    if (ids.length.isOdd) ids.add('BYE');
+
+    if (ids.length.isOdd) {
+      ids.add('BYE');
+    }
 
     final total = ids.length;
     final rounds = total - 1;
     final rotation = List<String>.from(ids);
-    final rows = <Map<String, dynamic>>[];
 
     for (int round = 0; round < rounds; round++) {
       for (int i = 0; i < total ~/ 2; i++) {
         final first = rotation[i];
         final second = rotation[total - 1 - i];
+
         if (first == 'BYE' || second == 'BYE') continue;
 
-        final homeId = round.isEven ? first : second;
-        final awayId = round.isEven ? second : first;
-
-        rows.add({
-          'league_id': leagueId,
-          'round': round + 1,
-          'home_player_id': homeId,
-          'away_player_id': awayId,
-          'status': 'scheduled',
-        });
+        matches.add(
+          MatchItem(
+            id: '${round + 1}-${i + 1}-${DateTime.now().microsecondsSinceEpoch}',
+            homeId: round.isEven ? first : second,
+            awayId: round.isEven ? second : first,
+            round: round + 1,
+          ),
+        );
       }
 
       rotation.insert(1, rotation.removeLast());
     }
-
-    try {
-      await supabase.from('matches').insert(rows);
-      await loadMatchesFromSupabase();
-      return null;
-    } on PostgrestException catch (e) {
-      return 'Could not save fixtures: ${e.message}';
-    } catch (e) {
-      return 'Could not save fixtures: $e';
-    }
   }
 
-
-  Future<String?> finalizeMatchAfterScreenshotCheck(
-    MatchItem match,
-  ) async {
-    final homeProof = match.homeProof;
-    final awayProof = match.awayProof;
-    final hh = match.homeClaimHome;
-    final ha = match.homeClaimAway;
-    final ah = match.awayClaimHome;
-    final aa = match.awayClaimAway;
-
-    if (homeProof == null || awayProof == null ||
-        hh == null || ha == null || ah == null || aa == null) {
-      return 'Both players must submit a score and screenshot first.';
-    }
-
-    if (hh != ah || ha != aa) {
-      await supabase.rpc(
-        'finalize_match_after_screenshot_check',
-        params: {'p_match_id': match.id, 'p_verified': false},
-      );
-      await loadMatchesFromSupabase();
-      return 'The two submitted scores do not match. Match marked DISPUTED.';
-    }
-
-    try {
-      final homeBytes = await supabase.storage
-          .from('match-proofs')
-          .download(homeProof);
-      final awayBytes = await supabase.storage
-          .from('match-proofs')
-          .download(awayProof);
-
-      final homeFile = File('${Directory.systemTemp.path}/chibby_home_${match.id}.jpg');
-      final awayFile = File('${Directory.systemTemp.path}/chibby_away_${match.id}.jpg');
-      await homeFile.writeAsBytes(homeBytes, flush: true);
-      await awayFile.writeAsBytes(awayBytes, flush: true);
-
-      final homeCheck = await analyzeResultScreenshot(homeFile, hh, ha);
-      final awayCheck = await analyzeResultScreenshot(awayFile, ah, aa);
-
-      final sharedMatchTokens = homeCheck.tokens.intersection(awayCheck.tokens);
-      final sameMatchText = sharedMatchTokens.isNotEmpty;
-
-      final verified = homeCheck.valid && awayCheck.valid &&
-          homeCheck.hasFullTime && awayCheck.hasFullTime &&
-          sameMatchText &&
-          homeCheck.scoreA != null && homeCheck.scoreB != null &&
-          awayCheck.scoreA != null && awayCheck.scoreB != null &&
-          ((homeCheck.scoreA == awayCheck.scoreA &&
-                  homeCheck.scoreB == awayCheck.scoreB) ||
-              (homeCheck.scoreA == awayCheck.scoreB &&
-                  homeCheck.scoreB == awayCheck.scoreA));
-
-      await supabase.rpc(
-        'finalize_match_after_screenshot_check',
-        params: {'p_match_id': match.id, 'p_verified': verified},
-      );
-      await loadMatchesFromSupabase();
-
-      if (!verified) {
-        return 'Screenshots did not pass Full Time, score, or same-match verification. Match marked DISPUTED.';
-      }
-
-      return 'Both screenshots verified. Match CONFIRMED automatically.';
-    } on StorageException catch (e) {
-      return 'Could not read proof screenshots: ${e.message}';
-    } on PostgrestException catch (e) {
-      return 'Verification save failed: ${e.message}';
-    } catch (e) {
-      return 'Screenshot verification failed: $e';
-    }
-  }
-
-  Future<String?> submitResult({
+  Future<void> submitResult({
     required MatchItem match,
     required Player player,
     required int homeScore,
     required int awayScore,
-    required File proofFile,
+    required String proofPath,
   }) async {
-    if (player.id != match.homeId && player.id != match.awayId) {
-      return 'You are not a player in this match.';
+    if (player.id == match.homeId) {
+      match.homeClaimHome = homeScore;
+      match.homeClaimAway = awayScore;
+      match.homeProof = proofPath;
+    } else if (player.id == match.awayId) {
+      match.awayClaimHome = homeScore;
+      match.awayClaimAway = awayScore;
+      match.awayProof = proofPath;
+    } else {
+      return;
     }
 
-    try {
-      final proofPath =
-          '${player.id}/${match.id}/${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final bothSubmitted =
+        match.homeProof != null && match.awayProof != null;
 
-      await supabase.storage.from('match-proofs').upload(
-            proofPath,
-            proofFile,
-            fileOptions: const FileOptions(upsert: true),
-          );
-
-      await supabase.from('match_submissions').upsert(
-        {
-          'match_id': match.id,
-          'player_id': player.id,
-          'claimed_home_score': homeScore,
-          'claimed_away_score': awayScore,
-          'proof_path': proofPath,
-        },
-        onConflict: 'match_id,player_id',
-      );
-
-      await loadMatchesFromSupabase();
-
-      MatchItem? updated;
-      for (final item in matches) {
-        if (item.id == match.id) {
-          updated = item;
-          break;
-        }
-      }
-      if (updated != null && updated.homeProof != null &&
-          updated.awayProof != null) {
-        final verificationMessage =
-            await finalizeMatchAfterScreenshotCheck(updated);
-        return verificationMessage;
-      }
-
-      return null;
-    } on StorageException catch (e) {
-      return 'Proof upload failed: ${e.message}';
-    } on PostgrestException catch (e) {
-      return 'Result save failed: ${e.message}';
-    } catch (e) {
-      return 'Result submission failed: $e';
+    if (!bothSubmitted) {
+      match.status = 'Awaiting Confirmation';
+      await save();
+      return;
     }
+
+    final sameScore =
+        match.homeClaimHome == match.awayClaimHome &&
+        match.homeClaimAway == match.awayClaimAway;
+
+    if (sameScore) {
+      match.homeScore = match.homeClaimHome;
+      match.awayScore = match.homeClaimAway;
+      match.status = 'Confirmed';
+    } else {
+      match.status = 'Disputed';
+    }
+
+    await save();
   }
 
   List<MatchItem> confirmedMatches() {
     return matches.where((m) => m.status == 'Confirmed').toList();
   }
 
-  Map<String, int> statsForPlayer(String playerId) {
-    final table = buildTable();
-    return Map<String, int>.from(table[playerId] ?? {
-      'played': 0,
-      'won': 0,
-      'drawn': 0,
-      'lost': 0,
-      'gf': 0,
-      'ga': 0,
-      'gd': 0,
-      'points': 0,
-    });
-  }
-
-  List<MatchItem> confirmedMatchesForPlayer(String playerId) {
-    final result = confirmedMatches()
-        .where((m) => m.homeId == playerId || m.awayId == playerId)
-        .toList();
-    result.sort((a, b) {
-      final roundCompare = b.round.compareTo(a.round);
-      if (roundCompare != 0) return roundCompare;
-      return b.id.compareTo(a.id);
-    });
-    return result;
-  }
-
   Map<String, Map<String, int>> buildTable() {
     final table = <String, Map<String, int>>{};
 
-    // The matches list is already loaded only for the active league.
-    // Include active-league members AND any players appearing in those
-    // matches so an existing confirmed result can never disappear from
-    // the table just because membership was edited later.
-    final participantIds = <String>{...activeLeagueMemberIds};
-    for (final match in matches) {
-      participantIds.add(match.homeId);
-      participantIds.add(match.awayId);
-    }
-
-    for (final player in players.where(
-      (p) => !p.admin && participantIds.contains(p.id),
-    )) {
+    for (final player in players.where((p) => !p.admin)) {
       table[player.id] = {
         'played': 0,
         'won': 0,
@@ -1383,31 +880,24 @@ class DashboardPage extends StatelessWidget {
         ),
         const SizedBox(height: 22),
         _card(
-          context,
           Icons.sports_soccer,
           'Your Fixtures',
           '${myMatches.length}',
         ),
         _card(
-          context,
           Icons.check_circle,
           'Confirmed Results',
           '$confirmed',
-          statusFilter: 'Confirmed',
         ),
         _card(
-          context,
           Icons.hourglass_top,
           'Awaiting Confirmation',
           '$awaiting',
-          statusFilter: 'Awaiting Confirmation',
         ),
         _card(
-          context,
           Icons.warning,
           'Disputed',
           '$disputed',
-          statusFilter: 'Disputed',
         ),
         const SizedBox(height: 12),
         const Card(
@@ -1425,39 +915,18 @@ class DashboardPage extends StatelessWidget {
     );
   }
 
-  Widget _card(
-    BuildContext context,
-    IconData icon,
-    String title,
-    String value, {
-    String? statusFilter,
-  }) {
+  Widget _card(IconData icon, String title, String value) {
     return Card(
       child: ListTile(
         leading: Icon(icon),
         title: Text(title),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Icon(Icons.chevron_right),
-          ],
+        trailing: Text(
+          value,
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+          ),
         ),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => FixturesPage(statusFilter: statusFilter),
-            ),
-          );
-        },
       ),
     );
   }
@@ -1468,9 +937,7 @@ class DashboardPage extends StatelessWidget {
 // ============================================================
 
 class FixturesPage extends StatefulWidget {
-  final String? statusFilter;
-
-  const FixturesPage({super.key, this.statusFilter});
+  const FixturesPage({super.key});
 
   @override
   State<FixturesPage> createState() => _FixturesPageState();
@@ -1487,64 +954,21 @@ class _FixturesPageState extends State<FixturesPage> {
           icon: const Icon(Icons.auto_awesome),
           label: const Text('Generate Fixtures'),
           onPressed: () async {
-            final error = await store.generateFixtures();
-            if (!mounted) return;
-            setState(() {});
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  error ?? 'Fixtures saved to Supabase successfully.',
-                ),
-              ),
-            );
+            store.generateFixtures();
+            await store.save();
+
+            if (mounted) setState(() {});
           },
         ),
       );
     }
 
-    final player = store.current;
-    var visibleMatches = store.matches;
-
-    if (player != null) {
-      visibleMatches = visibleMatches
-          .where((m) => m.homeId == player.id || m.awayId == player.id)
-          .toList();
-    }
-
-    if (widget.statusFilter != null) {
-      visibleMatches = visibleMatches
-          .where((m) => m.status == widget.statusFilter)
-          .toList();
-    }
-
-    if (visibleMatches.isEmpty) {
-      return Center(
-        child: Text(
-          widget.statusFilter == null
-              ? 'No fixtures found.'
-              : 'No ${widget.statusFilter!.toLowerCase()} matches found.',
-          style: const TextStyle(fontSize: 16),
-        ),
-      );
-    }
-
-    final rounds = visibleMatches.map((m) => m.round).toSet().toList()
+    final rounds = store.matches.map((m) => m.round).toSet().toList()
       ..sort();
 
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        if (widget.statusFilter != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-            child: Text(
-              widget.statusFilter!.toUpperCase(),
-              style: const TextStyle(
-                fontSize: 21,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
         for (final round in rounds) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
@@ -1556,7 +980,7 @@ class _FixturesPageState extends State<FixturesPage> {
               ),
             ),
           ),
-          ...visibleMatches
+          ...store.matches
               .where((m) => m.round == round)
               .map(
                 (match) => Card(
@@ -1606,17 +1030,6 @@ class _ResultPageState extends State<ResultPage> {
   File? proof;
   bool loading = false;
 
-  Future<Uint8List?> _loadProof(String? path) async {
-    if (path == null || path.isEmpty) return null;
-    try {
-      return await Store.instance.supabase.storage
-          .from('match-proofs')
-          .download(path);
-    } catch (_) {
-      return null;
-    }
-  }
-
   Future<void> chooseProof() async {
     final image = await ImagePicker().pickImage(
       source: ImageSource.gallery,
@@ -1653,12 +1066,12 @@ class _ResultPageState extends State<ResultPage> {
 
     setState(() => loading = true);
 
-    final message = await Store.instance.submitResult(
+    await Store.instance.submitResult(
       match: widget.match,
       player: player,
       homeScore: homeScore,
       awayScore: awayScore,
-      proofFile: proof!,
+      proofPath: proof!.path,
     );
 
     if (!mounted) return;
@@ -1668,7 +1081,7 @@ class _ResultPageState extends State<ResultPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          message ?? 'Result saved.',
+          'Result status: ${widget.match.status}',
         ),
       ),
     );
@@ -1677,129 +1090,10 @@ class _ResultPageState extends State<ResultPage> {
   }
 
   @override
-  void initState() {
-    super.initState();
-    final player = Store.instance.current;
-    final match = widget.match;
-    if (player?.id == match.homeId &&
-        match.homeClaimHome != null &&
-        match.homeClaimAway != null) {
-      homeController.text = '${match.homeClaimHome}';
-      awayController.text = '${match.homeClaimAway}';
-    } else if (player?.id == match.awayId &&
-        match.awayClaimHome != null &&
-        match.awayClaimAway != null) {
-      homeController.text = '${match.awayClaimHome}';
-      awayController.text = '${match.awayClaimAway}';
-    }
-  }
-
-  @override
   void dispose() {
     homeController.dispose();
     awayController.dispose();
     super.dispose();
-  }
-
-  Widget _storedProofCard({
-    required String title,
-    required String? path,
-  }) {
-    if (path == null || path.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Text('$title\nNo screenshot submitted.'),
-        ),
-      );
-    }
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            FutureBuilder<Uint8List?>(
-              future: _loadProof(path),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const SizedBox(
-                    height: 180,
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
-
-                final bytes = snapshot.data;
-                if (bytes == null) {
-                  return const SizedBox(
-                    height: 120,
-                    child: Center(
-                      child: Text('Could not load this screenshot.'),
-                    ),
-                  );
-                }
-
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: InteractiveViewer(
-                    minScale: 0.8,
-                    maxScale: 4,
-                    child: Image.memory(
-                      bytes,
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _verificationExplanation(MatchItem match) {
-    String message;
-    IconData icon;
-
-    switch (match.status) {
-      case 'Disputed':
-        message =
-            'Automatic verification failed. One or more submitted screenshots did not pass the Full Time, score, or same-match checks.';
-        icon = Icons.error_outline;
-        break;
-      case 'Confirmed':
-        message =
-            'Both players submitted screenshots that passed the automatic Full Time, score, and same-match checks.';
-        icon = Icons.verified_outlined;
-        break;
-      case 'Awaiting Confirmation':
-        message =
-            'Waiting for both players to submit their screenshot proof. The match will be checked automatically when both are available.';
-        icon = Icons.hourglass_top;
-        break;
-      default:
-        message = 'No result has been submitted yet.';
-        icon = Icons.info_outline;
-    }
-
-    return Card(
-      child: ListTile(
-        leading: Icon(icon),
-        title: const Text('Automatic verification'),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Text(message),
-        ),
-      ),
-    );
   }
 
   @override
@@ -1822,40 +1116,13 @@ class _ResultPageState extends State<ResultPage> {
           ),
           const SizedBox(height: 10),
           Text('Status: ${match.status}'),
-          const SizedBox(height: 12),
-          _verificationExplanation(match),
-          const SizedBox(height: 16),
-
-          // Both players can see BOTH stored proof screenshots.
-          const Text(
-            'MATCH EVIDENCE',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          _storedProofCard(
-            title:
-                '${store.playerName(match.homeId)} • '
-                'Claimed ${match.homeClaimHome ?? '-'}-${match.homeClaimAway ?? '-'}',
-            path: match.homeProof,
-          ),
-          _storedProofCard(
-            title:
-                '${store.playerName(match.awayId)} • '
-                'Claimed ${match.awayClaimHome ?? '-'}-${match.awayClaimAway ?? '-'}',
-            path: match.awayProof,
-          ),
-
-          const Divider(height: 32),
-          const Text(
-            'SUBMIT / UPDATE YOUR RESULT',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 24),
           TextField(
             controller: homeController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText: '${store.playerName(match.homeId)} score',
+              labelText:
+                  '${store.playerName(match.homeId)} score',
               border: const OutlineInputBorder(),
             ),
           ),
@@ -1864,7 +1131,8 @@ class _ResultPageState extends State<ResultPage> {
             controller: awayController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText: '${store.playerName(match.awayId)} score',
+              labelText:
+                  '${store.playerName(match.awayId)} score',
               border: const OutlineInputBorder(),
             ),
           ),
@@ -1949,11 +1217,6 @@ class TablePage extends StatelessWidget {
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
-              columnSpacing: 10,
-              horizontalMargin: 8,
-              dataRowMinHeight: 48,
-              dataRowMaxHeight: 56,
-              headingRowHeight: 48,
               columns: const [
                 DataColumn(label: Text('#')),
                 DataColumn(label: Text('PLAYER')),
@@ -1970,13 +1233,7 @@ class TablePage extends StatelessWidget {
                     cells: [
                       DataCell(Text('${i + 1}')),
                       DataCell(
-                        SizedBox(
-                          width: 82,
-                          child: Text(
-                            store.playerName(ordered[i]),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+                        Text(store.playerName(ordered[i])),
                       ),
                       DataCell(
                         Text('${table[ordered[i]]!['played']}'),
@@ -2089,806 +1346,13 @@ class ProfilePage extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 12),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.bar_chart),
-            title: const Text('My Stats & Match History'),
-            subtitle: const Text('View your confirmed results and league statistics.'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const PlayerStatsPage(),
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 20),
         FilledButton.icon(
           onPressed: () => logout(context),
           icon: const Icon(Icons.logout),
           label: const Text('LOG OUT'),
         ),
       ],
-    );
-  }
-}
-
-// ============================================================
-// PLAYER STATS & MATCH HISTORY
-// ============================================================
-
-class PlayerStatsPage extends StatelessWidget {
-  const PlayerStatsPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final store = Store.instance;
-    final player = store.current;
-
-    if (player == null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('My Stats')),
-        body: const Center(child: Text('No player is signed in.')),
-      );
-    }
-
-    final stats = store.statsForPlayer(player.id);
-    final history = store.confirmedMatchesForPlayer(player.id);
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('My Stats & History')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Center(
-            child: Text(
-              player.gamerTag,
-              style: const TextStyle(
-                fontSize: 25,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.65,
-            children: [
-              _statCard('Played', stats['played']!),
-              _statCard('Points', stats['points']!),
-              _statCard('Wins', stats['won']!),
-              _statCard('Draws', stats['drawn']!),
-              _statCard('Losses', stats['lost']!),
-              _statCard('Goals For', stats['gf']!),
-              _statCard('Goals Against', stats['ga']!),
-              _statCard('Goal Difference', stats['gd']!),
-            ],
-          ),
-          const SizedBox(height: 25),
-          const Text(
-            'CONFIRMED MATCH HISTORY',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 10),
-          if (history.isEmpty)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(18),
-                child: Text(
-                  'No confirmed matches yet.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          else
-            for (final match in history) _historyCard(store, player, match),
-          const SizedBox(height: 12),
-          const Text(
-            'Only CONFIRMED matches are included in these statistics.',
-            style: TextStyle(color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static Widget _statCard(String label, int value) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              '$value',
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(label, textAlign: TextAlign.center),
-          ],
-        ),
-      ),
-    );
-  }
-
-  static Widget _historyCard(
-    Store store,
-    Player player,
-    MatchItem match,
-  ) {
-    final isHome = match.homeId == player.id;
-    final opponentId = isHome ? match.awayId : match.homeId;
-    final opponent = store.playerName(opponentId);
-    final homeScore = match.homeScore ?? 0;
-    final awayScore = match.awayScore ?? 0;
-    final myScore = isHome ? homeScore : awayScore;
-    final opponentScore = isHome ? awayScore : homeScore;
-
-    String result;
-    IconData icon;
-    if (myScore > opponentScore) {
-      result = 'WIN';
-      icon = Icons.emoji_events;
-    } else if (myScore < opponentScore) {
-      result = 'LOSS';
-      icon = Icons.close;
-    } else {
-      result = 'DRAW';
-      icon = Icons.remove;
-    }
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: CircleAvatar(child: Icon(icon, size: 20)),
-        title: Text(
-          '${player.gamerTag} vs $opponent',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text('Matchday ${match.round} • $result'),
-        trailing: Text(
-          '$homeScore - $awayScore',
-          style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ============================================================
-// LEAGUE MANAGEMENT
-// ============================================================
-
-class LeagueManagementPage extends StatefulWidget {
-  const LeagueManagementPage({super.key});
-
-  @override
-  State<LeagueManagementPage> createState() => _LeagueManagementPageState();
-}
-
-class _LeagueManagementPageState extends State<LeagueManagementPage> {
-  final nameController = TextEditingController();
-  final feeController = TextEditingController();
-  bool isPaidLeague = false;
-  bool loading = false;
-  String? selectedLeagueId;
-  Set<String> memberIds = {};
-
-  Store get store => Store.instance;
-
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
-  @override
-  void dispose() {
-    nameController.dispose();
-    feeController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _refresh() async {
-    setState(() => loading = true);
-    try {
-      await store.refreshPlayers();
-      await store.refreshLeagues();
-      if (store.leagues.isNotEmpty) {
-        selectedLeagueId ??= store.leagues.first.id;
-        if (!store.leagues.any((l) => l.id == selectedLeagueId)) {
-          selectedLeagueId = store.leagues.first.id;
-        }
-        memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Refresh error: $e')),
-        );
-      }
-    }
-    if (mounted) setState(() => loading = false);
-  }
-
-  Future<void> _createLeague() async {
-    final name = nameController.text.trim();
-    if (name.isEmpty) return;
-    setState(() => loading = true);
-    final fee = double.tryParse(feeController.text.trim()) ?? 0;
-    final error = await store.createLeague(name, isPaid: isPaidLeague, entryFee: fee, currency: 'NGN');
-    if (!mounted) return;
-    if (error == null) {
-      nameController.clear();
-      feeController.clear();
-      isPaidLeague = false;
-      await _refresh();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('League created.')),
-      );
-    } else {
-      setState(() => loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error)),
-      );
-    }
-  }
-
-  Future<void> _changeStatus(String status) async {
-    if (selectedLeagueId == null) return;
-    setState(() => loading = true);
-    final error = await store.setLeagueStatus(selectedLeagueId!, status);
-    if (!mounted) return;
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-    }
-    await _refresh();
-  }
-
-  Future<void> _selectLeague(String id) async {
-    setState(() {
-      selectedLeagueId = id;
-      loading = true;
-    });
-    try {
-      memberIds = (await store.leagueMemberIds(id)).toSet();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load members: $e')),
-        );
-      }
-    }
-    if (mounted) setState(() => loading = false);
-  }
-
-  Future<void> _togglePlayer(Player player, bool selected) async {
-    final leagueId = selectedLeagueId;
-    if (leagueId == null) return;
-    setState(() => loading = true);
-    final error = selected
-        ? await store.addLeagueMember(leagueId, player.id)
-        : await store.removeLeagueMember(leagueId, player.id);
-    if (error == null) {
-      if (selected) {
-        memberIds.add(player.id);
-      } else {
-        memberIds.remove(player.id);
-      }
-    }
-    if (!mounted) return;
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-    }
-    setState(() => loading = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final selectedList = store.leagues.where((l) => l.id == selectedLeagueId).toList();
-    final selected = selectedList.isEmpty ? null : selectedList.first;
-    final playerList = store.players.where((p) => !p.admin).toList();
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('League Management')),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const Text(
-              'CREATE NEW LEAGUE',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'League name',
-                      hintText: 'e.g. CHIBBYBALL Season 1',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  height: 56,
-                  child: FilledButton(
-                    onPressed: loading ? null : _createLeague,
-                    child: const Text('CREATE'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Text('LEAGUE TYPE', style: TextStyle(fontWeight: FontWeight.bold)),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(isPaidLeague ? 'Paid League' : 'Free League'),
-                    subtitle: Text(isPaidLeague ? 'Players will see the entry fee before joining.' : 'No entry fee.'),
-                    value: isPaidLeague,
-                    onChanged: loading ? null : (value) => setState(() => isPaidLeague = value),
-                  ),
-                  if (isPaidLeague)
-                    TextField(
-                      controller: feeController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Entry fee (NGN)', hintText: 'e.g. 2000', prefixText: '₦ ', border: OutlineInputBorder()),
-                    ),
-                ]),
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'LEAGUES',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            if (store.leagues.isEmpty)
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(18),
-                  child: Text('No leagues created yet.'),
-                ),
-              )
-            else
-              ...store.leagues.map(
-                (league) => Card(
-                  child: ListTile(
-                    selected: league.id == selectedLeagueId,
-                    onTap: () => _selectLeague(league.id),
-                    leading: Icon(
-                      league.status == 'active'
-                          ? Icons.play_circle_fill
-                          : league.status == 'completed'
-                              ? Icons.check_circle
-                              : Icons.lock_open,
-                    ),
-                    title: Text(league.name),
-                    subtitle: Text('Status: ${league.status.toUpperCase()} • ${league.feeLabel}'),
-                    trailing: league.id == selectedLeagueId
-                        ? const Icon(Icons.check)
-                        : null,
-                  ),
-                ),
-              ),
-            if (selected != null) ...[
-              const SizedBox(height: 18),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        selected.name,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text('Current status: ${selected.status.toUpperCase()}'),
-                      const SizedBox(height: 4),
-                      Text(selected.feeLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: loading || selected.status == 'active'
-                                ? null
-                                : () => _changeStatus('active'),
-                            icon: const Icon(Icons.play_arrow),
-                            label: const Text('ACTIVATE'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: loading || selected.status == 'completed'
-                                ? null
-                                : () => _changeStatus('completed'),
-                            icon: const Icon(Icons.check),
-                            label: const Text('COMPLETE'),
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: loading || selected.status == 'open'
-                                ? null
-                                : () => _changeStatus('open'),
-                            icon: const Icon(Icons.lock_open),
-                            label: const Text('REOPEN'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'PLAYERS (${memberIds.length})',
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: Column(
-                  children: playerList.map((player) {
-                    final checked = memberIds.contains(player.id);
-                    return CheckboxListTile(
-                      value: checked,
-                      onChanged: loading
-                          ? null
-                          : (value) => _togglePlayer(player, value == true),
-                      title: Text(player.gamerTag),
-                      subtitle: Text(player.name),
-                      secondary: const Icon(Icons.person),
-                    );
-                  }).toList(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (selected.status == 'active')
-                const Card(
-                  child: Padding(
-                    padding: EdgeInsets.all(14),
-                    child: Text(
-                      'This is the active league. Add players here before generating fixtures.',
-                    ),
-                  ),
-                ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-
-// ============================================================
-// ADMIN RESULT REVIEW
-// ============================================================
-
-class ResultReviewPage extends StatefulWidget {
-  const ResultReviewPage({super.key});
-  @override
-  State<ResultReviewPage> createState() => _ResultReviewPageState();
-}
-
-class _ResultReviewPageState extends State<ResultReviewPage> {
-  bool loading = false;
-  String filter = 'All';
-  Store get store => Store.instance;
-
-  Future<void> _refresh() async {
-    setState(() => loading = true);
-    try { await store.refreshLeagues(); await store.loadMatchesFromSupabase(); }
-    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh error: $e'))); }
-    if (mounted) setState(() => loading = false);
-  }
-
-  String _playerName(String id) {
-    final list = store.players.where((p) => p.id == id).toList();
-    if (list.isEmpty) return 'Unknown player';
-    return list.first.gamerTag.isEmpty ? list.first.name : list.first.gamerTag;
-  }
-
-  Future<Uint8List?> _proofBytes(String? path) async {
-    if (path == null || path.isEmpty) return null;
-    try { return await store.supabase.storage.from('match-proofs').download(path); }
-    catch (_) { return null; }
-  }
-
-  String _verificationLabel(MatchItem m) {
-    switch (m.status) {
-      case 'Confirmed': return 'AUTOMATIC VERIFICATION: PASSED';
-      case 'Disputed': return 'AUTOMATIC VERIFICATION: FAILED';
-      case 'Awaiting Confirmation': return 'AUTOMATIC VERIFICATION: WAITING FOR BOTH PLAYERS';
-      default: return 'AUTOMATIC VERIFICATION: NOT SUBMITTED';
-    }
-  }
-
-  Color _statusColor(BuildContext context, String status) {
-    if (status == 'Confirmed') return Colors.green;
-    if (status == 'Disputed') return Theme.of(context).colorScheme.error;
-    return Theme.of(context).colorScheme.primary;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final all = [...store.matches]..sort((a, b) => b.round.compareTo(a.round));
-    final visible = filter == 'All' ? all : all.where((m) => m.status == filter).toList();
-    return Scaffold(
-      appBar: AppBar(title: const Text('Result Review'), actions: [IconButton(onPressed: loading ? null : _refresh, icon: const Icon(Icons.refresh))]),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView(padding: const EdgeInsets.all(12), children: [
-          const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.'))),
-          const SizedBox(height: 8),
-          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['All', 'Awaiting Confirmation', 'Confirmed', 'Disputed'].map((value) => Padding(padding: const EdgeInsets.only(right: 8), child: ChoiceChip(label: Text(value), selected: filter == value, onSelected: (_) => setState(() => filter = value))).toList()))),
-          const SizedBox(height: 8),
-          if (visible.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No results to review.')))
-          else ...visible.map((m) => _reviewCard(context, m)),
-        ]),
-      ),
-    );
-  }
-
-  Widget _reviewCard(BuildContext context, MatchItem m) {
-    final homeName = _playerName(m.homeId), awayName = _playerName(m.awayId);
-    final homeScore = m.homeClaimHome != null && m.homeClaimAway != null ? '${m.homeClaimHome}-${m.homeClaimAway}' : 'Not submitted';
-    final awayScore = m.awayClaimHome != null && m.awayClaimAway != null ? '${m.awayClaimHome}-${m.awayClaimAway}' : 'Not submitted';
-    return Card(margin: const EdgeInsets.only(bottom: 12), child: ExpansionTile(
-      title: Text('$homeName vs $awayName'), subtitle: Text('Round ${m.round} • ${m.status}'), childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
-      children: [Align(alignment: Alignment.centerLeft, child: Text(_verificationLabel(m), style: TextStyle(fontWeight: FontWeight.bold, color: _statusColor(context, m.status)))), const SizedBox(height: 8), Row(children: [Expanded(child: _claimBox(homeName, homeScore, m.homeProof)), const SizedBox(width: 8), Expanded(child: _claimBox(awayName, awayScore, m.awayProof))])],
-    ));
-  }
-
-  Widget _claimBox(String player, String score, String? proof) {
-    return Card(margin: EdgeInsets.zero, child: Padding(padding: const EdgeInsets.all(8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(player, style: const TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 4), Text('Claimed score: $score'), const SizedBox(height: 8),
-      if (proof == null) const SizedBox(height: 100, child: Center(child: Text('No screenshot submitted.')))
-      else FutureBuilder<Uint8List?>(future: _proofBytes(proof), builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()));
-        final bytes = snapshot.data;
-        if (bytes == null) return const SizedBox(height: 100, child: Center(child: Text('Screenshot unavailable.')));
-        return ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(bytes, height: 180, width: double.infinity, fit: BoxFit.contain));
-      }),
-    ])));
-  }
-}
-
-
-// ============================================================
-// ADMIN PLAYER MANAGEMENT
-// ============================================================
-
-class PlayerManagementPage extends StatefulWidget {
-  const PlayerManagementPage({super.key});
-
-  @override
-  State<PlayerManagementPage> createState() => _PlayerManagementPageState();
-}
-
-class _PlayerManagementPageState extends State<PlayerManagementPage> {
-  final searchController = TextEditingController();
-  String? selectedLeagueId;
-  Set<String> memberIds = {};
-  bool loading = false;
-
-  Store get store => Store.instance;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => loading = true);
-    try {
-      await store.refreshPlayers();
-      await store.refreshLeagues();
-      if (store.leagues.isNotEmpty) {
-        selectedLeagueId ??= store.leagues.first.id;
-        memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load player management: $e')),
-        );
-      }
-    }
-    if (mounted) setState(() => loading = false);
-  }
-
-  Future<void> _selectLeague(String? id) async {
-    if (id == null) return;
-    setState(() {
-      selectedLeagueId = id;
-      loading = true;
-    });
-    try {
-      memberIds = (await store.leagueMemberIds(id)).toSet();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load league members: $e')),
-        );
-      }
-    }
-    if (mounted) setState(() => loading = false);
-  }
-
-  Future<void> _toggleMember(Player player, bool shouldAdd) async {
-    final leagueId = selectedLeagueId;
-    if (leagueId == null) return;
-
-    setState(() => loading = true);
-    final error = shouldAdd
-        ? await store.addLeagueMember(leagueId, player.id)
-        : await store.removeLeagueMember(leagueId, player.id);
-
-    if (error == null) {
-      if (shouldAdd) {
-        memberIds.add(player.id);
-      } else {
-        memberIds.remove(player.id);
-      }
-    }
-
-    if (mounted) {
-      setState(() => loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            error ?? (shouldAdd
-                ? '${player.gamerTag} added to league.'
-                : '${player.gamerTag} removed from league.'),
-          ),
-        ),
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    searchController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final query = searchController.text.trim().toLowerCase();
-    final players = store.players.where((p) {
-      if (p.admin) return false;
-      if (query.isEmpty) return true;
-      return p.gamerTag.toLowerCase().contains(query) ||
-          p.name.toLowerCase().contains(query);
-    }).toList();
-
-    final selectedLeague = store.leagues.where((l) => l.id == selectedLeagueId).toList();
-    final league = selectedLeague.isEmpty ? null : selectedLeague.first;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Player Management')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const Text(
-              'PLAYERS',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Manage registered players and their league membership.',
-              style: TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 18),
-            TextField(
-              controller: searchController,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Search player or gamer tag',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 14),
-            if (store.leagues.isEmpty)
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('Create a league first before assigning players.'),
-                ),
-              )
-            else ...[
-              DropdownButtonFormField<String>(
-                value: selectedLeagueId,
-                decoration: const InputDecoration(
-                  labelText: 'League',
-                  border: OutlineInputBorder(),
-                ),
-                items: store.leagues
-                    .map(
-                      (league) => DropdownMenuItem<String>(
-                        value: league.id,
-                        child: Text(league.name),
-                      ),
-                    )
-                    .toList(),
-                onChanged: loading ? null : _selectLeague,
-              ),
-              const SizedBox(height: 10),
-              if (league != null)
-                Text(
-                  '${memberIds.length} player${memberIds.length == 1 ? '' : 's'} in ${league.name} • ${league.status.toUpperCase()}',
-                  style: const TextStyle(color: Colors.grey),
-                ),
-            ],
-            const SizedBox(height: 16),
-            if (players.isEmpty)
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(18),
-                  child: Text('No matching players found.'),
-                ),
-              )
-            else
-              ...players.map(
-                (player) {
-                  final isMember = memberIds.contains(player.id);
-                  return Card(
-                    child: CheckboxListTile(
-                      value: isMember,
-                      onChanged: loading || selectedLeagueId == null
-                          ? null
-                          : (value) => _toggleMember(player, value == true),
-                      secondary: CircleAvatar(
-                        child: Text(
-                          player.gamerTag.isEmpty
-                              ? '?'
-                              : player.gamerTag[0].toUpperCase(),
-                        ),
-                      ),
-                      title: Text(player.gamerTag),
-                      subtitle: Text(
-                        '${player.name} • ${player.admin ? 'Admin' : 'Player'}',
-                      ),
-                    ),
-                  );
-                },
-              ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -2924,19 +1388,16 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Future<void> generateFixtures() async {
-    setState(() => loading = true);
-
-    final error = await Store.instance.generateFixtures();
+    Store.instance.generateFixtures();
+    await Store.instance.save();
 
     if (!mounted) return;
 
-    setState(() => loading = false);
+    setState(() {});
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          error ?? 'Fixtures saved to Supabase successfully.',
-        ),
+      const SnackBar(
+        content: Text('Fixtures generated successfully.'),
       ),
     );
   }
@@ -2986,60 +1447,6 @@ class _AdminPageState extends State<AdminPage> {
               ),
             ),
             const SizedBox(height: 15),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const LeagueManagementPage(),
-                          ),
-                        ).then((_) async {
-                          await store.refreshLeagues();
-                          await store.loadMatchesFromSupabase();
-                          if (mounted) setState(() {});
-                        }),
-                icon: const Icon(Icons.emoji_events),
-                label: const Text('MANAGE LEAGUES'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const ResultReviewPage()),
-                        ),
-                icon: const Icon(Icons.fact_check),
-                label: const Text('RESULT REVIEW'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const PlayerManagementPage(),
-                          ),
-                        ).then((_) async {
-                          await store.refreshPlayers();
-                          await store.refreshLeagues();
-                          if (mounted) setState(() {});
-                        }),
-                icon: const Icon(Icons.manage_accounts),
-                label: const Text('MANAGE PLAYERS'),
-              ),
-            ),
-            const SizedBox(height: 10),
             SizedBox(
               height: 50,
               child: FilledButton.icon(
