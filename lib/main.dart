@@ -319,7 +319,7 @@ class Store {
     try {
       await refreshPlayers();
       await refreshLeagues();
-      await loadMatchesFromSupabase();
+      await loadMatchesFromSupabase(autoVerify: true);
     } catch (_) {}
   }
 
@@ -446,7 +446,7 @@ class Store {
     }
   }
 
-  Future<void> loadMatchesFromSupabase() async {
+  Future<void> loadMatchesFromSupabase({bool autoVerify = false}) async {
     final leagueId = await _activeLeagueId();
     if (leagueId == null) {
       matches.clear();
@@ -518,7 +518,40 @@ class Store {
       ..clear()
       ..addAll(loaded);
 
+    if (autoVerify) {
+      await autoVerifyPendingMatches();
+    }
+
     await save();
+  }
+
+  Future<void> autoVerifyPendingMatches() async {
+    // If both players have submitted proof, always run the automatic
+    // verification regardless of the current local status. This prevents a
+    // match from remaining stuck on Awaiting Confirmation after the second
+    // submission. Confirmed/Disputed matches are already final and are skipped.
+    final candidates = matches
+        .where((m) =>
+            m.status != 'Confirmed' &&
+            m.status != 'Disputed' &&
+            m.homeProof != null &&
+            m.homeProof!.isNotEmpty &&
+            m.awayProof != null &&
+            m.awayProof!.isNotEmpty &&
+            m.homeClaimHome != null &&
+            m.homeClaimAway != null &&
+            m.awayClaimHome != null &&
+            m.awayClaimAway != null)
+        .toList();
+
+    if (candidates.isEmpty) return;
+
+    for (final match in candidates) {
+      await _finalizeMatchAfterScreenshotCheck(match, reload: false);
+    }
+
+    // Reload once after all candidate matches have been finalized.
+    await loadMatchesFromSupabase(autoVerify: false);
   }
 
   String _dbStatusToLocal(String? status) {
@@ -812,6 +845,13 @@ class Store {
   Future<String?> finalizeMatchAfterScreenshotCheck(
     MatchItem match,
   ) async {
+    return _finalizeMatchAfterScreenshotCheck(match, reload: true);
+  }
+
+  Future<String?> _finalizeMatchAfterScreenshotCheck(
+    MatchItem match, {
+    required bool reload,
+  }) async {
     final homeProof = match.homeProof;
     final awayProof = match.awayProof;
     final hh = match.homeClaimHome;
@@ -829,7 +869,7 @@ class Store {
         'finalize_match_after_screenshot_check',
         params: {'p_match_id': match.id, 'p_verified': false},
       );
-      await loadMatchesFromSupabase();
+      if (reload) await loadMatchesFromSupabase(autoVerify: false);
       return 'The two submitted scores do not match. Match marked DISPUTED.';
     }
 
@@ -866,7 +906,7 @@ class Store {
         'finalize_match_after_screenshot_check',
         params: {'p_match_id': match.id, 'p_verified': verified},
       );
-      await loadMatchesFromSupabase();
+      if (reload) await loadMatchesFromSupabase(autoVerify: false);
 
       if (!verified) {
         return 'Screenshots did not pass Full Time, score, or same-match verification. Match marked DISPUTED.';
@@ -874,11 +914,31 @@ class Store {
 
       return 'Both screenshots verified. Match CONFIRMED automatically.';
     } on StorageException catch (e) {
-      return 'Could not read proof screenshots: ${e.message}';
+      // A failed screenshot read is a failed verification, not an
+      // Awaiting Confirmation state. The rule is: if either proof cannot be
+      // verified, the match is DISPUTED.
+      try {
+        await supabase.rpc(
+          'finalize_match_after_screenshot_check',
+          params: {'p_match_id': match.id, 'p_verified': false},
+        );
+        if (reload) await loadMatchesFromSupabase(autoVerify: false);
+      } catch (_) {}
+      return 'Could not verify proof screenshots: ${e.message}. Match marked DISPUTED.';
     } on PostgrestException catch (e) {
+      // If the verification result cannot be saved, do not silently leave the
+      // match looking like it is still waiting. Surface the database error.
       return 'Verification save failed: ${e.message}';
     } catch (e) {
-      return 'Screenshot verification failed: $e';
+      // OCR/plugin/processing failures also count as a failed automatic check.
+      try {
+        await supabase.rpc(
+          'finalize_match_after_screenshot_check',
+          params: {'p_match_id': match.id, 'p_verified': false},
+        );
+        if (reload) await loadMatchesFromSupabase(autoVerify: false);
+      } catch (_) {}
+      return 'Screenshot verification failed: $e. Match marked DISPUTED.';
     }
   }
 
@@ -914,7 +974,7 @@ class Store {
         onConflict: 'match_id,player_id',
       );
 
-      await loadMatchesFromSupabase();
+      await loadMatchesFromSupabase(autoVerify: true);
 
       MatchItem? updated;
       for (final item in matches) {
@@ -923,11 +983,14 @@ class Store {
           break;
         }
       }
-      if (updated != null && updated.homeProof != null &&
-          updated.awayProof != null) {
-        final verificationMessage =
-            await finalizeMatchAfterScreenshotCheck(updated);
-        return verificationMessage;
+
+      if (updated != null) {
+        if (updated.status == 'Disputed') {
+          return 'Screenshots did not pass Full Time, score, or same-match verification. Match marked DISPUTED.';
+        }
+        if (updated.status == 'Confirmed') {
+          return 'Both screenshots verified. Match CONFIRMED automatically.';
+        }
       }
 
       return null;
@@ -2466,7 +2529,7 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
 
   Future<void> _refresh() async {
     setState(() => loading = true);
-    try { await store.refreshLeagues(); await store.loadMatchesFromSupabase(); }
+    try { await store.refreshLeagues(); await store.loadMatchesFromSupabase(autoVerify: true); }
     catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh error: $e'))); }
     if (mounted) setState(() => loading = false);
   }
@@ -2509,32 +2572,10 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
         child: ListView(padding: const EdgeInsets.all(12), children: [
           const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.'))),
           const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (final value in ['All', 'Awaiting Confirmation', 'Confirmed', 'Disputed'])
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(value),
-                      selected: filter == value,
-                      onSelected: (_) => setState(() => filter = value),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['All', 'Awaiting Confirmation', 'Confirmed', 'Disputed'].map((value) => Padding(padding: const EdgeInsets.only(right: 8), child: ChoiceChip(label: Text(value), selected: filter == value, onSelected: (_) => setState(() => filter = value))).toList())),
           const SizedBox(height: 8),
-          if (visible.isEmpty)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(18),
-                child: Text('No results to review.'),
-              ),
-            )
-          else
-            ...visible.map((m) => _reviewCard(context, m)), 
+          if (visible.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No results to review.')))
+          else ...visible.map((m) => _reviewCard(context, m)),
         ]),
       ),
     );
