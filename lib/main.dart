@@ -346,20 +346,31 @@ class Store {
         );
       }));
 
+    // Multiple leagues can be ACTIVE at the same time. Keep the currently
+    // selected league when it still exists; otherwise select the first active
+    // league (or the first league if none are active).
     final active = leagues.where((l) => l.status == 'active').toList();
-    if (active.isNotEmpty) {
-      activeLeagueId = active.first.id;
-      activeLeagueName = active.first.name;
-      activeLeagueStatus = active.first.status;
+    final selectedStillExists = activeLeagueId != null &&
+        leagues.any((l) => l.id == activeLeagueId);
+
+    if (!selectedStillExists) {
+      final fallback = active.isNotEmpty ? active.first : (leagues.isNotEmpty ? leagues.first : null);
+      activeLeagueId = fallback?.id;
+    }
+
+    final selected = activeLeagueId == null
+        ? null
+        : leagues.where((l) => l.id == activeLeagueId).firstOrNull;
+
+    activeLeagueName = selected?.name;
+    activeLeagueStatus = selected?.status;
+    if (activeLeagueId != null) {
       try {
         activeLeagueMemberIds = (await leagueMemberIds(activeLeagueId!)).toSet();
       } catch (_) {
         activeLeagueMemberIds = {};
       }
     } else {
-      activeLeagueId = null;
-      activeLeagueName = null;
-      activeLeagueStatus = null;
       activeLeagueMemberIds = {};
     }
   }
@@ -368,6 +379,22 @@ class Store {
     if (activeLeagueId != null) return activeLeagueId;
     await refreshLeagues();
     return activeLeagueId;
+  }
+
+  Future<String?> selectLeague(String leagueId) async {
+    final league = leagues.where((l) => l.id == leagueId).firstOrNull;
+    if (league == null) return 'League not found.';
+
+    activeLeagueId = league.id;
+    activeLeagueName = league.name;
+    activeLeagueStatus = league.status;
+    try {
+      activeLeagueMemberIds = (await leagueMemberIds(league.id)).toSet();
+      await loadMatchesFromSupabase();
+      return null;
+    } catch (e) {
+      return 'Could not load league: $e';
+    }
   }
 
   Future<String?> createLeague(String name, {required bool isPaid, required double entryFee, String currency = 'NGN'}) async {
@@ -387,13 +414,8 @@ class Store {
   Future<String?> setLeagueStatus(String leagueId, String status) async {
     if (Store.instance.current?.admin != true) return 'Admin access required.';
     try {
-      if (status == 'active') {
-        await supabase
-            .from('leagues')
-            .update({'status': 'open'})
-            .eq('status', 'active')
-            .neq('id', leagueId);
-      }
+      // Multiple leagues are allowed to be ACTIVE at the same time.
+      // Activating this league must never deactivate another league.
       await supabase.from('leagues').update({'status': status}).eq('id', leagueId);
       await refreshLeagues();
       await loadMatchesFromSupabase();
@@ -753,7 +775,12 @@ class Store {
   Future<String?> generateFixtures() async {
     final leagueId = await _activeLeagueId();
     if (leagueId == null) {
-      return 'No active league found.';
+      return 'No league selected.';
+    }
+
+    final league = leagues.where((l) => l.id == leagueId).firstOrNull;
+    if (league == null || league.status != 'active') {
+      return 'Select an ACTIVE league before generating fixtures.';
     }
 
     final memberIds = await leagueMemberIds(leagueId);
@@ -1477,28 +1504,67 @@ class FixturesPage extends StatefulWidget {
 }
 
 class _FixturesPageState extends State<FixturesPage> {
+  bool loading = false;
+
+  Future<void> _selectLeague(String? id) async {
+    if (id == null || id == Store.instance.activeLeagueId) return;
+    setState(() => loading = true);
+    final error = await Store.instance.selectLeague(id);
+    if (!mounted) return;
+    setState(() => loading = false);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
+    final selected = store.activeLeagueId == null
+        ? null
+        : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
 
     if (store.matches.isEmpty) {
-      return Center(
-        child: FilledButton.icon(
-          icon: const Icon(Icons.auto_awesome),
-          label: const Text('Generate Fixtures'),
-          onPressed: () async {
-            final error = await store.generateFixtures();
-            if (!mounted) return;
-            setState(() {});
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  error ?? 'Fixtures saved to Supabase successfully.',
+      return ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          if (store.leagues.isNotEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+                child: DropdownButtonFormField<String>(
+                  value: selected?.id,
+                  decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none),
+                  items: store.leagues
+                      .map((league) => DropdownMenuItem<String>(
+                            value: league.id,
+                            child: Text('${league.name} • ${league.status.toUpperCase()}'),
+                          ))
+                      .toList(),
+                  onChanged: loading ? null : _selectLeague,
                 ),
               ),
-            );
-          },
-        ),
+            ),
+          if (selected != null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(selected.name, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
+            ),
+          Center(
+            child: FilledButton.icon(
+              icon: const Icon(Icons.auto_awesome),
+              label: const Text('Generate Fixtures'),
+              onPressed: selected?.status == 'active' && !loading ? () async {
+                final error = await store.generateFixtures();
+                if (!mounted) return;
+                setState(() {});
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(error ?? 'Fixtures saved to Supabase successfully.')),
+                );
+              } : null,
+            ),
+          ),
+        ],
       );
     }
 
@@ -1534,6 +1600,28 @@ class _FixturesPageState extends State<FixturesPage> {
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
+        if (store.leagues.isNotEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+              child: DropdownButtonFormField<String>(
+                value: selected?.id,
+                decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none),
+                items: store.leagues
+                    .map((league) => DropdownMenuItem<String>(
+                          value: league.id,
+                          child: Text('${league.name} • ${league.status.toUpperCase()}'),
+                        ))
+                    .toList(),
+                onChanged: loading ? null : _selectLeague,
+              ),
+            ),
+          ),
+        if (selected != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+            child: Text(selected.name, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
+          ),
         if (widget.statusFilter != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
@@ -1904,8 +1992,26 @@ class _ResultPageState extends State<ResultPage> {
 // TABLE
 // ============================================================
 
-class TablePage extends StatelessWidget {
+class TablePage extends StatefulWidget {
   const TablePage({super.key});
+
+  @override
+  State<TablePage> createState() => _TablePageState();
+}
+
+class _TablePageState extends State<TablePage> {
+  bool loading = false;
+
+  Future<void> _selectLeague(String? id) async {
+    if (id == null || id == Store.instance.activeLeagueId) return;
+    setState(() => loading = true);
+    final error = await Store.instance.selectLeague(id);
+    if (!mounted) return;
+    setState(() => loading = false);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1916,21 +2022,16 @@ class TablePage extends StatelessWidget {
       ..sort((a, b) {
         final x = table[a]!;
         final y = table[b]!;
-
         final p = y['points']!.compareTo(x['points']!);
         if (p != 0) return p;
-
         final gd = y['gd']!.compareTo(x['gd']!);
         if (gd != 0) return gd;
-
         return y['gf']!.compareTo(x['gf']!);
       });
 
-    if (ordered.isEmpty) {
-      return const Center(
-        child: Text('No players in the league yet.'),
-      );
-    }
+    final selected = store.activeLeagueId == null
+        ? null
+        : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -1939,77 +2040,86 @@ class TablePage extends StatelessWidget {
           padding: EdgeInsets.all(8),
           child: Text(
             'LEAGUE TABLE',
-            style: TextStyle(
-              fontSize: 23,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold),
           ),
         ),
-        Card(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columnSpacing: 10,
-              horizontalMargin: 8,
-              dataRowMinHeight: 48,
-              dataRowMaxHeight: 56,
-              headingRowHeight: 48,
-              columns: const [
-                DataColumn(label: Text('#')),
-                DataColumn(label: Text('PLAYER')),
-                DataColumn(label: Text('P')),
-                DataColumn(label: Text('W')),
-                DataColumn(label: Text('D')),
-                DataColumn(label: Text('L')),
-                DataColumn(label: Text('GD')),
-                DataColumn(label: Text('PTS')),
-              ],
-              rows: [
-                for (int i = 0; i < ordered.length; i++)
-                  DataRow(
-                    cells: [
+        if (store.leagues.isNotEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+              child: DropdownButtonFormField<String>(
+                value: selected?.id,
+                decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none),
+                items: store.leagues
+                    .map((league) => DropdownMenuItem<String>(
+                          value: league.id,
+                          child: Text('${league.name} • ${league.status.toUpperCase()}'),
+                        ))
+                    .toList(),
+                onChanged: loading ? null : _selectLeague,
+              ),
+            ),
+          ),
+        if (selected != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+            child: Text(
+              selected.name,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+          ),
+        if (ordered.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(18),
+              child: Text('No players in this league yet.'),
+            ),
+          )
+        else
+          Card(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columnSpacing: 10,
+                horizontalMargin: 8,
+                dataRowMinHeight: 48,
+                dataRowMaxHeight: 56,
+                headingRowHeight: 48,
+                columns: const [
+                  DataColumn(label: Text('#')),
+                  DataColumn(label: Text('PLAYER')),
+                  DataColumn(label: Text('P')),
+                  DataColumn(label: Text('W')),
+                  DataColumn(label: Text('D')),
+                  DataColumn(label: Text('L')),
+                  DataColumn(label: Text('GD')),
+                  DataColumn(label: Text('PTS')),
+                ],
+                rows: [
+                  for (int i = 0; i < ordered.length; i++)
+                    DataRow(cells: [
                       DataCell(Text('${i + 1}')),
-                      DataCell(
-                        SizedBox(
-                          width: 82,
-                          child: Text(
-                            store.playerName(ordered[i]),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      DataCell(
-                        Text('${table[ordered[i]]!['played']}'),
-                      ),
-                      DataCell(
-                        Text('${table[ordered[i]]!['won']}'),
-                      ),
-                      DataCell(
-                        Text('${table[ordered[i]]!['drawn']}'),
-                      ),
-                      DataCell(
-                        Text('${table[ordered[i]]!['lost']}'),
-                      ),
-                      DataCell(
-                        Text('${table[ordered[i]]!['gd']}'),
-                      ),
-                      DataCell(
-                        Text(
-                          '${table[ordered[i]]!['points']}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
+                      DataCell(SizedBox(
+                        width: 82,
+                        child: Text(store.playerName(ordered[i]), overflow: TextOverflow.ellipsis),
+                      )),
+                      DataCell(Text('${table[ordered[i]]!['played']}')),
+                      DataCell(Text('${table[ordered[i]]!['won']}')),
+                      DataCell(Text('${table[ordered[i]]!['drawn']}')),
+                      DataCell(Text('${table[ordered[i]]!['lost']}')),
+                      DataCell(Text('${table[ordered[i]]!['gd']}')),
+                      DataCell(Text(
+                        '${table[ordered[i]]!['points']}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      )),
+                    ]),
+                ],
+              ),
             ),
           ),
-        ),
         const SizedBox(height: 15),
         const Text(
-          'Only CONFIRMED matches count toward the table.',
+          'Only CONFIRMED matches count toward the selected league table.',
           style: TextStyle(color: Colors.grey),
         ),
       ],
