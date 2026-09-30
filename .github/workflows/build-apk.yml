@@ -26,13 +26,60 @@ jobs:
       - name: Add Internet permission
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST"
+          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
+            sed -i '/<manifest[^>]*>/a\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
+          fi
+
+      - name: Add ML Kit Android dependencies
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          deps = [
+              'implementation "com.google.mlkit:text-recognition:16.0.1"',
+              'implementation "com.google.mlkit:text-recognition-chinese:16.0.1"',
+              'implementation "com.google.mlkit:text-recognition-devanagari:16.0.1"',
+              'implementation "com.google.mlkit:text-recognition-japanese:16.0.1"',
+              'implementation "com.google.mlkit:text-recognition-korean:16.0.1"',
+          ]
+
+          candidates = [
+              Path("android/app/build.gradle"),
+              Path("android/app/build.gradle.kts"),
+          ]
+
+          gradle_file = next((p for p in candidates if p.exists()), None)
+
+          if gradle_file is None:
+              raise SystemExit("Could not find Android app Gradle file")
+
+          text = gradle_file.read_text()
+
+          if "com.google.mlkit:text-recognition:16.0.1" not in text:
+              marker = "dependencies {"
+              if marker not in text:
+                  raise SystemExit("Could not find dependencies block")
+
+              additions = "\n".join(
+                  f"    {d}" for d in deps
+              ) + "\n"
+
+              text = text.replace(
+                  marker,
+                  marker + "\n" + additions,
+                  1
+              )
+
+              gradle_file.write_text(text)
+
+          print(f"Updated {gradle_file}")
+          PY
 
       - name: Get dependencies
         run: flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release --no-shrink
+        run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
