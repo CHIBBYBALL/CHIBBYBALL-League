@@ -2563,20 +2563,77 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
 
   @override
   Widget build(BuildContext context) {
-    final all = [...store.matches]..sort((a, b) => b.round.compareTo(a.round));
-    final visible = filter == 'All' ? all : all.where((m) => m.status == filter).toList();
+    final all = [...store.matches]
+      ..sort((a, b) => b.round.compareTo(a.round));
+    final visible = filter == 'All'
+        ? all
+        : all.where((m) => m.status == filter).toList();
+
+    final children = <Widget>[
+      const Card(
+        child: Padding(
+          padding: EdgeInsets.all(14),
+          child: Text(
+            'View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.',
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final value in [
+              'All',
+              'Awaiting Confirmation',
+              'Confirmed',
+              'Disputed',
+            ])
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(value),
+                  selected: filter == value,
+                  onSelected: (_) => setState(() => filter = value),
+                ),
+              ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 8),
+    ];
+
+    if (visible.isEmpty) {
+      children.add(
+        const Card(
+          child: Padding(
+            padding: EdgeInsets.all(18),
+            child: Text('No results to review.'),
+          ),
+        ),
+      );
+    } else {
+      children.addAll(
+        visible.map((m) => _reviewCard(context, m)),
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Result Review'), actions: [IconButton(onPressed: loading ? null : _refresh, icon: const Icon(Icons.refresh))]),
+      appBar: AppBar(
+        title: const Text('Result Review'),
+        actions: [
+          IconButton(
+            onPressed: loading ? null : _refresh,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: ListView(padding: const EdgeInsets.all(12), children: [
-          const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.'))),
-          const SizedBox(height: 8),
-          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['All', 'Awaiting Confirmation', 'Confirmed', 'Disputed'].map((value) => Padding(padding: const EdgeInsets.only(right: 8), child: ChoiceChip(label: Text(value), selected: filter == value, onSelected: (_) => setState(() => filter = value))).toList())),
-          const SizedBox(height: 8),
-          if (visible.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No results to review.')))
-          else ...visible.map((m) => _reviewCard(context, m)),
-        ]),
+        child: ListView(
+          padding: const EdgeInsets.all(12),
+          children: children,
+        ),
       ),
     );
   }
