@@ -2509,10 +2509,32 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
         child: ListView(padding: const EdgeInsets.all(12), children: [
           const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.'))),
           const SizedBox(height: 8),
-          SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['All', 'Awaiting Confirmation', 'Confirmed', 'Disputed'].map((value) => Padding(padding: const EdgeInsets.only(right: 8), child: ChoiceChip(label: Text(value), selected: filter == value, onSelected: (_) => setState(() => filter = value))).toList())),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final value in ['All', 'Awaiting Confirmation', 'Confirmed', 'Disputed'])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(value),
+                      selected: filter == value,
+                      onSelected: (_) => setState(() => filter = value),
+                    ),
+                  ),
+              ],
+            ),
+          ),
           const SizedBox(height: 8),
-          if (visible.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No results to review.')))
-          else ...visible.map((m) => _reviewCard(context, m)),
+          if (visible.isEmpty)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: Text('No results to review.'),
+              ),
+            )
+          else
+            ...visible.map((m) => _reviewCard(context, m)), 
         ]),
       ),
     );
