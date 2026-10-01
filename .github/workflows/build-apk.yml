@@ -23,6 +23,11 @@ jobs:
       - name: Generate Android project
         run: flutter create --platforms=android .
 
+      - name: Add Firebase configuration
+        run: |
+          mkdir -p android/app
+          cp google-services.json android/app/google-services.json
+
       - name: Add Internet permission
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
