@@ -28,6 +28,38 @@ jobs:
           mkdir -p android/app
           cp google-services.json android/app/google-services.json
 
+      - name: Configure Google Services plugin
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          settings = Path("android/settings.gradle")
+          if settings.exists():
+              text = settings.read_text()
+
+              if "com.google.gms.google-services" not in text:
+                  text = text.replace(
+                      "plugins {",
+                      "plugins {\n    id 'com.google.gms.google-services' version '4.4.4' apply false",
+                      1
+                  )
+                  settings.write_text(text)
+
+          build = Path("android/app/build.gradle")
+          if build.exists():
+              text = build.read_text()
+
+              if "com.google.gms.google-services" not in text:
+                  text = text.replace(
+                      "plugins {",
+                      "plugins {\n    id 'com.google.gms.google-services'",
+                      1
+                  )
+                  build.write_text(text)
+
+          print("Google Services plugin configured")
+          PY
+
       - name: Add Internet permission
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
