@@ -214,6 +214,41 @@ class Player {
 }
 
 
+class NotificationItem {
+  final String id;
+  final String? leagueId;
+  final String? matchId;
+  final String type;
+  final String title;
+  final String message;
+  final bool isRead;
+  final DateTime createdAt;
+
+  const NotificationItem({
+    required this.id,
+    this.leagueId,
+    this.matchId,
+    required this.type,
+    required this.title,
+    required this.message,
+    required this.isRead,
+    required this.createdAt,
+  });
+
+  factory NotificationItem.fromJson(Map<String, dynamic> row) {
+    return NotificationItem(
+      id: row['id'].toString(),
+      leagueId: row['league_id']?.toString(),
+      matchId: row['match_id']?.toString(),
+      type: row['type']?.toString() ?? 'general',
+      title: row['title']?.toString() ?? 'Notification',
+      message: row['message']?.toString() ?? '',
+      isRead: row['is_read'] == true,
+      createdAt: DateTime.tryParse(row['created_at']?.toString() ?? '') ?? DateTime.now(),
+    );
+  }
+}
+
 class LeagueInfo {
   final String id;
   final String name;
@@ -816,6 +851,71 @@ class Store {
       return current;
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<List<NotificationItem>> fetchNotifications({int limit = 100}) async {
+    final player = current;
+    if (player == null) return [];
+
+    final data = await supabase
+        .from('notifications')
+        .select('id, league_id, match_id, type, title, message, is_read, created_at')
+        .eq('player_id', player.id)
+        .order('created_at', ascending: false)
+        .limit(limit);
+
+    return (data as List)
+        .map((e) => NotificationItem.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<int> unreadNotificationCount() async {
+    final player = current;
+    if (player == null) return 0;
+
+    final data = await supabase
+        .from('notifications')
+        .select('id')
+        .eq('player_id', player.id)
+        .eq('is_read', false);
+
+    return (data as List).length;
+  }
+
+  Future<String?> markNotificationRead(String notificationId) async {
+    final player = current;
+    if (player == null) return 'No player is signed in.';
+
+    try {
+      await supabase
+          .from('notifications')
+          .update({'is_read': true})
+          .eq('id', notificationId)
+          .eq('player_id', player.id);
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  Future<String?> markAllNotificationsRead() async {
+    final player = current;
+    if (player == null) return 'No player is signed in.';
+
+    try {
+      await supabase
+          .from('notifications')
+          .update({'is_read': true})
+          .eq('player_id', player.id)
+          .eq('is_read', false);
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
     }
   }
 
@@ -1458,6 +1558,7 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('CHIBBYBALL League'),
         actions: [
+          const NotificationBell(),
           if (player?.admin == true)
             IconButton(
               icon: const Icon(Icons.admin_panel_settings),
@@ -1493,6 +1594,246 @@ class _HomePageState extends State<HomePage> {
             label: 'Profile',
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+class NotificationBell extends StatelessWidget {
+  const NotificationBell({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<int>(
+      future: Store.instance.unreadNotificationCount(),
+      builder: (context, snapshot) {
+        final count = snapshot.data ?? 0;
+
+        return IconButton(
+          tooltip: 'Notifications',
+          onPressed: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const NotificationsPage(),
+              ),
+            );
+          },
+          icon: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.notifications_outlined),
+              if (count > 0)
+                Positioned(
+                  right: -4,
+                  top: -5,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      count > 99 ? '99+' : '$count',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class NotificationsPage extends StatefulWidget {
+  const NotificationsPage({super.key});
+
+  @override
+  State<NotificationsPage> createState() => _NotificationsPageState();
+}
+
+class _NotificationsPageState extends State<NotificationsPage> {
+  bool loading = true;
+  String? error;
+  List<NotificationItem> notifications = [];
+
+  @override
+  void initState() {
+    super.initState();
+    loadNotifications();
+  }
+
+  Future<void> loadNotifications() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    try {
+      notifications = await Store.instance.fetchNotifications();
+    } catch (e) {
+      error = e.toString();
+    }
+
+    if (mounted) setState(() => loading = false);
+  }
+
+  String _timeLabel(DateTime date) {
+    final local = date.toLocal();
+    final now = DateTime.now();
+    final difference = now.difference(local);
+
+    if (difference.inMinutes < 1) return 'Just now';
+    if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
+    if (difference.inHours < 24) return '${difference.inHours}h ago';
+    if (difference.inDays < 7) return '${difference.inDays}d ago';
+
+    return '${local.day}/${local.month}/${local.year}';
+  }
+
+  IconData _iconFor(String type) {
+    switch (type) {
+      case 'new_fixture':
+        return Icons.sports_soccer;
+      case 'result_submitted':
+        return Icons.photo_camera;
+      case 'result_confirmed':
+        return Icons.check_circle;
+      case 'result_disputed':
+        return Icons.warning_amber;
+      case 'match_reminder':
+        return Icons.alarm;
+      case 'admin_message':
+        return Icons.support_agent;
+      default:
+        return Icons.notifications;
+    }
+  }
+
+  Future<void> markRead(NotificationItem item) async {
+    if (item.isRead) return;
+
+    final error = await Store.instance.markNotificationRead(item.id);
+    if (error == null) {
+      await loadNotifications();
+    }
+  }
+
+  Future<void> markAllRead() async {
+    final error = await Store.instance.markAllNotificationsRead();
+    if (error == null) {
+      await loadNotifications();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final unread = notifications.where((n) => !n.isRead).length;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notifications'),
+        actions: [
+          if (unread > 0)
+            TextButton(
+              onPressed: markAllRead,
+              child: const Text('READ ALL'),
+            ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: loadNotifications,
+        child: loading
+            ? const ListView(
+                children: [
+                  SizedBox(
+                    height: 250,
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ],
+              )
+            : error != null
+                ? ListView(
+                    padding: const EdgeInsets.all(20),
+                    children: [
+                      const Icon(Icons.error_outline, size: 50),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Could not load notifications.\n\n$error',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 15),
+                      FilledButton(
+                        onPressed: loadNotifications,
+                        child: const Text('TRY AGAIN'),
+                      ),
+                    ],
+                  )
+                : notifications.isEmpty
+                    ? ListView(
+                        children: const [
+                          SizedBox(height: 180),
+                          Icon(Icons.notifications_none, size: 65),
+                          SizedBox(height: 15),
+                          Center(
+                            child: Text(
+                              'No notifications yet.',
+                              style: TextStyle(fontSize: 18),
+                            ),
+                          ),
+                        ],
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: notifications.length,
+                        itemBuilder: (context, index) {
+                          final item = notifications[index];
+
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            color: item.isRead
+                                ? null
+                                : Theme.of(context)
+                                    .colorScheme
+                                    .primaryContainer
+                                    .withOpacity(.35),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                child: Icon(_iconFor(item.type)),
+                              ),
+                              title: Text(
+                                item.title,
+                                style: TextStyle(
+                                  fontWeight: item.isRead
+                                      ? FontWeight.normal
+                                      : FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 5),
+                                child: Text(
+                                  '${item.message}\n${_timeLabel(item.createdAt)}',
+                                ),
+                              ),
+                              isThreeLine: true,
+                              onTap: () => markRead(item),
+                            ),
+                          );
+                        },
+                      ),
       ),
     );
   }
