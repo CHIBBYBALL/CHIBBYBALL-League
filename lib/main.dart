@@ -1757,9 +1757,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
       body: RefreshIndicator(
         onRefresh: loadNotifications,
         child: loading
-            ? const ListView(
+            ? ListView(
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     height: 250,
                     child: Center(child: CircularProgressIndicator()),
                   ),
