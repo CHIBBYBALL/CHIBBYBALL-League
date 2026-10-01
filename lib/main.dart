@@ -240,6 +240,9 @@ class MatchItem {
   int? awayClaimAway;
   String? homeProof;
   String? awayProof;
+  String? scheduledDate;
+  String startTime;
+  String endTime;
   String status;
 
   MatchItem({
@@ -255,6 +258,9 @@ class MatchItem {
     this.awayClaimAway,
     this.homeProof,
     this.awayProof,
+    this.scheduledDate,
+    this.startTime = '17:00:00',
+    this.endTime = '23:59:00',
     this.status = 'Scheduled',
   });
 
@@ -271,6 +277,9 @@ class MatchItem {
         'awayClaimAway': awayClaimAway,
         'homeProof': homeProof,
         'awayProof': awayProof,
+        'scheduledDate': scheduledDate,
+        'startTime': startTime,
+        'endTime': endTime,
         'status': status,
       };
 
@@ -287,6 +296,9 @@ class MatchItem {
         awayClaimAway: (json['awayClaimAway'] as num?)?.toInt(),
         homeProof: json['homeProof']?.toString(),
         awayProof: json['awayProof']?.toString(),
+        scheduledDate: json['scheduledDate']?.toString(),
+        startTime: json['startTime']?.toString() ?? '17:00:00',
+        endTime: json['endTime']?.toString() ?? '23:59:00',
         status: json['status']?.toString() ?? 'Scheduled',
       );
 }
@@ -505,7 +517,7 @@ class Store {
     final data = await supabase
         .from('matches')
         .select(
-          'id, round, home_player_id, away_player_id, status, home_score, away_score',
+          'id, round, home_player_id, away_player_id, status, home_score, away_score, scheduled_date, match_start_time, match_end_time',
         )
         .eq('league_id', leagueId)
         .order('round')
@@ -538,6 +550,9 @@ class Store {
           round: (row['round'] as num).toInt(),
           homeScore: (row['home_score'] as num?)?.toInt(),
           awayScore: (row['away_score'] as num?)?.toInt(),
+          scheduledDate: row['scheduled_date']?.toString(),
+          startTime: row['match_start_time']?.toString() ?? '17:00:00',
+          endTime: row['match_end_time']?.toString() ?? '23:59:00',
           status: _dbStatusToLocal(row['status']?.toString()),
         );
 
@@ -898,6 +913,8 @@ class Store {
           'home_player_id': homeId,
           'away_player_id': awayId,
           'status': 'scheduled',
+          'match_start_time': '17:00:00',
+          'match_end_time': '23:59:00',
         });
       }
 
@@ -912,6 +929,36 @@ class Store {
       return 'Could not save fixtures: ${e.message}';
     } catch (e) {
       return 'Could not save fixtures: $e';
+    }
+  }
+
+
+  Future<String?> updateLeagueMatchSchedule({
+    required String leagueId,
+    required String? scheduledDate,
+    required String startTime,
+    required String endTime,
+  }) async {
+    if (Store.instance.current?.admin != true) {
+      return 'Admin access required.';
+    }
+
+    try {
+      await supabase.from('matches').update({
+        'scheduled_date': scheduledDate,
+        'match_start_time': startTime,
+        'match_end_time': endTime,
+      }).eq('league_id', leagueId);
+
+      if (activeLeagueId == leagueId) {
+        await loadMatchesFromSupabase();
+      }
+
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not update match schedule: ${e.message}';
+    } catch (e) {
+      return 'Could not update match schedule: $e';
     }
   }
 
@@ -1798,8 +1845,8 @@ class _FixturesPageState extends State<FixturesPage> {
                     ),
                     subtitle: Text(
                       match.status == 'Confirmed'
-                          ? '${match.homeScore} - ${match.awayScore}'
-                          : match.status,
+                          ? '${match.homeScore} - ${match.awayScore} • ${match.scheduleLabel}'
+                          : '${match.status} • ${match.scheduleLabel}',
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => Navigator.push(
@@ -1814,6 +1861,25 @@ class _FixturesPageState extends State<FixturesPage> {
         ],
       ],
     );
+  }
+}
+
+
+extension MatchScheduleDisplay on MatchItem {
+  String get scheduleLabel {
+    String formatTime(String value) {
+      final parts = value.split(':');
+      final hour = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 17;
+      final minute = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
+      final suffix = hour >= 12 ? 'PM' : 'AM';
+      final displayHour = hour % 12 == 0 ? 12 : hour % 12;
+      return '$displayHour:${minute.toString().padLeft(2, '0')} $suffix';
+    }
+
+    final date = scheduledDate == null || scheduledDate!.isEmpty
+        ? 'Date set by admin'
+        : scheduledDate!;
+    return '$date • ${formatTime(startTime)} – ${formatTime(endTime)}';
   }
 }
 
@@ -3098,6 +3164,244 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
 }
 
 
+
+// ============================================================
+// ADMIN MATCH SCHEDULE
+// ============================================================
+
+class AdminMatchSchedulePage extends StatefulWidget {
+  const AdminMatchSchedulePage({super.key});
+
+  @override
+  State<AdminMatchSchedulePage> createState() => _AdminMatchSchedulePageState();
+}
+
+class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
+  final store = Store.instance;
+  String? selectedLeagueId;
+  DateTime? selectedDate;
+  TimeOfDay startTime = const TimeOfDay(hour: 17, minute: 0);
+  TimeOfDay endTime = const TimeOfDay(hour: 23, minute: 59);
+  bool loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedLeagueId = store.activeLeagueId ??
+        (store.leagues.isNotEmpty ? store.leagues.first.id : null);
+  }
+
+  String _two(int value) => value.toString().padLeft(2, '0');
+
+  String _dateForDb(DateTime date) =>
+      '${date.year}-${_two(date.month)}-${_two(date.day)}';
+
+  String _timeForDb(TimeOfDay time) =>
+      '${_two(time.hour)}:${_two(time.minute)}:00';
+
+  String _displayTime(TimeOfDay time) {
+    final suffix = time.hour >= 12 ? 'PM' : 'AM';
+    final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+    return '$hour:${_two(time.minute)} $suffix';
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate ?? DateTime.now(),
+      firstDate: DateTime(2026),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null) setState(() => selectedDate = picked);
+  }
+
+  Future<void> _pickStartTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: startTime,
+    );
+    if (picked != null) setState(() => startTime = picked);
+  }
+
+  Future<void> _pickEndTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: endTime,
+    );
+    if (picked != null) setState(() => endTime = picked);
+  }
+
+  Future<void> _applySchedule() async {
+    final leagueId = selectedLeagueId;
+    if (leagueId == null) return;
+
+    if (startTime.hour * 60 + startTime.minute >=
+        endTime.hour * 60 + endTime.minute) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('End time must be later than start time.')),
+      );
+      return;
+    }
+
+    setState(() => loading = true);
+    final error = await store.updateLeagueMatchSchedule(
+      leagueId: leagueId,
+      scheduledDate: selectedDate == null ? null : _dateForDb(selectedDate!),
+      startTime: _timeForDb(startTime),
+      endTime: _timeForDb(endTime),
+    );
+
+    if (!mounted) return;
+    setState(() => loading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error ?? 'Match schedule updated successfully for this league.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _resetDefaults() async {
+    setState(() {
+      selectedDate = null;
+      startTime = const TimeOfDay(hour: 17, minute: 0);
+      endTime = const TimeOfDay(hour: 23, minute: 59);
+    });
+
+    final leagueId = selectedLeagueId;
+    if (leagueId == null) return;
+
+    setState(() => loading = true);
+    final error = await store.updateLeagueMatchSchedule(
+      leagueId: leagueId,
+      scheduledDate: null,
+      startTime: '17:00:00',
+      endTime: '23:59:00',
+    );
+    if (!mounted) return;
+    setState(() => loading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error ?? 'Schedule reset to the default 5:00 PM – 11:59 PM.',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final leagues = store.leagues;
+    final selected = leagues.where((l) => l.id == selectedLeagueId).firstOrNull;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Match Schedule')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Default match window: 5:00 PM – 11:59 PM.\n\n'
+                'The admin can change the date and time at any time. '
+                'The selected schedule is applied to every fixture in the selected league.',
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (leagues.isEmpty)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('No leagues available.'),
+              ),
+            )
+          else ...[
+            DropdownButtonFormField<String>(
+              value: selectedLeagueId,
+              decoration: const InputDecoration(
+                labelText: 'SELECT LEAGUE',
+                border: OutlineInputBorder(),
+              ),
+              items: leagues
+                  .map(
+                    (league) => DropdownMenuItem<String>(
+                      value: league.id,
+                      child: Text(
+                        '${league.name} • ${league.status.toUpperCase()}',
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: loading
+                  ? null
+                  : (value) => setState(() => selectedLeagueId = value),
+            ),
+            const SizedBox(height: 14),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.calendar_month),
+                title: const Text('Match Date'),
+                subtitle: Text(
+                  selectedDate == null
+                      ? 'Not set — admin can choose a date'
+                      : _dateForDb(selectedDate!),
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: loading ? null : _pickDate,
+              ),
+            ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.login),
+                title: const Text('Start Time'),
+                subtitle: Text(_displayTime(startTime)),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: loading ? null : _pickStartTime,
+              ),
+            ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.logout),
+                title: const Text('Deadline / End Time'),
+                subtitle: Text(_displayTime(endTime)),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: loading ? null : _pickEndTime,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (selected != null)
+              Text(
+                '${selected.name}: ${store.matches.where((m) => m.status != 'Confirmed').length} loaded matches',
+                style: const TextStyle(color: Colors.grey),
+              ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: loading ? null : _applySchedule,
+              icon: loading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save),
+              label: const Text('APPLY SCHEDULE TO LEAGUE'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: loading ? null : _resetDefaults,
+              icon: const Icon(Icons.restore),
+              label: const Text('RESET TO DEFAULT 5:00 PM – 11:59 PM'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // ============================================================
 // ADMIN RESULT REVIEW
 // ============================================================
@@ -3528,6 +3832,20 @@ class _AdminPageState extends State<AdminPage> {
                         }),
                 icon: const Icon(Icons.emoji_events),
                 label: const Text('MANAGE LEAGUES'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const AdminMatchSchedulePage()),
+                        ),
+                icon: const Icon(Icons.schedule),
+                label: const Text('MATCH SCHEDULE'),
               ),
             ),
             const SizedBox(height: 10),
