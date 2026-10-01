@@ -164,12 +164,24 @@ class Player {
   final String name;
   final String gamerTag;
   final bool admin;
+  final String phoneNumber;
+  final String country;
+  final String countryCode;
+  final String whatsappNumber;
+  final DateTime? lastSeen;
+  final bool isOnline;
 
   const Player({
     required this.id,
     required this.name,
     required this.gamerTag,
     this.admin = false,
+    this.phoneNumber = '',
+    this.country = '',
+    this.countryCode = '',
+    this.whatsappNumber = '',
+    this.lastSeen,
+    this.isOnline = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -177,6 +189,12 @@ class Player {
         'name': name,
         'gamerTag': gamerTag,
         'admin': admin,
+        'phoneNumber': phoneNumber,
+        'country': country,
+        'countryCode': countryCode,
+        'whatsappNumber': whatsappNumber,
+        'lastSeen': lastSeen?.toIso8601String(),
+        'isOnline': isOnline,
       };
 
   factory Player.fromJson(Map<String, dynamic> json) => Player(
@@ -184,6 +202,14 @@ class Player {
         name: json['name']?.toString() ?? '',
         gamerTag: json['gamerTag']?.toString() ?? '',
         admin: json['admin'] == true,
+        phoneNumber: json['phoneNumber']?.toString() ?? '',
+        country: json['country']?.toString() ?? '',
+        countryCode: json['countryCode']?.toString() ?? '',
+        whatsappNumber: json['whatsappNumber']?.toString() ?? '',
+        lastSeen: json['lastSeen'] == null
+            ? null
+            : DateTime.tryParse(json['lastSeen'].toString()),
+        isOnline: json['isOnline'] == true,
       );
 }
 
@@ -581,7 +607,7 @@ class Store {
   Future<void> refreshPlayers() async {
     final data = await supabase
         .from('profiles')
-        .select('id, full_name, gamer_tag, role, created_at')
+        .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, last_seen, is_online, created_at')
         .order('created_at');
 
     players
@@ -594,6 +620,14 @@ class Store {
             name: row['full_name']?.toString() ?? '',
             gamerTag: row['gamer_tag']?.toString() ?? '',
             admin: row['role']?.toString().toLowerCase() == 'admin',
+            phoneNumber: row['phone_number']?.toString() ?? '',
+            country: row['country']?.toString() ?? '',
+            countryCode: row['country_code']?.toString() ?? '',
+            whatsappNumber: row['whatsapp_number']?.toString() ?? '',
+            lastSeen: row['last_seen'] == null
+                ? null
+                : DateTime.tryParse(row['last_seen'].toString()),
+            isOnline: row['is_online'] == true,
           );
         }),
       );
@@ -659,7 +693,7 @@ class Store {
         try {
           final row = await supabase
               .from('profiles')
-              .select('id, full_name, gamer_tag, role')
+              .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, last_seen, is_online')
               .eq('id', user.id)
               .maybeSingle();
 
@@ -681,6 +715,14 @@ class Store {
         name: profile['full_name']?.toString() ?? cleanName,
         gamerTag: profile['gamer_tag']?.toString() ?? cleanTag,
         admin: profile['role']?.toString().toLowerCase() == 'admin',
+        phoneNumber: profile['phone_number']?.toString() ?? '',
+        country: profile['country']?.toString() ?? '',
+        countryCode: profile['country_code']?.toString() ?? '',
+        whatsappNumber: profile['whatsapp_number']?.toString() ?? '',
+        lastSeen: profile['last_seen'] == null
+            ? null
+            : DateTime.tryParse(profile['last_seen'].toString()),
+        isOnline: profile['is_online'] == true,
       );
 
       try {
@@ -727,7 +769,7 @@ class Store {
 
       final profile = await supabase
           .from('profiles')
-          .select('id, full_name, gamer_tag, role')
+          .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, last_seen, is_online')
           .eq('id', user.id)
           .maybeSingle();
 
@@ -740,6 +782,14 @@ class Store {
         name: profile['full_name']?.toString() ?? '',
         gamerTag: profile['gamer_tag']?.toString() ?? cleanTag,
         admin: profile['role']?.toString().toLowerCase() == 'admin',
+        phoneNumber: profile['phone_number']?.toString() ?? '',
+        country: profile['country']?.toString() ?? '',
+        countryCode: profile['country_code']?.toString() ?? '',
+        whatsappNumber: profile['whatsapp_number']?.toString() ?? '',
+        lastSeen: profile['last_seen'] == null
+            ? null
+            : DateTime.tryParse(profile['last_seen'].toString()),
+        isOnline: profile['is_online'] == true,
       );
 
       try {
@@ -751,6 +801,36 @@ class Store {
       return current;
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<String?> updateMyProfile({
+    required String phoneNumber,
+    required String country,
+    required String countryCode,
+    required String whatsappNumber,
+  }) async {
+    final player = current;
+    if (player == null) return 'No player is signed in.';
+
+    try {
+      final updated = {
+        'phone_number': phoneNumber.trim(),
+        'country': country.trim(),
+        'country_code': countryCode.trim(),
+        'whatsapp_number': whatsappNumber.trim(),
+      };
+
+      await supabase.from('profiles').update(updated).eq('id', player.id);
+
+      await refreshPlayers();
+      current = findPlayer(player.id);
+      await save();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not save profile: ${e.message}';
+    } catch (e) {
+      return 'Could not save profile: $e';
     }
   }
 
@@ -2131,13 +2211,61 @@ class _TablePageState extends State<TablePage> {
 // PROFILE
 // ============================================================
 
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
-  Future<void> logout(BuildContext context) async {
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  late final TextEditingController phoneController;
+  late final TextEditingController countryController;
+  late final TextEditingController countryCodeController;
+  late final TextEditingController whatsappController;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final player = Store.instance.current;
+    phoneController = TextEditingController(text: player?.phoneNumber ?? '');
+    countryController = TextEditingController(text: player?.country ?? '');
+    countryCodeController = TextEditingController(text: player?.countryCode ?? '');
+    whatsappController = TextEditingController(text: player?.whatsappNumber ?? '');
+  }
+
+  @override
+  void dispose() {
+    phoneController.dispose();
+    countryController.dispose();
+    countryCodeController.dispose();
+    whatsappController.dispose();
+    super.dispose();
+  }
+
+  Future<void> saveProfile() async {
+    setState(() => saving = true);
+
+    final error = await Store.instance.updateMyProfile(
+      phoneNumber: phoneController.text,
+      country: countryController.text,
+      countryCode: countryCodeController.text,
+      whatsappNumber: whatsappController.text,
+    );
+
+    if (!mounted) return;
+    setState(() => saving = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error ?? 'Profile details saved successfully.')),
+    );
+  }
+
+  Future<void> logout() async {
     await Store.instance.logout();
 
-    if (!context.mounted) return;
+    if (!mounted) return;
 
     Navigator.pushAndRemoveUntil(
       context,
@@ -2161,10 +2289,7 @@ class ProfilePage extends StatelessWidget {
         Center(
           child: Text(
             player?.gamerTag ?? '',
-            style: const TextStyle(
-              fontSize: 25,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
           ),
         ),
         Center(
@@ -2173,7 +2298,7 @@ class ProfilePage extends StatelessWidget {
             style: const TextStyle(color: Colors.grey),
           ),
         ),
-        const SizedBox(height: 25),
+        const SizedBox(height: 20),
         Card(
           child: ListTile(
             leading: const Icon(Icons.badge),
@@ -2192,14 +2317,83 @@ class ProfilePage extends StatelessWidget {
           child: ListTile(
             leading: const Icon(Icons.security),
             title: const Text('Account Role'),
-            subtitle: Text(
-              player?.admin == true
-                  ? 'Administrator'
-                  : 'Player',
-            ),
+            subtitle: Text(player?.admin == true ? 'Administrator' : 'Player'),
+          ),
+        ),
+        const SizedBox(height: 18),
+        const Text(
+          'CONTACT DETAILS',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: phoneController,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(
+            labelText: 'Phone Number',
+            prefixIcon: Icon(Icons.phone),
+            border: OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 12),
+        TextField(
+          controller: countryController,
+          decoration: const InputDecoration(
+            labelText: 'Country',
+            prefixIcon: Icon(Icons.public),
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: countryCodeController,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(
+            labelText: 'Country Code (e.g. +234)',
+            prefixIcon: Icon(Icons.language),
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: whatsappController,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(
+            labelText: 'WhatsApp Number',
+            prefixIcon: Icon(Icons.chat),
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          height: 50,
+          child: FilledButton.icon(
+            onPressed: saving ? null : saveProfile,
+            icon: saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save),
+            label: Text(saving ? 'SAVING...' : 'SAVE PROFILE'),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Card(
+          child: ListTile(
+            leading: Icon(
+              player?.isOnline == true ? Icons.circle : Icons.circle_outlined,
+            ),
+            title: Text(player?.isOnline == true ? 'Online' : 'Offline'),
+            subtitle: Text(
+              player?.lastSeen == null
+                  ? 'Last seen information will appear here later.'
+                  : 'Last seen ${player!.lastSeen}',
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
         Card(
           child: ListTile(
             leading: const Icon(Icons.bar_chart),
@@ -2209,16 +2403,14 @@ class ProfilePage extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => const PlayerStatsPage(),
-                ),
+                MaterialPageRoute(builder: (_) => const PlayerStatsPage()),
               );
             },
           ),
         ),
         const SizedBox(height: 8),
         FilledButton.icon(
-          onPressed: () => logout(context),
+          onPressed: saving ? null : logout,
           icon: const Icon(Icons.logout),
           label: const Text('LOG OUT'),
         ),
