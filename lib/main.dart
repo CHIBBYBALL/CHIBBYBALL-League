@@ -1478,6 +1478,12 @@ class DashboardPage extends StatelessWidget {
     final disputed =
         myMatches.where((m) => m.status == 'Disputed').length;
 
+    final hasDetails = player != null &&
+        (player.phoneNumber.trim().isNotEmpty ||
+            player.country.trim().isNotEmpty ||
+            player.countryCode.trim().isNotEmpty ||
+            player.whatsappNumber.trim().isNotEmpty);
+
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
@@ -1488,7 +1494,64 @@ class DashboardPage extends StatelessWidget {
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 18),
+
+        // MY PLAYER DETAILS
+        Card(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfilePage()),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const CircleAvatar(
+                    radius: 27,
+                    child: Icon(Icons.person),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'MY PLAYER DETAILS',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          hasDetails
+                              ? [
+                                  if (player!.country.trim().isNotEmpty)
+                                    player.country.trim(),
+                                  if (player.whatsappNumber.trim().isNotEmpty)
+                                    'WhatsApp: ${player.whatsappNumber.trim()}',
+                                ].join(' • ')
+                              : 'Add your contact details',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 14),
+
         _card(
           context,
           Icons.sports_soccer,
@@ -2223,16 +2286,36 @@ class _ProfilePageState extends State<ProfilePage> {
   late final TextEditingController countryController;
   late final TextEditingController countryCodeController;
   late final TextEditingController whatsappController;
+
   bool saving = false;
+  bool editing = false;
 
   @override
   void initState() {
     super.initState();
+
     final player = Store.instance.current;
-    phoneController = TextEditingController(text: player?.phoneNumber ?? '');
-    countryController = TextEditingController(text: player?.country ?? '');
-    countryCodeController = TextEditingController(text: player?.countryCode ?? '');
-    whatsappController = TextEditingController(text: player?.whatsappNumber ?? '');
+
+    phoneController =
+        TextEditingController(text: player?.phoneNumber ?? '');
+    countryController =
+        TextEditingController(text: player?.country ?? '');
+    countryCodeController =
+        TextEditingController(text: player?.countryCode ?? '');
+    whatsappController =
+        TextEditingController(text: player?.whatsappNumber ?? '');
+
+    // Show the setup form only until the player has saved details.
+    editing = !_hasSavedDetails(player);
+  }
+
+  bool _hasSavedDetails(Player? player) {
+    if (player == null) return false;
+
+    return player.phoneNumber.trim().isNotEmpty ||
+        player.country.trim().isNotEmpty ||
+        player.countryCode.trim().isNotEmpty ||
+        player.whatsappNumber.trim().isNotEmpty;
   }
 
   @override
@@ -2255,11 +2338,32 @@ class _ProfilePageState extends State<ProfilePage> {
     );
 
     if (!mounted) return;
-    setState(() => saving = false);
+
+    setState(() {
+      saving = false;
+      if (error == null) {
+        editing = false;
+      }
+    });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error ?? 'Profile details saved successfully.')),
+      SnackBar(
+        content: Text(
+          error ?? 'Profile details saved successfully.',
+        ),
+      ),
     );
+  }
+
+  void startEditing() {
+    final player = Store.instance.current;
+
+    phoneController.text = player?.phoneNumber ?? '';
+    countryController.text = player?.country ?? '';
+    countryCodeController.text = player?.countryCode ?? '';
+    whatsappController.text = player?.whatsappNumber ?? '';
+
+    setState(() => editing = true);
   }
 
   Future<void> logout() async {
@@ -2274,9 +2378,26 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  Widget _detailTile(
+    IconData icon,
+    String title,
+    String value,
+  ) {
+    return Card(
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(
+          value.trim().isEmpty ? 'Not provided' : value.trim(),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final player = Store.instance.current;
+    final hasDetails = _hasSavedDetails(player);
 
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -2285,11 +2406,14 @@ class _ProfilePageState extends State<ProfilePage> {
           radius: 45,
           child: Icon(Icons.person, size: 50),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
         Center(
           child: Text(
             player?.gamerTag ?? '',
-            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
+            style: const TextStyle(
+              fontSize: 25,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
         Center(
@@ -2299,93 +2423,168 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ),
         const SizedBox(height: 20),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.badge),
-            title: const Text('Gamer Tag'),
-            subtitle: Text(player?.gamerTag ?? ''),
-          ),
+
+        _detailTile(
+          Icons.badge,
+          'Gamer Tag',
+          player?.gamerTag ?? '',
         ),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.person),
-            title: const Text('Full Name'),
-            subtitle: Text(player?.name ?? ''),
-          ),
+        _detailTile(
+          Icons.person,
+          'Full Name',
+          player?.name ?? '',
         ),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.security),
-            title: const Text('Account Role'),
-            subtitle: Text(player?.admin == true ? 'Administrator' : 'Player'),
-          ),
+        _detailTile(
+          Icons.security,
+          'Account Role',
+          player?.admin == true ? 'Administrator' : 'Player',
         ),
+
         const SizedBox(height: 18),
-        const Text(
-          'CONTACT DETAILS',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: phoneController,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(
-            labelText: 'Phone Number',
-            prefixIcon: Icon(Icons.phone),
-            border: OutlineInputBorder(),
+
+        // SAVED VIEW
+        if (!editing && hasDetails) ...[
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'MY PLAYER DETAILS',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Edit details',
+                icon: const Icon(Icons.edit),
+                onPressed: startEditing,
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: countryController,
-          decoration: const InputDecoration(
-            labelText: 'Country',
-            prefixIcon: Icon(Icons.public),
-            border: OutlineInputBorder(),
+          const SizedBox(height: 8),
+          _detailTile(
+            Icons.phone,
+            'Phone Number',
+            player?.phoneNumber ?? '',
           ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: countryCodeController,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(
-            labelText: 'Country Code (e.g. +234)',
-            prefixIcon: Icon(Icons.language),
-            border: OutlineInputBorder(),
+          _detailTile(
+            Icons.public,
+            'Country',
+            player?.country ?? '',
           ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: whatsappController,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(
-            labelText: 'WhatsApp Number',
-            prefixIcon: Icon(Icons.chat),
-            border: OutlineInputBorder(),
+          _detailTile(
+            Icons.language,
+            'Country Code',
+            player?.countryCode ?? '',
           ),
-        ),
-        const SizedBox(height: 14),
-        SizedBox(
-          height: 50,
-          child: FilledButton.icon(
-            onPressed: saving ? null : saveProfile,
-            icon: saving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.save),
-            label: Text(saving ? 'SAVING...' : 'SAVE PROFILE'),
+          _detailTile(
+            Icons.chat,
+            'WhatsApp Number',
+            player?.whatsappNumber ?? '',
           ),
-        ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: startEditing,
+            icon: const Icon(Icons.edit),
+            label: const Text('EDIT PROFILE DETAILS'),
+          ),
+        ],
+
+        // EDIT VIEW
+        if (editing) ...[
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'PLAYER DETAILS',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              if (hasDetails)
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () => setState(() => editing = false),
+                  child: const Text('CANCEL'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: phoneController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'Phone Number',
+              prefixIcon: Icon(Icons.phone),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: countryController,
+            decoration: const InputDecoration(
+              labelText: 'Country',
+              prefixIcon: Icon(Icons.public),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: countryCodeController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'Country Code (e.g. +234)',
+              prefixIcon: Icon(Icons.language),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: whatsappController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'WhatsApp Number',
+              prefixIcon: const Icon(Icons.chat),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 50,
+            child: FilledButton.icon(
+              onPressed: saving ? null : saveProfile,
+              icon: saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.save),
+              label: Text(
+                saving ? 'SAVING...' : 'SAVE PROFILE',
+              ),
+            ),
+          ),
+        ],
+
         const SizedBox(height: 18),
+
         Card(
           child: ListTile(
             leading: Icon(
-              player?.isOnline == true ? Icons.circle : Icons.circle_outlined,
+              player?.isOnline == true
+                  ? Icons.circle
+                  : Icons.circle_outlined,
             ),
-            title: Text(player?.isOnline == true ? 'Online' : 'Offline'),
+            title: Text(
+              player?.isOnline == true ? 'Online' : 'Offline',
+            ),
             subtitle: Text(
               player?.lastSeen == null
                   ? 'Last seen information will appear here later.'
@@ -2393,22 +2592,30 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
         ),
+
         const SizedBox(height: 8),
+
         Card(
           child: ListTile(
             leading: const Icon(Icons.bar_chart),
             title: const Text('My Stats & Match History'),
-            subtitle: const Text('View your confirmed results and league statistics.'),
+            subtitle: const Text(
+              'View your confirmed results and league statistics.',
+            ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const PlayerStatsPage()),
+                MaterialPageRoute(
+                  builder: (_) => const PlayerStatsPage(),
+                ),
               );
             },
           ),
         ),
+
         const SizedBox(height: 8),
+
         FilledButton.icon(
           onPressed: saving ? null : logout,
           icon: const Icon(Icons.logout),
