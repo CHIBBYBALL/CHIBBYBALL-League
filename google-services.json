@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "823247573061",
+    "project_id": "chibbyball-league",
+    "storage_bucket": "chibbyball-league.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:823247573061:android:0a0486ff9dd152b449132c",
+        "android_client_info": {
+          "package_name": "com.example.chibbyball_league"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAWGkD1qaHO1eELL2vraiY8c2ytgVVRXjM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
