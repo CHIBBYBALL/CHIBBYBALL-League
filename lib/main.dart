@@ -134,15 +134,28 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  // Initialize Firebase in the background so a Firebase startup problem
+  // cannot keep the Android app stuck on the Flutter splash screen.
+  Firebase.initializeApp().then((_) {
+    FirebaseMessaging.onBackgroundMessage(
+      _firebaseMessagingBackgroundHandler,
+    );
+  }).catchError((e) {
+    debugPrint('Firebase initialization failed: $e');
+  });
 
+  // Supabase is required by the login/register actions, so initialize it
+  // before showing the main app.
   await Supabase.initialize(
     url: supabaseUrl,
     publishableKey: supabasePublishableKey,
   );
 
-  await Store.instance.load();
+  // Load cached/server data without blocking the first screen.
+  Store.instance.load().catchError((e) {
+    debugPrint('Store load failed: $e');
+  });
+
   runApp(const ChibbyballApp());
 }
 
