@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -125,8 +127,15 @@ Future<ScreenshotCheck> analyzeResultScreenshot(
   }
 }
 
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   await Supabase.initialize(
     url: supabaseUrl,
@@ -654,6 +663,42 @@ class Store {
     return '$safe@chibbyball.app';
   }
 
+  Future<void> registerFcmToken() async {
+    final player = current;
+    if (player == null || !Platform.isAndroid) return;
+
+    try {
+      final messaging = FirebaseMessaging.instance;
+
+      await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+        provisional: false,
+      );
+
+      final token = await messaging.getToken();
+      if (token != null && token.isNotEmpty) {
+        await supabase
+            .from('profiles')
+            .update({'fcm_token': token})
+            .eq('id', player.id);
+      }
+
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        final signedInPlayer = current;
+        if (signedInPlayer == null || newToken.isEmpty) return;
+
+        try {
+          await supabase
+              .from('profiles')
+              .update({'fcm_token': newToken})
+              .eq('id', signedInPlayer.id);
+        } catch (_) {}
+      });
+    } catch (_) {}
+  }
+
   Future<void> refreshPlayers() async {
     final data = await supabase
         .from('profiles')
@@ -785,6 +830,10 @@ class Store {
         await save();
       }
 
+      if (response.session != null) {
+        await registerFcmToken();
+      }
+
       if (response.session == null) {
         return 'Account created. Please sign in after confirming your email.';
       }
@@ -847,6 +896,8 @@ class Store {
         await refreshLeagues();
         await loadMatchesFromSupabase();
       } catch (_) {}
+
+      await registerFcmToken();
 
       return current;
     } catch (_) {
@@ -1116,23 +1167,45 @@ class Store {
               (homeCheck.scoreA == awayCheck.scoreB &&
                   homeCheck.scoreB == awayCheck.scoreA));
 
-      await supabase.rpc(
-        'finalize_match_after_screenshot_check',
-        params: {'p_match_id': match.id, 'p_verified': verified},
-      );
-      await loadMatchesFromSupabase();
-
       if (!verified) {
+        await supabase.rpc(
+          'finalize_match_after_screenshot_check',
+          params: {'p_match_id': match.id, 'p_verified': false},
+        );
+        await loadMatchesFromSupabase();
         return 'Screenshots did not pass Full Time, score, or same-match verification. Match marked DISPUTED.';
       }
 
-      return 'Both screenshots verified. Match CONFIRMED automatically.';
+      // Both screenshots passed verification, but confirmation is now
+      // intentionally left to an admin. This prevents the result from
+      // entering the league table until an admin approves it.
+      await loadMatchesFromSupabase();
+      return 'Both screenshots verified. Match is awaiting ADMIN confirmation.';
     } on StorageException catch (e) {
       return 'Could not read proof screenshots: ${e.message}';
     } on PostgrestException catch (e) {
       return 'Verification save failed: ${e.message}';
     } catch (e) {
       return 'Screenshot verification failed: $e';
+    }
+  }
+
+  Future<String?> adminConfirmMatch(MatchItem match) async {
+    if (current?.admin != true) {
+      return 'Admin access required.';
+    }
+
+    try {
+      await supabase.rpc(
+        'admin_confirm_match',
+        params: {'p_match_id': match.id},
+      );
+      await loadMatchesFromSupabase();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not confirm match: ${e.message}';
+    } catch (e) {
+      return 'Could not confirm match: $e';
     }
   }
 
@@ -3801,7 +3874,7 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(padding: const EdgeInsets.all(12), children: [
-          const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('View-only result review. No admin approval is used. Results are confirmed automatically only after both screenshots pass Full Time, score, and same-match checks.'))),
+          const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('Admin result review. Both players must submit their scores and screenshots. Automatic screenshot checking verifies the evidence, then an admin must confirm the result before it counts in the league table.'))),
           const SizedBox(height: 8),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -3828,13 +3901,64 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
     );
   }
 
+  Future<void> _adminConfirm(MatchItem match) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm match?'),
+        content: const Text(
+          'Confirm this result as an admin? It will count toward the league table.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('CONFIRM'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) return;
+
+    setState(() => loading = true);
+    final error = await store.adminConfirmMatch(match);
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error ?? 'Match confirmed by admin.'),
+      ),
+    );
+  }
+
   Widget _reviewCard(BuildContext context, MatchItem m) {
     final homeName = _playerName(m.homeId), awayName = _playerName(m.awayId);
     final homeScore = m.homeClaimHome != null && m.homeClaimAway != null ? '${m.homeClaimHome}-${m.homeClaimAway}' : 'Not submitted';
     final awayScore = m.awayClaimHome != null && m.awayClaimAway != null ? '${m.awayClaimHome}-${m.awayClaimAway}' : 'Not submitted';
     return Card(margin: const EdgeInsets.only(bottom: 12), child: ExpansionTile(
       title: Text('$homeName vs $awayName'), subtitle: Text('Round ${m.round} • ${m.status}'), childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
-      children: [Align(alignment: Alignment.centerLeft, child: Text(_verificationLabel(m), style: TextStyle(fontWeight: FontWeight.bold, color: _statusColor(context, m.status)))), const SizedBox(height: 8), Row(children: [Expanded(child: _claimBox(homeName, homeScore, m.homeProof)), const SizedBox(width: 8), Expanded(child: _claimBox(awayName, awayScore, m.awayProof))])],
+      children: [
+        Align(alignment: Alignment.centerLeft, child: Text(_verificationLabel(m), style: TextStyle(fontWeight: FontWeight.bold, color: _statusColor(context, m.status)))),
+        const SizedBox(height: 8),
+        Row(children: [Expanded(child: _claimBox(homeName, homeScore, m.homeProof)), const SizedBox(width: 8), Expanded(child: _claimBox(awayName, awayScore, m.awayProof))]),
+        if (m.status != 'Confirmed') ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: loading ? null : () => _adminConfirm(m),
+              icon: const Icon(Icons.admin_panel_settings),
+              label: const Text('ADMIN CONFIRM MATCH'),
+            ),
+          ),
+        ],
+      ],
     ));
   }
 
