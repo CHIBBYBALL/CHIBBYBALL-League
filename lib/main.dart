@@ -679,53 +679,89 @@ class Store {
     return '$safe@chibbyball.app';
   }
 
+  String? lastFcmStatus;
+
   Future<void> registerFcmToken() async {
     final player = current;
-    if (player == null || !Platform.isAndroid) return;
+    if (player == null || !Platform.isAndroid) {
+      lastFcmStatus = 'FCM skipped: Android player session not available.';
+      return;
+    }
 
     try {
-      // Firebase is started in the background at app launch. Wait for that
-      // same initialization here so login cannot race Firebase startup.
+      // Wait for the same Firebase initialization started by main().
       _firebaseInitialization ??= Firebase.initializeApp();
       await _firebaseInitialization;
 
+      final firebaseApps = Firebase.apps;
+      if (firebaseApps.isEmpty) {
+        throw Exception('Firebase initialized but no Firebase app is available.');
+      }
+
       final messaging = FirebaseMessaging.instance;
 
-      await messaging.requestPermission(
+      // Make sure FCM auto-initialization is enabled before requesting a token.
+      await messaging.setAutoInitEnabled(true);
+
+      final settings = await messaging.requestPermission(
         alert: true,
         badge: true,
         sound: true,
         provisional: false,
       );
 
-      final token = await messaging.getToken();
+      debugPrint(
+        'FCM notification permission: ${settings.authorizationStatus}',
+      );
 
-      if (token != null && token.isNotEmpty) {
-        await supabase
-            .from('profiles')
-            .update({'fcm_token': token})
-            .eq('id', player.id);
+      final token = await messaging
+          .getToken()
+          .timeout(const Duration(seconds: 20));
 
-        debugPrint('FCM token saved for player ${player.id}');
-      } else {
-        debugPrint('FCM getToken returned no token');
+      if (token == null || token.isEmpty) {
+        lastFcmStatus = 'FCM is initialized, but Firebase returned no device token.';
+        debugPrint(lastFcmStatus);
+        return;
       }
+
+      // Use select() after the update so an RLS/no-row problem cannot fail
+      // silently. We never display or log the token itself.
+      final updatedRows = await supabase
+          .from('profiles')
+          .update({'fcm_token': token})
+          .eq('id', player.id)
+          .select('id');
+
+      if (updatedRows.isEmpty) {
+        throw Exception(
+          'FCM token was created, but Supabase did not update this player profile.',
+        );
+      }
+
+      lastFcmStatus = 'FCM token saved successfully.';
+      debugPrint(lastFcmStatus);
 
       FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
         final signedInPlayer = current;
         if (signedInPlayer == null || newToken.isEmpty) return;
 
         try {
-          await supabase
+          final rows = await supabase
               .from('profiles')
               .update({'fcm_token': newToken})
-              .eq('id', signedInPlayer.id);
+              .eq('id', signedInPlayer.id)
+              .select('id');
+
+          if (rows.isNotEmpty) {
+            debugPrint('FCM token refresh saved successfully.');
+          }
         } catch (e) {
           debugPrint('FCM token refresh save failed: $e');
         }
       });
     } catch (e) {
-      debugPrint('FCM token registration failed: $e');
+      lastFcmStatus = 'FCM setup failed: $e';
+      debugPrint(lastFcmStatus);
     }
   }
 
@@ -1433,6 +1469,13 @@ class _LoginPageState extends State<LoginPage> {
     if (player == null) {
       showMessage('Invalid gamer tag or password.');
       return;
+    }
+
+    final fcmStatus = Store.instance.lastFcmStatus;
+    if (fcmStatus != null && fcmStatus != 'FCM token saved successfully.') {
+      showMessage(fcmStatus);
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (!mounted) return;
     }
 
     Navigator.pushReplacement(
