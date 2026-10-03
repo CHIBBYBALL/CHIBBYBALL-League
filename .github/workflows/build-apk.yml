@@ -41,10 +41,8 @@ jobs:
           if not app.exists():
               app = Path("android/app/build.gradle")
 
-          if not settings.exists():
-              raise SystemExit("Android settings Gradle file not found")
-          if not app.exists():
-              raise SystemExit("Android app Gradle file not found")
+          if not settings.exists() or not app.exists():
+              raise SystemExit("Android Gradle files not found")
 
           s = settings.read_text()
           a = app.read_text()
@@ -78,7 +76,7 @@ jobs:
 
           settings.write_text(s)
           app.write_text(a)
-          print(f"Google Services configured: {settings}, {app}")
+          print("Google Services plugin configured.")
           PY
 
       - name: Verify Firebase configuration
@@ -91,39 +89,14 @@ jobs:
       - name: Add Android permissions
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
+
           if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
             sed -i '/<manifest[^>]*>/a\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
           fi
+
           if ! grep -q "android.permission.POST_NOTIFICATIONS" "$MANIFEST"; then
             sed -i '/<manifest[^>]*>/a\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' "$MANIFEST"
           fi
-
-      - name: Add ML Kit Android dependencies
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          dependencies = [
-              "com.google.mlkit:text-recognition-chinese:16.0.1",
-              "com.google.mlkit:text-recognition-devanagari:16.0.1",
-              "com.google.mlkit:text-recognition-japanese:16.0.1",
-              "com.google.mlkit:text-recognition-korean:16.0.1",
-          ]
-          groovy = Path("android/app/build.gradle")
-          kotlin = Path("android/app/build.gradle.kts")
-          if groovy.exists():
-              path, text = groovy, groovy.read_text()
-              additions = "\n".join(f'    implementation "{d}"' for d in dependencies if d not in text)
-          elif kotlin.exists():
-              path, text = kotlin, kotlin.read_text()
-              additions = "\n".join(f'    implementation("{d}")' for d in dependencies if d not in text)
-          else:
-              raise SystemExit("No Android app Gradle file found")
-          if additions:
-              if "dependencies {" not in text:
-                  raise SystemExit("Dependencies block not found")
-              text = text.replace("dependencies {", "dependencies {\n" + additions, 1)
-              path.write_text(text)
-          PY
 
       - name: Get dependencies
         run: flutter pub get
@@ -155,6 +128,4 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: cupiklbeuxdjwjdkojfw
         run: |
-          supabase functions deploy send-push-notification \
-            --project-ref "$SUPABASE_PROJECT_ID" \
-            --use-api
+          supabase functions deploy send-push-notification             --project-ref "$SUPABASE_PROJECT_ID"             --use-api
