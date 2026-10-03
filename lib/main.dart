@@ -162,111 +162,117 @@ Future<void> main() async {
   runApp(const ChibbyballApp());
 }
 
+class _ChibbyballBackgroundPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final bg = Paint()..shader = const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF02050B), Color(0xFF071225), Color(0xFF02040A)],
+    ).createShader(rect);
+    canvas.drawRect(rect, bg);
+
+    void stroke(List<Offset> points, Color color, double width) {
+      final paint = Paint()
+        ..color = color
+        ..strokeWidth = width
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7);
+      final path = Path()..moveTo(points.first.dx, points.first.dy);
+      for (var i = 1; i < points.length; i++) {
+        path.lineTo(points[i].dx, points[i].dy);
+      }
+      canvas.drawPath(path, paint);
+    }
+
+    stroke([Offset(-80, size.height * .18), Offset(size.width * .42, -20)], const Color(0x55008CFF), 26);
+    stroke([Offset(size.width * .58, -30), Offset(size.width + 80, size.height * .18)], const Color(0x443B5CFF), 22);
+    stroke([Offset(-70, size.height * .86), Offset(size.width * .42, size.height * .55)], const Color(0x3322C8FF), 18);
+    stroke([Offset(size.width * .55, size.height * .96), Offset(size.width + 70, size.height * .72)], const Color(0x44FFC400), 15);
+
+    final blueGlow = Paint()..color = const Color(0x2200C8FF)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 45);
+    canvas.drawCircle(Offset(size.width * .12, size.height * .28), 75, blueGlow);
+    final yellowGlow = Paint()..color = const Color(0x18FFD000)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50);
+    canvas.drawCircle(Offset(size.width * .9, size.height * .72), 90, yellowGlow);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class ChibbyballApp extends StatelessWidget {
   const ChibbyballApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+    const cyan = Color(0xFF00D9FF);
+    const purple = Color(0xFF8B3DFF);
+    const yellow = Color(0xFFFFD21F);
+    final base = ThemeData.dark(useMaterial3: true);
+
     return MaterialApp(
       title: 'CHIBBYBALL League',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        useMaterial3: true,
+      theme: base.copyWith(
         fontFamily: 'sans-serif-condensed',
-        scaffoldBackgroundColor: const Color(0xFF070A12),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF00D9FF),
-          secondary: Color(0xFF8B5CF6),
-          tertiary: Color(0xFFFFC857),
-          surface: Color(0xFF111827),
+        scaffoldBackgroundColor: Colors.transparent,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: cyan,
+          brightness: Brightness.dark,
+          primary: cyan,
+          secondary: purple,
+          tertiary: yellow,
+          surface: const Color(0xFF09101E),
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0B1020),
+          backgroundColor: Color(0xCC02050B),
           foregroundColor: Colors.white,
           elevation: 0,
-          centerTitle: false,
-          titleTextStyle: TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontSize: 21,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.7,
-            color: Colors.white,
-          ),
+          titleTextStyle: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: .6),
         ),
         cardTheme: CardThemeData(
-          color: const Color(0xFF101827),
-          elevation: 8,
-          shadowColor: const Color(0x6600D9FF),
-          margin: const EdgeInsets.symmetric(vertical: 7),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-            side: const BorderSide(
-              color: Color(0x6600D9FF),
-              width: 1,
-            ),
-          ),
-        ),
-        textTheme: const TextTheme(
-          headlineSmall: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.4),
-          titleLarge: TextStyle(fontWeight: FontWeight.w900),
-          titleMedium: TextStyle(fontWeight: FontWeight.w800),
-          bodyLarge: TextStyle(fontWeight: FontWeight.w600),
-          bodyMedium: TextStyle(fontWeight: FontWeight.w500),
-        ),
-        navigationBarTheme: const NavigationBarThemeData(
-          backgroundColor: Color(0xFF0B1020),
-          indicatorColor: Color(0xFF173A55),
-          labelTextStyle: WidgetStatePropertyAll(
-            TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF00BDEB),
-            foregroundColor: Colors.black,
-            elevation: 7,
-            shadowColor: const Color(0x9900D9FF),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-            textStyle: const TextStyle(
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF00D9FF),
-            side: const BorderSide(color: Color(0xFF00D9FF), width: 1.4),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
+          color: const Color(0xE6091221),
+          elevation: 10,
+          shadowColor: Color(0x6600C8FF),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: Color(0x6600C8FF))),
+          margin: EdgeInsets.symmetric(vertical: 7),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFF0D1422),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Color(0x5500D9FF)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Color(0x5500D9FF)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Color(0xFF00D9FF), width: 2),
-          ),
-          labelStyle: const TextStyle(fontWeight: FontWeight.w700),
+          fillColor: const Color(0xE6091221),
+          labelStyle: const TextStyle(color: Color(0xFFB9C7DA)),
+          prefixIconColor: cyan,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0x6600C8FF))),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0x6600C8FF))),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: cyan, width: 2)),
         ),
-        snackBarTheme: const SnackBarThemeData(
-          backgroundColor: Color(0xFF172033),
-          contentTextStyle: TextStyle(fontWeight: FontWeight.w700),
-          behavior: SnackBarBehavior.floating,
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: cyan,
+            foregroundColor: const Color(0xFF001018),
+            minimumSize: const Size.fromHeight(54),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            textStyle: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: .7),
+          ),
         ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(foregroundColor: cyan, side: const BorderSide(color: cyan, width: 1.4), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+        ),
+        navigationBarTheme: const NavigationBarThemeData(
+          backgroundColor: Color(0xF2080D17),
+          indicatorColor: Color(0x4428DFFF),
+          labelTextStyle: WidgetStatePropertyAll(TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+        ),
+        dividerTheme: const DividerThemeData(color: Color(0x3322BFFF)),
+        snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFF101C2D)),
+      ),
+      builder: (context, child) => Stack(
+        children: [
+          Positioned.fill(child: CustomPaint(painter: _ChibbyballBackgroundPainter())),
+          if (child != null) child,
+        ],
       ),
       home: const LoginPage(),
     );
@@ -1555,18 +1561,20 @@ class _LoginPageState extends State<LoginPage> {
             padding: const EdgeInsets.all(24),
             child: Column(
               children: [
-                const Icon(Icons.sports_soccer,
-                    size: 90, color: Colors.blue),
-                const SizedBox(height: 18),
-                const Text(
-                  'CHIBBYBALL',
-                  style: TextStyle(
-                    fontSize: 34,
-                    fontWeight: FontWeight.bold,
+                Container(
+                  width: 112,
+                  height: 112,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: [Color(0xFF00D9FF), Color(0xFF6B36FF)]),
+                    boxShadow: const [BoxShadow(color: Color(0x6600D9FF), blurRadius: 28, spreadRadius: 4)],
                   ),
+                  child: const Center(child: Icon(Icons.sports_soccer, size: 64, color: Colors.white)),
                 ),
-                const Text('eFootball League'),
-                const SizedBox(height: 40),
+                const SizedBox(height: 18),
+                const Text('CHIBBYBALL', style: TextStyle(fontSize: 38, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                const Text('eFOOTBALL • LEAGUE • COMPETE', style: TextStyle(color: Color(0xFFFFD21F), fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+                const SizedBox(height: 32),
                 TextField(
                   controller: tagController,
                   decoration: const InputDecoration(
@@ -2822,154 +2830,43 @@ class _TablePageState extends State<TablePage> {
             ),
           )
         else
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0D1422),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0x8800D9FF), width: 1.2),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x5500D9FF),
-                  blurRadius: 18,
-                  spreadRadius: 1,
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Column(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF00BDEB), Color(0xFF6D3BFF)],
-                      ),
-                    ),
-                    child: const Row(
-                      children: [
-                        SizedBox(width: 42, child: Text('#', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black))),
-                        Expanded(flex: 3, child: Text('PLAYER', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black))),
-                        Expanded(child: Center(child: Text('P', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
-                        Expanded(child: Center(child: Text('W', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
-                        Expanded(child: Center(child: Text('D', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
-                        Expanded(child: Center(child: Text('L', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
-                        Expanded(child: Center(child: Text('GD', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
-                        Expanded(child: Center(child: Text('PTS', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
-                      ],
-                    ),
-                  ),
+          Card(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columnSpacing: 10,
+                horizontalMargin: 8,
+                dataRowMinHeight: 48,
+                dataRowMaxHeight: 56,
+                headingRowHeight: 48,
+                columns: const [
+                  DataColumn(label: Text('#')),
+                  DataColumn(label: Text('PLAYER')),
+                  DataColumn(label: Text('P')),
+                  DataColumn(label: Text('W')),
+                  DataColumn(label: Text('D')),
+                  DataColumn(label: Text('L')),
+                  DataColumn(label: Text('GD')),
+                  DataColumn(label: Text('PTS')),
+                ],
+                rows: [
                   for (int i = 0; i < ordered.length; i++)
-                    Builder(
-                      builder: (context) {
-                        final stats = table[ordered[i]]!;
-                        final isFirst = i == 0;
-                        final isSecond = i == 1;
-                        final isThird = i == 2;
-                        final rowColor = isFirst
-                            ? const Color(0xFF3D3010)
-                            : isSecond
-                                ? const Color(0xFF292D35)
-                                : isThird
-                                    ? const Color(0xFF35251B)
-                                    : (i.isEven ? const Color(0xFF111A29) : const Color(0xFF0D1422));
-                        final badgeColor = isFirst
-                            ? const Color(0xFFFFC857)
-                            : isSecond
-                                ? const Color(0xFFC7CDD6)
-                                : isThird
-                                    ? const Color(0xFFCD8B52)
-                                    : const Color(0xFF24334A);
-                        final badgeTextColor = isFirst || isSecond || isThird ? Colors.black : const Color(0xFF00D9FF);
-
-                        Widget stat(String value, {bool points = false}) => Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
-                              padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
-                              decoration: BoxDecoration(
-                                color: points
-                                    ? (isFirst ? const Color(0xFFFFC857) : const Color(0xFF173A55))
-                                    : const Color(0xFF182438),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: points ? const Color(0x8800D9FF) : const Color(0x332A9CC5),
-                                ),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  value,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                    color: points && isFirst ? Colors.black : Colors.white,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            );
-
-                        return Container(
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: rowColor,
-                            border: Border(
-                              bottom: BorderSide(color: const Color(0x331E9BC2)),
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 42,
-                                child: Center(
-                                  child: Container(
-                                    width: 34,
-                                    height: 34,
-                                    decoration: BoxDecoration(
-                                      color: badgeColor,
-                                      shape: BoxShape.circle,
-                                      boxShadow: isFirst
-                                          ? const [BoxShadow(color: Color(0x99FFC857), blurRadius: 10)]
-                                          : null,
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        isFirst ? '👑' : '${i + 1}',
-                                        style: TextStyle(
-                                          fontSize: isFirst ? 16 : 13,
-                                          fontWeight: FontWeight.w900,
-                                          color: badgeTextColor,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Expanded(
-                                flex: 3,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                                  child: Text(
-                                    store.playerName(ordered[i]),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontWeight: isFirst || isSecond || isThird ? FontWeight.w900 : FontWeight.w700,
-                                      color: isFirst ? const Color(0xFFFFC857) : Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Expanded(child: stat('${stats['played']}')),
-                              Expanded(child: stat('${stats['won']}')),
-                              Expanded(child: stat('${stats['drawn']}')),
-                              Expanded(child: stat('${stats['lost']}')),
-                              Expanded(child: stat('${stats['gd']}')),
-                              Expanded(child: stat('${stats['points']}', points: true)),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                    DataRow(cells: [
+                      DataCell(Text('${i + 1}')),
+                      DataCell(SizedBox(
+                        width: 82,
+                        child: Text(store.playerName(ordered[i]), overflow: TextOverflow.ellipsis),
+                      )),
+                      DataCell(Text('${table[ordered[i]]!['played']}')),
+                      DataCell(Text('${table[ordered[i]]!['won']}')),
+                      DataCell(Text('${table[ordered[i]]!['drawn']}')),
+                      DataCell(Text('${table[ordered[i]]!['lost']}')),
+                      DataCell(Text('${table[ordered[i]]!['gd']}')),
+                      DataCell(Text(
+                        '${table[ordered[i]]!['points']}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      )),
+                    ]),
                 ],
               ),
             ),
@@ -4469,26 +4366,6 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
-  Widget _adminStatCard(IconData icon, String label, String value, Color accent) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
-      decoration: BoxDecoration(
-        color: const Color(0xFF101827),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent.withAlpha(150)),
-        boxShadow: [BoxShadow(color: accent.withAlpha(55), blurRadius: 12)],
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: accent, size: 25),
-          const SizedBox(height: 5),
-          Text(value, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900, color: accent)),
-          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Colors.white70)),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
@@ -4500,40 +4377,38 @@ class _AdminPageState extends State<AdminPage> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF00BDEB), Color(0xFF6D3BFF)],
-                ),
-                borderRadius: BorderRadius.circular(22),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x6600D9FF), blurRadius: 18),
-                ],
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.admin_panel_settings, size: 38, color: Colors.black),
-                  SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('CHIBBYBALL ADMIN', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w900, color: Colors.black)),
-                      Text('CONTROL CENTER', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: 1.4)),
-                    ],
-                  ),
-                ],
+            const Text(
+              'CHIBBYBALL ADMIN',
+              style: TextStyle(
+                fontSize: 25,
+                fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(child: _adminStatCard(Icons.people, 'PLAYERS', '${store.players.where((p) => !p.admin).length}', const Color(0xFF00D9FF))),
-                const SizedBox(width: 8),
-                Expanded(child: _adminStatCard(Icons.sports_soccer, 'FIXTURES', '${store.matches.length}', const Color(0xFF8B5CF6))),
-                const SizedBox(width: 8),
-                Expanded(child: _adminStatCard(Icons.check_circle, 'CONFIRMED', '${store.confirmedMatches().length}', const Color(0xFFFFC857))),
-              ],
+            const SizedBox(height: 18),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.people),
+                title: const Text('Players'),
+                trailing: Text(
+                  '${store.players.where((p) => !p.admin).length}',
+                ),
+              ),
+            ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.sports_soccer),
+                title: const Text('Fixtures'),
+                trailing: Text('${store.matches.length}'),
+              ),
+            ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.check_circle),
+                title: const Text('Confirmed Results'),
+                trailing: Text(
+                  '${store.confirmedMatches().length}',
+                ),
+              ),
             ),
             const SizedBox(height: 15),
             SizedBox(
