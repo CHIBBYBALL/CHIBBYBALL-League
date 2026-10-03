@@ -172,8 +172,211 @@ class ChibbyballApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        colorSchemeSeed: Colors.blue,
         useMaterial3: true,
+        fontFamily: 'sans-serif-condensed',
+        scaffoldBackgroundColor: const Color(0xFF090D16),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF00C8FF),
+          brightness: Brightness.dark,
+        ).copyWith(
+          primary: const Color(0xFF00C8FF),
+          onPrimary: const Color(0xFF001018),
+          secondary: const Color(0xFF8B5CF6),
+          onSecondary: Colors.white,
+          tertiary: const Color(0xFFFFC857),
+          surface: const Color(0xFF111827),
+          surfaceContainerHighest: const Color(0xFF1A2333),
+          error: const Color(0xFFFF5C7A),
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF0B1120),
+          foregroundColor: Color(0xFFF4F7FF),
+          elevation: 0,
+          centerTitle: false,
+          titleTextStyle: TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.4,
+            color: Color(0xFFF4F7FF),
+          ),
+        ),
+        cardTheme: CardThemeData(
+          color: const Color(0xFF151D2C),
+          surfaceTintColor: Colors.transparent,
+          shadowColor: const Color(0x9900C8FF),
+          elevation: 5,
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: const BorderSide(
+              color: Color(0x3300C8FF),
+              width: 1,
+            ),
+          ),
+        ),
+        textTheme: ThemeData.dark().textTheme.apply(
+          fontFamily: 'sans-serif-condensed',
+          bodyColor: const Color(0xFFE9F0FF),
+          displayColor: const Color(0xFFF7FAFF),
+        ).copyWith(
+          headlineMedium: const TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.6,
+          ),
+          titleLarge: const TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.3,
+          ),
+          titleMedium: const TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.2,
+          ),
+          labelLarge: const TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.8,
+          ),
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: const Color(0xFF0D1422),
+          indicatorColor: const Color(0xFF00C8FF),
+          elevation: 10,
+          height: 72,
+          labelTextStyle: WidgetStatePropertyAll(
+            TextStyle(
+              fontFamily: 'sans-serif-condensed',
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF00C8FF),
+            foregroundColor: const Color(0xFF001018),
+            elevation: 5,
+            shadowColor: const Color(0x8800C8FF),
+            minimumSize: const Size(0, 52),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            textStyle: const TextStyle(
+              fontFamily: 'sans-serif-condensed',
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFF00C8FF),
+            side: const BorderSide(color: Color(0xAA00C8FF), width: 1.3),
+            minimumSize: const Size(0, 50),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            textStyle: const TextStyle(
+              fontFamily: 'sans-serif-condensed',
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.6,
+            ),
+          ),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(
+            foregroundColor: const Color(0xFF66D9FF),
+            textStyle: const TextStyle(
+              fontFamily: 'sans-serif-condensed',
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.6,
+            ),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFF111827),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 15,
+          ),
+          labelStyle: const TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w600,
+          ),
+          hintStyle: const TextStyle(color: Color(0xFF7F8CA3)),
+          prefixIconColor: const Color(0xFF66D9FF),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0x3348D9FF)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0x3348D9FF)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0xFF00C8FF), width: 1.8),
+          ),
+        ),
+        dataTableTheme: DataTableThemeData(
+          decoration: BoxDecoration(
+            color: const Color(0xFF111827),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0x3300C8FF)),
+          ),
+          headingRowColor: const WidgetStatePropertyAll(Color(0xFF17233A)),
+          headingTextStyle: const TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w900,
+            color: Color(0xFF66D9FF),
+            letterSpacing: 0.7,
+          ),
+          dataTextStyle: const TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w600,
+            color: Color(0xFFE9F0FF),
+          ),
+          dividerThickness: 0.7,
+          horizontalMargin: 10,
+          columnSpacing: 12,
+        ),
+        listTileTheme: const ListTileThemeData(
+          iconColor: Color(0xFF66D9FF),
+          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+          titleTextStyle: TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w800,
+            fontSize: 17,
+            color: Color(0xFFF4F7FF),
+          ),
+        ),
+        dividerTheme: const DividerThemeData(
+          color: Color(0x3348D9FF),
+          thickness: 1,
+        ),
+        snackBarTheme: SnackBarThemeData(
+          backgroundColor: const Color(0xFF17233A),
+          contentTextStyle: const TextStyle(
+            fontFamily: 'sans-serif-condensed',
+            fontWeight: FontWeight.w700,
+            color: Color(0xFFF4F7FF),
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+        progressIndicatorTheme: const ProgressIndicatorThemeData(
+          color: Color(0xFF00C8FF),
+        ),
+        iconTheme: const IconThemeData(
+          color: Color(0xFF66D9FF),
+        ),
       ),
       home: const LoginPage(),
     );
@@ -2698,6 +2901,89 @@ class TablePage extends StatefulWidget {
 class _TablePageState extends State<TablePage> {
   bool loading = false;
 
+  Widget _positionBadge(BuildContext context, int position) {
+    final theme = Theme.of(context);
+
+    if (position == 1) {
+      return Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFFFE08A), Color(0xFFFFC857)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x55FFC857),
+              blurRadius: 10,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('👑', style: TextStyle(fontSize: 13, height: 0.9)),
+            Text(
+              '1',
+              style: TextStyle(
+                color: const Color(0xFF3B2A00),
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                fontFamily: theme.textTheme.bodyMedium?.fontFamily,
+                height: 1.0,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final medalColor = position == 2
+        ? const Color(0xFFC7D0D9)
+        : const Color(0xFFCD7F32);
+    final medalDark = position == 2
+        ? const Color(0xFF5C6874)
+        : const Color(0xFF6D3F16);
+
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            medalColor,
+            Color.lerp(medalColor, Colors.white, 0.18)!,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: medalColor.withOpacity(0.30),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Center(
+        child: Text(
+          '$position',
+          style: TextStyle(
+            color: medalDark,
+            fontSize: 15,
+            fontWeight: FontWeight.w900,
+            fontFamily: theme.textTheme.bodyMedium?.fontFamily,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _selectLeague(String? id) async {
     if (id == null || id == Store.instance.activeLeagueId) return;
     setState(() => loading = true);
@@ -2794,10 +3080,16 @@ class _TablePageState extends State<TablePage> {
                 rows: [
                   for (int i = 0; i < ordered.length; i++)
                     DataRow(cells: [
-                      DataCell(Text('${i + 1}')),
+                      DataCell(_positionBadge(context, i + 1)),
                       DataCell(SizedBox(
                         width: 82,
-                        child: Text(store.playerName(ordered[i]), overflow: TextOverflow.ellipsis),
+                        child: Text(
+                          store.playerName(ordered[i]),
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: i < 3 ? FontWeight.w800 : FontWeight.w600,
+                          ),
+                        ),
                       )),
                       DataCell(Text('${table[ordered[i]]!['played']}')),
                       DataCell(Text('${table[ordered[i]]!['won']}')),
@@ -2806,7 +3098,12 @@ class _TablePageState extends State<TablePage> {
                       DataCell(Text('${table[ordered[i]]!['gd']}')),
                       DataCell(Text(
                         '${table[ordered[i]]!['points']}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: i == 0
+                              ? const Color(0xFFFFC857)
+                              : Theme.of(context).colorScheme.primary,
+                        ),
                       )),
                     ]),
                 ],
@@ -4331,24 +4628,62 @@ class _AdminPageState extends State<AdminPage> {
               child: ListTile(
                 leading: const Icon(Icons.people),
                 title: const Text('Players'),
-                trailing: Text(
-                  '${store.players.where((p) => !p.admin).length}',
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('${store.players.where((p) => !p.admin).length}'),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.chevron_right),
+                  ],
                 ),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const PlayerManagementPage(),
+                  ),
+                ).then((_) async {
+                  await store.refreshPlayers();
+                  if (mounted) setState(() {});
+                }),
               ),
             ),
             Card(
               child: ListTile(
                 leading: const Icon(Icons.sports_soccer),
                 title: const Text('Fixtures'),
-                trailing: Text('${store.matches.length}'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('${store.matches.length}'),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminMatchSchedulePage(),
+                  ),
+                ),
               ),
             ),
             Card(
               child: ListTile(
                 leading: const Icon(Icons.check_circle),
                 title: const Text('Confirmed Results'),
-                trailing: Text(
-                  '${store.confirmedMatches().length}',
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('${store.confirmedMatches().length}'),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ResultReviewPage(),
+                  ),
                 ),
               ),
             ),
