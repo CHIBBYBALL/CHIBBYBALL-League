@@ -98,6 +98,51 @@ jobs:
             sed -i '/<manifest[^>]*>/a\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' "$MANIFEST"
           fi
 
+      - name: Add ML Kit language dependencies
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          deps = [
+              "com.google.mlkit:text-recognition-chinese:16.0.1",
+              "com.google.mlkit:text-recognition-devanagari:16.0.1",
+              "com.google.mlkit:text-recognition-japanese:16.0.1",
+              "com.google.mlkit:text-recognition-korean:16.0.1",
+          ]
+
+          groovy = Path("android/app/build.gradle")
+          kotlin = Path("android/app/build.gradle.kts")
+
+          if groovy.exists():
+              path = groovy
+              text = path.read_text()
+              lines = "\n".join(
+                  f'    implementation "{dep}"'
+                  for dep in deps
+                  if dep not in text
+              )
+              if lines:
+                  text += "\n\ndependencies {\n" + lines + "\n}\n"
+                  path.write_text(text)
+
+          elif kotlin.exists():
+              path = kotlin
+              text = path.read_text()
+              lines = "\n".join(
+                  f'    implementation("{dep}")'
+                  for dep in deps
+                  if dep not in text
+              )
+              if lines:
+                  text += "\n\ndependencies {\n" + lines + "\n}\n"
+                  path.write_text(text)
+
+          else:
+              raise SystemExit("Android app Gradle file not found")
+
+          print(f"ML Kit language dependencies added to {path}")
+          PY
+
       - name: Get dependencies
         run: flutter pub get
 
