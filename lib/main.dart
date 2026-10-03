@@ -216,7 +216,7 @@ class ChibbyballApp extends StatelessWidget {
       title: 'CHIBBYBALL League',
       debugShowCheckedModeBanner: false,
       theme: base.copyWith(
-        textTheme: base.textTheme.apply(fontFamily: 'sans-serif-condensed'),
+        textTheme: base.textTheme,
         scaffoldBackgroundColor: Colors.transparent,
         colorScheme: ColorScheme.fromSeed(
           seedColor: cyan,
@@ -227,7 +227,7 @@ class ChibbyballApp extends StatelessWidget {
           surface: const Color(0xFF09101E),
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xCC02050B),
+          backgroundColor: Color(0x9902050B),
           foregroundColor: Colors.white,
           elevation: 0,
           titleTextStyle: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: .6),
@@ -235,8 +235,8 @@ class ChibbyballApp extends StatelessWidget {
         cardTheme: CardThemeData(
           color: const Color(0xE6091221),
           elevation: 10,
-          shadowColor: Color(0x6600C8FF),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: Color(0x6600C8FF))),
+          shadowColor: Color(0x9900C8FF),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: BorderSide(color: Color(0x8800D9FF), width: 1.2)),
           margin: EdgeInsets.symmetric(vertical: 7),
         ),
         inputDecorationTheme: InputDecorationTheme(
@@ -275,6 +275,204 @@ class ChibbyballApp extends StatelessWidget {
         ],
       ),
       home: const LoginPage(),
+    );
+  }
+}
+
+
+// ============================================================
+// CHIBBYBALL VISUAL DESIGN SYSTEM
+// ============================================================
+
+class NeonHeroBanner extends StatelessWidget {
+  final String eyebrow;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+
+  const NeonHeroBanner({
+    super.key,
+    this.eyebrow = 'THIS IS MORE THAN A GAME',
+    required this.title,
+    required this.subtitle,
+    this.icon = Icons.sports_soccer,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 190,
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xAA168BFF), width: 1.4),
+        gradient: const LinearGradient(
+          colors: [Color(0xEE030915), Color(0xDD071A38), Color(0xEE02050B)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: const [
+          BoxShadow(color: Color(0x55008CFF), blurRadius: 24, spreadRadius: 1),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(painter: _HeroStreakPainter()),
+          ),
+          Positioned(
+            right: 22,
+            top: 22,
+            child: Icon(icon, size: 82, color: const Color(0xCCFFD21F)),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 100, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  eyebrow,
+                  style: const TextStyle(
+                    color: Color(0xFFDDE8FF),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11,
+                    letterSpacing: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                RichText(
+                  text: TextSpan(
+                    style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w900),
+                    children: [
+                      TextSpan(text: title, style: const TextStyle(color: Colors.white)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Color(0xFF00D9FF),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                    letterSpacing: .8,
+                  ),
+                ),
+                const Spacer(),
+                const Text(
+                  'PLAY • COMPETE • WIN',
+                  style: TextStyle(color: Color(0xFFFFD21F), fontWeight: FontWeight.w900, letterSpacing: 1),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroStreakPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final blue = Paint()
+      ..color = const Color(0x66008CFF)
+      ..strokeWidth = 18
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    final yellow = Paint()
+      ..color = const Color(0x55FFD21F)
+      ..strokeWidth = 9
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(Offset(-30, size.height * .72), Offset(size.width * .68, -20), blue);
+    canvas.drawLine(Offset(size.width * .25, size.height + 20), Offset(size.width + 30, size.height * .45), yellow);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class NeonStatCard extends StatelessWidget {
+  final IconData icon;
+  final String value;
+  final String label;
+  final Color accent;
+
+  const NeonStatCard({
+    super.key,
+    required this.icon,
+    required this.value,
+    required this.label,
+    required this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: const Color(0xD8071020),
+        border: Border.all(color: accent, width: 1.4),
+        boxShadow: [BoxShadow(color: accent.withOpacity(.24), blurRadius: 18)],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: accent, size: 27),
+          const SizedBox(height: 7),
+          Text(value, style: TextStyle(color: accent, fontSize: 27, fontWeight: FontWeight.w900)),
+          Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+class NeonActionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback? onTap;
+
+  const NeonActionButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.accent,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 76),
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: LinearGradient(
+              colors: [const Color(0xE9081020), accent.withOpacity(.18)],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+            border: Border.all(color: accent, width: 1.4),
+            boxShadow: [BoxShadow(color: accent.withOpacity(.20), blurRadius: 16)],
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: accent, size: 30),
+              const SizedBox(width: 12),
+              Expanded(child: Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: .6))),
+              Icon(Icons.chevron_right, color: accent, size: 28),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2054,173 +2252,50 @@ class DashboardPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = Store.instance;
     final player = store.current;
-
     final myMatches = player == null
         ? <MatchItem>[]
-        : store.matches
-            .where(
-              (m) => m.homeId == player.id || m.awayId == player.id,
-            )
-            .toList();
-
-    final confirmed =
-        myMatches.where((m) => m.status == 'Confirmed').length;
-    final awaiting =
-        myMatches.where((m) => m.status == 'Awaiting Confirmation').length;
-    final disputed =
-        myMatches.where((m) => m.status == 'Disputed').length;
-
-    final hasDetails = player != null &&
-        (player.phoneNumber.trim().isNotEmpty ||
-            player.country.trim().isNotEmpty ||
-            player.countryCode.trim().isNotEmpty ||
-            player.whatsappNumber.trim().isNotEmpty);
+        : store.matches.where((m) => m.homeId == player.id || m.awayId == player.id).toList();
+    final confirmed = myMatches.where((m) => m.status == 'Confirmed').length;
+    final awaiting = myMatches.where((m) => m.status == 'Awaiting Confirmation').length;
+    final disputed = myMatches.where((m) => m.status == 'Disputed').length;
 
     return ListView(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
       children: [
-        Text(
-          'Welcome, ${player?.gamerTag ?? ''}',
-          style: const TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-          ),
+        NeonHeroBanner(
+          title: 'CHIBBYBALL',
+          subtitle: 'eFOOTBALL • LEAGUE • COMPETE',
+          eyebrow: 'WELCOME ${player?.gamerTag.toUpperCase() ?? ''}',
         ),
-        const SizedBox(height: 18),
-
-        // MY PLAYER DETAILS
-        Card(
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProfilePage()),
-              );
-            },
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  const CircleAvatar(
-                    radius: 27,
-                    child: Icon(Icons.person),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'MY PLAYER DETAILS',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          hasDetails
-                              ? [
-                                  if (player!.country.trim().isNotEmpty)
-                                    player.country.trim(),
-                                  if (player.whatsappNumber.trim().isNotEmpty)
-                                    'WhatsApp: ${player.whatsappNumber.trim()}',
-                                ].join(' • ')
-                              : 'Add your contact details',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Icon(Icons.chevron_right),
-                ],
-              ),
-            ),
-          ),
+        Row(
+          children: [
+            Expanded(child: NeonStatCard(icon: Icons.sports_soccer, value: '${myMatches.length}', label: 'FIXTURES', accent: const Color(0xFF00D9FF))),
+            const SizedBox(width: 8),
+            Expanded(child: NeonStatCard(icon: Icons.check_circle, value: '$confirmed', label: 'CONFIRMED', accent: const Color(0xFFFFD21F))),
+            const SizedBox(width: 8),
+            Expanded(child: NeonStatCard(icon: Icons.hourglass_top, value: '$awaiting', label: 'PENDING', accent: const Color(0xFF9B4DFF))),
+          ],
         ),
-
         const SizedBox(height: 14),
-
-        _card(
-          context,
-          Icons.sports_soccer,
-          'Your Fixtures',
-          '${myMatches.length}',
-        ),
-        _card(
-          context,
-          Icons.check_circle,
-          'Confirmed Results',
-          '$confirmed',
-          statusFilter: 'Confirmed',
-        ),
-        _card(
-          context,
-          Icons.hourglass_top,
-          'Awaiting Confirmation',
-          '$awaiting',
-          statusFilter: 'Awaiting Confirmation',
-        ),
-        _card(
-          context,
-          Icons.warning,
-          'Disputed',
-          '$disputed',
-          statusFilter: 'Disputed',
-        ),
-        const SizedBox(height: 12),
-        const Card(
-          child: Padding(
-            padding: EdgeInsets.all(18),
-            child: Text(
-              'RESULT RULE\n\n'
-              'Both players must submit the result with screenshot proof '
-              'before the match becomes confirmed.\n\n'
-              'Different scores make the match DISPUTED for admin review.',
-            ),
+        NeonActionButton(label: 'YOUR FIXTURES', icon: Icons.calendar_month, accent: const Color(0xFF00D9FF), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
+        const SizedBox(height: 10),
+        NeonActionButton(label: 'LEAGUE TABLE', icon: Icons.leaderboard, accent: const Color(0xFFFFD21F), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
+        const SizedBox(height: 10),
+        NeonActionButton(label: 'PLAYER PROFILE', icon: Icons.person, accent: const Color(0xFF9B4DFF), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xD9081020),
+            border: Border.all(color: const Color(0x668C3DFF)),
+          ),
+          child: Text(
+            'RESULT RULE\n\nBoth players must submit the result with screenshot proof before the match becomes confirmed.\n\nDisputed results are sent to admin review.\n\nCurrent disputed matches: $disputed',
+            style: const TextStyle(color: Color(0xFFD9E4F7), height: 1.45, fontWeight: FontWeight.w600),
           ),
         ),
       ],
-    );
-  }
-
-  Widget _card(
-    BuildContext context,
-    IconData icon,
-    String title,
-    String value, {
-    String? statusFilter,
-  }) {
-    return Card(
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(title),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Icon(Icons.chevron_right),
-          ],
-        ),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => FixturesPage(statusFilter: statusFilter),
-            ),
-          );
-        },
-      ),
     );
   }
 }
@@ -2762,633 +2837,90 @@ class _TablePageState extends State<TablePage> {
     final error = await Store.instance.selectLeague(id);
     if (!mounted) return;
     setState(() => loading = false);
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-    }
+    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
   }
 
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
     final table = store.buildTable();
-
-    final ordered = table.keys.toList()
-      ..sort((a, b) {
-        final x = table[a]!;
-        final y = table[b]!;
-        final p = y['points']!.compareTo(x['points']!);
-        if (p != 0) return p;
-        final gd = y['gd']!.compareTo(x['gd']!);
-        if (gd != 0) return gd;
-        return y['gf']!.compareTo(x['gf']!);
-      });
-
-    final selected = store.activeLeagueId == null
-        ? null
-        : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
-
-    return ListView(
-      padding: const EdgeInsets.all(12),
-      children: [
-        const Padding(
-          padding: EdgeInsets.all(8),
-          child: Text(
-            'LEAGUE TABLE',
-            style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold),
-          ),
-        ),
-        if (store.leagues.isNotEmpty)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-              child: DropdownButtonFormField<String>(
-                value: selected?.id,
-                decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none),
-                items: store.leagues
-                    .map((league) => DropdownMenuItem<String>(
-                          value: league.id,
-                          child: Text('${league.name} • ${league.status.toUpperCase()}'),
-                        ))
-                    .toList(),
-                onChanged: loading ? null : _selectLeague,
-              ),
-            ),
-          ),
-        if (selected != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
-            child: Text(
-              selected.name,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-          ),
-        if (ordered.isEmpty)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(18),
-              child: Text('No players in this league yet.'),
-            ),
-          )
-        else
-          Card(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columnSpacing: 10,
-                horizontalMargin: 8,
-                dataRowMinHeight: 48,
-                dataRowMaxHeight: 56,
-                headingRowHeight: 48,
-                columns: const [
-                  DataColumn(label: Text('#')),
-                  DataColumn(label: Text('PLAYER')),
-                  DataColumn(label: Text('P')),
-                  DataColumn(label: Text('W')),
-                  DataColumn(label: Text('D')),
-                  DataColumn(label: Text('L')),
-                  DataColumn(label: Text('GD')),
-                  DataColumn(label: Text('PTS')),
-                ],
-                rows: [
-                  for (int i = 0; i < ordered.length; i++)
-                    DataRow(cells: [
-                      DataCell(Text('${i + 1}')),
-                      DataCell(SizedBox(
-                        width: 82,
-                        child: Text(store.playerName(ordered[i]), overflow: TextOverflow.ellipsis),
-                      )),
-                      DataCell(Text('${table[ordered[i]]!['played']}')),
-                      DataCell(Text('${table[ordered[i]]!['won']}')),
-                      DataCell(Text('${table[ordered[i]]!['drawn']}')),
-                      DataCell(Text('${table[ordered[i]]!['lost']}')),
-                      DataCell(Text('${table[ordered[i]]!['gd']}')),
-                      DataCell(Text(
-                        '${table[ordered[i]]!['points']}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      )),
-                    ]),
-                ],
-              ),
-            ),
-          ),
-        const SizedBox(height: 15),
-        const Text(
-          'Only CONFIRMED matches count toward the selected league table.',
-          style: TextStyle(color: Colors.grey),
-        ),
-      ],
-    );
-  }
-}
-
-// ============================================================
-// PROFILE
-// ============================================================
-
-class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
-
-  @override
-  State<ProfilePage> createState() => _ProfilePageState();
-}
-
-class _ProfilePageState extends State<ProfilePage> {
-  late final TextEditingController phoneController;
-  late final TextEditingController countryController;
-  late final TextEditingController countryCodeController;
-  late final TextEditingController whatsappController;
-
-  bool saving = false;
-  bool editing = false;
-
-  @override
-  void initState() {
-    super.initState();
-
-    final player = Store.instance.current;
-
-    phoneController =
-        TextEditingController(text: player?.phoneNumber ?? '');
-    countryController =
-        TextEditingController(text: player?.country ?? '');
-    countryCodeController =
-        TextEditingController(text: player?.countryCode ?? '');
-    whatsappController =
-        TextEditingController(text: player?.whatsappNumber ?? '');
-
-    // Show the setup form only until the player has saved details.
-    editing = !_hasSavedDetails(player);
-  }
-
-  bool _hasSavedDetails(Player? player) {
-    if (player == null) return false;
-
-    return player.phoneNumber.trim().isNotEmpty ||
-        player.country.trim().isNotEmpty ||
-        player.countryCode.trim().isNotEmpty ||
-        player.whatsappNumber.trim().isNotEmpty;
-  }
-
-  @override
-  void dispose() {
-    phoneController.dispose();
-    countryController.dispose();
-    countryCodeController.dispose();
-    whatsappController.dispose();
-    super.dispose();
-  }
-
-  Future<void> saveProfile() async {
-    setState(() => saving = true);
-
-    final error = await Store.instance.updateMyProfile(
-      phoneNumber: phoneController.text,
-      country: countryController.text,
-      countryCode: countryCodeController.text,
-      whatsappNumber: whatsappController.text,
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      saving = false;
-      if (error == null) {
-        editing = false;
-      }
+    final ordered = table.keys.toList()..sort((a, b) {
+      final x = table[a]!;
+      final y = table[b]!;
+      final p = y['points']!.compareTo(x['points']!);
+      if (p != 0) return p;
+      final gd = y['gd']!.compareTo(x['gd']!);
+      if (gd != 0) return gd;
+      return y['gf']!.compareTo(x['gf']!);
     });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          error ?? 'Profile details saved successfully.',
-        ),
-      ),
-    );
-  }
-
-  void startEditing() {
-    final player = Store.instance.current;
-
-    phoneController.text = player?.phoneNumber ?? '';
-    countryController.text = player?.country ?? '';
-    countryCodeController.text = player?.countryCode ?? '';
-    whatsappController.text = player?.whatsappNumber ?? '';
-
-    setState(() => editing = true);
-  }
-
-  Future<void> logout() async {
-    await Store.instance.logout();
-
-    if (!mounted) return;
-
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginPage()),
-      (_) => false,
-    );
-  }
-
-  Widget _detailTile(
-    IconData icon,
-    String title,
-    String value,
-  ) {
-    return Card(
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(title),
-        subtitle: Text(
-          value.trim().isEmpty ? 'Not provided' : value.trim(),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final player = Store.instance.current;
-    final hasDetails = _hasSavedDetails(player);
+    final selected = store.activeLeagueId == null ? null : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
 
     return ListView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
       children: [
-        const CircleAvatar(
-          radius: 45,
-          child: Icon(Icons.person, size: 50),
-        ),
-        const SizedBox(height: 16),
-        Center(
-          child: Text(
-            player?.gamerTag ?? '',
-            style: const TextStyle(
-              fontSize: 25,
-              fontWeight: FontWeight.bold,
+        const NeonHeroBanner(title: 'LEAGUE TABLE', subtitle: 'RANK • COMPETE • WIN', eyebrow: 'CHIBBYBALL COMPETITION'),
+        if (store.leagues.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 5, 14, 5),
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), color: const Color(0xD9081020), border: Border.all(color: const Color(0x6600D9FF))),
+            child: DropdownButtonFormField<String>(
+              value: selected?.id,
+              decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none),
+              items: store.leagues.map((league) => DropdownMenuItem<String>(value: league.id, child: Text('${league.name} • ${league.status.toUpperCase()}'))).toList(),
+              onChanged: loading ? null : _selectLeague,
             ),
           ),
-        ),
-        Center(
-          child: Text(
-            player?.name ?? '',
-            style: const TextStyle(color: Colors.grey),
-          ),
-        ),
-        const SizedBox(height: 20),
-
-        _detailTile(
-          Icons.badge,
-          'Gamer Tag',
-          player?.gamerTag ?? '',
-        ),
-        _detailTile(
-          Icons.person,
-          'Full Name',
-          player?.name ?? '',
-        ),
-        _detailTile(
-          Icons.security,
-          'Account Role',
-          player?.admin == true ? 'Administrator' : 'Player',
-        ),
-
-        const SizedBox(height: 18),
-
-        // SAVED VIEW
-        if (!editing && hasDetails) ...[
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'MY PLAYER DETAILS',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Edit details',
-                icon: const Icon(Icons.edit),
-                onPressed: startEditing,
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          _detailTile(
-            Icons.phone,
-            'Phone Number',
-            player?.phoneNumber ?? '',
-          ),
-          _detailTile(
-            Icons.public,
-            'Country',
-            player?.country ?? '',
-          ),
-          _detailTile(
-            Icons.language,
-            'Country Code',
-            player?.countryCode ?? '',
-          ),
-          _detailTile(
-            Icons.chat,
-            'WhatsApp Number',
-            player?.whatsappNumber ?? '',
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: startEditing,
-            icon: const Icon(Icons.edit),
-            label: const Text('EDIT PROFILE DETAILS'),
-          ),
-        ],
-
-        // EDIT VIEW
-        if (editing) ...[
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'PLAYER DETAILS',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              if (hasDetails)
-                TextButton(
-                  onPressed: saving
-                      ? null
-                      : () => setState(() => editing = false),
-                  child: const Text('CANCEL'),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: phoneController,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'Phone Number',
-              prefixIcon: Icon(Icons.phone),
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: countryController,
-            decoration: const InputDecoration(
-              labelText: 'Country',
-              prefixIcon: Icon(Icons.public),
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: countryCodeController,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'Country Code (e.g. +234)',
-              prefixIcon: Icon(Icons.language),
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: whatsappController,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'WhatsApp Number',
-              prefixIcon: const Icon(Icons.chat),
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            height: 50,
-            child: FilledButton.icon(
-              onPressed: saving ? null : saveProfile,
-              icon: saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : const Icon(Icons.save),
-              label: Text(
-                saving ? 'SAVING...' : 'SAVE PROFILE',
-              ),
-            ),
-          ),
-        ],
-
-        const SizedBox(height: 18),
-
-        Card(
-          child: ListTile(
-            leading: Icon(
-              player?.isOnline == true
-                  ? Icons.circle
-                  : Icons.circle_outlined,
-            ),
-            title: Text(
-              player?.isOnline == true ? 'Online' : 'Offline',
-            ),
-            subtitle: Text(
-              player?.lastSeen == null
-                  ? 'Last seen information will appear here later.'
-                  : 'Last seen ${player!.lastSeen}',
-            ),
-          ),
-        ),
-
+        const SizedBox(height: 12),
+        if (selected != null) Text(selected.name.toUpperCase(), style: const TextStyle(color: Color(0xFFFFD21F), fontSize: 19, fontWeight: FontWeight.w900, letterSpacing: 1)),
         const SizedBox(height: 8),
-
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.bar_chart),
-            title: const Text('My Stats & Match History'),
-            subtitle: const Text(
-              'View your confirmed results and league statistics.',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const PlayerStatsPage(),
-                ),
-              );
-            },
-          ),
-        ),
-
-        const SizedBox(height: 8),
-
-        FilledButton.icon(
-          onPressed: saving ? null : logout,
-          icon: const Icon(Icons.logout),
-          label: const Text('LOG OUT'),
-        ),
+        if (ordered.isEmpty)
+          const Card(child: Padding(padding: EdgeInsets.all(18), child: Text('No players in this league yet.')))
+        else
+          ...ordered.asMap().entries.map((entry) {
+            final index = entry.key;
+            final id = entry.value;
+            final stats = table[id]!;
+            final accent = index == 0 ? const Color(0xFFFFD21F) : index == 1 ? const Color(0xFF00D9FF) : index == 2 ? const Color(0xFF9B4DFF) : const Color(0xFF167DFF);
+            final player = store.players.where((p) => p.id == id).firstOrNull;
+            final name = player?.gamerTag.isNotEmpty == true ? player!.gamerTag : store.playerName(id);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                color: const Color(0xE6081121),
+                border: Border.all(color: accent, width: 1.3),
+                boxShadow: [BoxShadow(color: accent.withOpacity(.16), blurRadius: 16)],
+              ),
+              child: Column(
+                children: [
+                  Row(children: [
+                    Container(width: 42, height: 42, alignment: Alignment.center, decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withOpacity(.18), border: Border.all(color: accent)), child: Text('${index + 1}', style: TextStyle(color: accent, fontWeight: FontWeight.w900, fontSize: 18))),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 17))),
+                    Column(children: [const Text('PTS', style: TextStyle(color: Colors.grey, fontSize: 10)), Text('${stats['points']}', style: TextStyle(color: accent, fontSize: 22, fontWeight: FontWeight.w900))]),
+                  ]),
+                  const SizedBox(height: 10),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: [
+                      _tableChip('P', stats['played']!, accent), _tableChip('W', stats['won']!, accent), _tableChip('D', stats['drawn']!, accent), _tableChip('L', stats['lost']!, accent), _tableChip('GF', stats['gf']!, accent), _tableChip('GA', stats['ga']!, accent), _tableChip('GD', stats['gd']!, accent),
+                    ]),
+                  ),
+                ],
+              ),
+            );
+          }),
       ],
     );
   }
-}
 
-// ============================================================
-// PLAYER STATS & MATCH HISTORY
-// ============================================================
-
-class PlayerStatsPage extends StatelessWidget {
-  const PlayerStatsPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final store = Store.instance;
-    final player = store.current;
-
-    if (player == null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('My Stats')),
-        body: const Center(child: Text('No player is signed in.')),
-      );
-    }
-
-    final stats = store.statsForPlayer(player.id);
-    final history = store.confirmedMatchesForPlayer(player.id);
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('My Stats & History')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Center(
-            child: Text(
-              player.gamerTag,
-              style: const TextStyle(
-                fontSize: 25,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.65,
-            children: [
-              _statCard('Played', stats['played']!),
-              _statCard('Points', stats['points']!),
-              _statCard('Wins', stats['won']!),
-              _statCard('Draws', stats['drawn']!),
-              _statCard('Losses', stats['lost']!),
-              _statCard('Goals For', stats['gf']!),
-              _statCard('Goals Against', stats['ga']!),
-              _statCard('Goal Difference', stats['gd']!),
-            ],
-          ),
-          const SizedBox(height: 25),
-          const Text(
-            'CONFIRMED MATCH HISTORY',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 10),
-          if (history.isEmpty)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(18),
-                child: Text(
-                  'No confirmed matches yet.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          else
-            for (final match in history) _historyCard(store, player, match),
-          const SizedBox(height: 12),
-          const Text(
-            'Only CONFIRMED matches are included in these statistics.',
-            style: TextStyle(color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static Widget _statCard(String label, int value) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              '$value',
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(label, textAlign: TextAlign.center),
-          ],
-        ),
-      ),
-    );
-  }
-
-  static Widget _historyCard(
-    Store store,
-    Player player,
-    MatchItem match,
-  ) {
-    final isHome = match.homeId == player.id;
-    final opponentId = isHome ? match.awayId : match.homeId;
-    final opponent = store.playerName(opponentId);
-    final homeScore = match.homeScore ?? 0;
-    final awayScore = match.awayScore ?? 0;
-    final myScore = isHome ? homeScore : awayScore;
-    final opponentScore = isHome ? awayScore : homeScore;
-
-    String result;
-    IconData icon;
-    if (myScore > opponentScore) {
-      result = 'WIN';
-      icon = Icons.emoji_events;
-    } else if (myScore < opponentScore) {
-      result = 'LOSS';
-      icon = Icons.close;
-    } else {
-      result = 'DRAW';
-      icon = Icons.remove;
-    }
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: CircleAvatar(child: Icon(icon, size: 20)),
-        title: Text(
-          '${player.gamerTag} vs $opponent',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text('Matchday ${match.round} • $result'),
-        trailing: Text(
-          '$homeScore - $awayScore',
-          style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
+  Widget _tableChip(String label, int value, Color accent) {
+    return Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+      decoration: BoxDecoration(color: const Color(0xB50B1626), borderRadius: BorderRadius.circular(10), border: Border.all(color: accent.withOpacity(.5))),
+      child: Column(children: [Text(label, style: const TextStyle(color: Colors.grey, fontSize: 9, fontWeight: FontWeight.w800)), Text('$value', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900))]),
     );
   }
 }
@@ -4334,193 +3866,77 @@ class _AdminPageState extends State<AdminPage> {
 
   Future<void> refresh() async {
     setState(() => loading = true);
-
-    try {
-      await Store.instance.refreshPlayers();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Refresh error: $e')),
-        );
-      }
-    }
-
+    try { await Store.instance.refreshPlayers(); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh error: $e'))); }
     if (mounted) setState(() => loading = false);
   }
 
   Future<void> generateFixtures() async {
     setState(() => loading = true);
-
     final error = await Store.instance.generateFixtures();
-
     if (!mounted) return;
-
     setState(() => loading = false);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          error ?? 'Fixtures saved to Supabase successfully.',
-        ),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Fixtures saved to Supabase successfully.')));
   }
 
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
-
+    final players = store.players.where((p) => !p.admin).toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('Admin Dashboard')),
+      appBar: AppBar(title: const Text('Admin Dashboard'), actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.settings_outlined))]),
       body: RefreshIndicator(
         onRefresh: refresh,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
           children: [
-            const Text(
-              'CHIBBYBALL ADMIN',
-              style: TextStyle(
-                fontSize: 25,
-                fontWeight: FontWeight.bold,
-              ),
+            const NeonHeroBanner(title: 'CHIBBYBALL', subtitle: 'ADMIN CONTROL CENTER', eyebrow: 'THIS IS MORE THAN A GAME'),
+            Row(children: [
+              Expanded(child: NeonStatCard(icon: Icons.people, value: '${players.length}', label: 'PLAYERS', accent: const Color(0xFF00D9FF))),
+              const SizedBox(width: 8),
+              Expanded(child: NeonStatCard(icon: Icons.sports_soccer, value: '${store.matches.length}', label: 'FIXTURES', accent: const Color(0xFF9B4DFF))),
+              const SizedBox(width: 8),
+              Expanded(child: NeonStatCard(icon: Icons.check_circle, value: '${store.confirmedMatches().length}', label: 'CONFIRMED', accent: const Color(0xFFFFD21F))),
+            ]),
+            const SizedBox(height: 16),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 2.15,
+              children: [
+                NeonActionButton(label: 'MANAGE LEAGUES', icon: Icons.emoji_events, accent: const Color(0xFFFFD21F), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueManagementPage())).then((_) async { await store.refreshLeagues(); await store.loadMatchesFromSupabase(); if (mounted) setState(() {}); })),
+                NeonActionButton(label: 'MATCH SCHEDULE', icon: Icons.calendar_month, accent: const Color(0xFF00D9FF), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminMatchSchedulePage()))),
+                NeonActionButton(label: 'RESULT REVIEW', icon: Icons.fact_check, accent: const Color(0xFF9B4DFF), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ResultReviewPage()))),
+                NeonActionButton(label: 'MANAGE PLAYERS', icon: Icons.manage_accounts, accent: const Color(0xFF00D9FF), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerManagementPage())).then((_) async { await store.refreshPlayers(); await store.refreshLeagues(); if (mounted) setState(() {}); })),
+                NeonActionButton(label: 'REFRESH PLAYERS', icon: Icons.refresh, accent: const Color(0xFF168BFF), onTap: loading ? null : refresh),
+                NeonActionButton(label: 'GENERATE FIXTURES', icon: Icons.auto_awesome, accent: const Color(0xFFFFD21F), onTap: loading ? null : generateFixtures),
+              ],
             ),
             const SizedBox(height: 18),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.people),
-                title: const Text('Players'),
-                trailing: Text(
-                  '${store.players.where((p) => !p.admin).length}',
-                ),
-              ),
-            ),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.sports_soccer),
-                title: const Text('Fixtures'),
-                trailing: Text('${store.matches.length}'),
-              ),
-            ),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.check_circle),
-                title: const Text('Confirmed Results'),
-                trailing: Text(
-                  '${store.confirmedMatches().length}',
-                ),
-              ),
-            ),
-            const SizedBox(height: 15),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const LeagueManagementPage(),
-                          ),
-                        ).then((_) async {
-                          await store.refreshLeagues();
-                          await store.loadMatchesFromSupabase();
-                          if (mounted) setState(() {});
-                        }),
-                icon: const Icon(Icons.emoji_events),
-                label: const Text('MANAGE LEAGUES'),
-              ),
-            ),
+            Row(children: [const Icon(Icons.groups, color: Color(0xFF00D9FF)), const SizedBox(width: 8), const Expanded(child: Text('REGISTERED PLAYERS', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900))), Text('${players.length}', style: const TextStyle(color: Color(0xFFFFD21F), fontWeight: FontWeight.w900))]),
             const SizedBox(height: 10),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const AdminMatchSchedulePage()),
-                        ),
-                icon: const Icon(Icons.schedule),
-                label: const Text('MATCH SCHEDULE'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const ResultReviewPage()),
-                        ),
-                icon: const Icon(Icons.fact_check),
-                label: const Text('RESULT REVIEW'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading
-                    ? null
-                    : () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const PlayerManagementPage(),
-                          ),
-                        ).then((_) async {
-                          await store.refreshPlayers();
-                          await store.refreshLeagues();
-                          if (mounted) setState(() {});
-                        }),
-                icon: const Icon(Icons.manage_accounts),
-                label: const Text('MANAGE PLAYERS'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading ? null : refresh,
-                icon: const Icon(Icons.refresh),
-                label: const Text('REFRESH PLAYERS'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 50,
-              child: FilledButton.icon(
-                onPressed: loading ? null : generateFixtures,
-                icon: const Icon(Icons.auto_awesome),
-                label: const Text('GENERATE FIXTURES'),
-              ),
-            ),
-            const SizedBox(height: 25),
-            const Text(
-              'REGISTERED PLAYERS',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            ...store.players
-                .where((p) => !p.admin)
-                .map(
-                  (player) => Card(
-                    child: ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.person),
-                      ),
-                      title: Text(player.gamerTag),
-                      subtitle: Text(player.name),
-                    ),
-                  ),
-                ),
+            ...players.asMap().entries.map((entry) {
+              final i = entry.key;
+              final player = entry.value;
+              final accent = i.isEven ? const Color(0xFF168BFF) : const Color(0xFFFFD21F);
+              return Container(
+                margin: const EdgeInsets.only(bottom: 9),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), color: const Color(0xE8081121), border: Border.all(color: accent, width: 1.1)),
+                child: Row(children: [
+                  CircleAvatar(backgroundColor: accent.withOpacity(.16), foregroundColor: accent, child: Text(player.gamerTag.isEmpty ? '?' : player.gamerTag[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900))),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(player.gamerTag, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16)), Text(player.name, style: const TextStyle(color: Colors.grey, fontSize: 12))])),
+                  Text('#${i + 1}', style: TextStyle(color: accent, fontWeight: FontWeight.w900, fontSize: 16)),
+                ]),
+              );
+            }),
           ],
         ),
       ),
     );
   }
 }
+
