@@ -1949,11 +1949,11 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final player = Store.instance.current;
 
-    final pages = const [
-      DashboardPage(),
-      FixturesPage(),
-      TablePage(),
-      ProfilePage(),
+    final pages = [
+      const DashboardPage(),
+      const FixturesPage(),
+      const TablePage(),
+      const ProfilePage(),
     ];
 
     return Scaffold(
@@ -2924,6 +2924,519 @@ class _TablePageState extends State<TablePage> {
     );
   }
 }
+
+// ============================================================
+// PROFILE
+// ============================================================
+
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  late final TextEditingController phoneController;
+  late final TextEditingController countryController;
+  late final TextEditingController countryCodeController;
+  late final TextEditingController whatsappController;
+
+  bool saving = false;
+  bool editing = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final player = Store.instance.current;
+
+    phoneController =
+        TextEditingController(text: player?.phoneNumber ?? '');
+    countryController =
+        TextEditingController(text: player?.country ?? '');
+    countryCodeController =
+        TextEditingController(text: player?.countryCode ?? '');
+    whatsappController =
+        TextEditingController(text: player?.whatsappNumber ?? '');
+
+    // Show the setup form only until the player has saved details.
+    editing = !_hasSavedDetails(player);
+  }
+
+  bool _hasSavedDetails(Player? player) {
+    if (player == null) return false;
+
+    return player.phoneNumber.trim().isNotEmpty ||
+        player.country.trim().isNotEmpty ||
+        player.countryCode.trim().isNotEmpty ||
+        player.whatsappNumber.trim().isNotEmpty;
+  }
+
+  @override
+  void dispose() {
+    phoneController.dispose();
+    countryController.dispose();
+    countryCodeController.dispose();
+    whatsappController.dispose();
+    super.dispose();
+  }
+
+  Future<void> saveProfile() async {
+    setState(() => saving = true);
+
+    final error = await Store.instance.updateMyProfile(
+      phoneNumber: phoneController.text,
+      country: countryController.text,
+      countryCode: countryCodeController.text,
+      whatsappNumber: whatsappController.text,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      saving = false;
+      if (error == null) {
+        editing = false;
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error ?? 'Profile details saved successfully.',
+        ),
+      ),
+    );
+  }
+
+  void startEditing() {
+    final player = Store.instance.current;
+
+    phoneController.text = player?.phoneNumber ?? '';
+    countryController.text = player?.country ?? '';
+    countryCodeController.text = player?.countryCode ?? '';
+    whatsappController.text = player?.whatsappNumber ?? '';
+
+    setState(() => editing = true);
+  }
+
+  Future<void> logout() async {
+    await Store.instance.logout();
+
+    if (!mounted) return;
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (_) => false,
+    );
+  }
+
+  Widget _detailTile(
+    IconData icon,
+    String title,
+    String value,
+  ) {
+    return Card(
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(
+          value.trim().isEmpty ? 'Not provided' : value.trim(),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final player = Store.instance.current;
+    final hasDetails = _hasSavedDetails(player);
+
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const CircleAvatar(
+          radius: 45,
+          child: Icon(Icons.person, size: 50),
+        ),
+        const SizedBox(height: 16),
+        Center(
+          child: Text(
+            player?.gamerTag ?? '',
+            style: const TextStyle(
+              fontSize: 25,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        Center(
+          child: Text(
+            player?.name ?? '',
+            style: const TextStyle(color: Colors.grey),
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        _detailTile(
+          Icons.badge,
+          'Gamer Tag',
+          player?.gamerTag ?? '',
+        ),
+        _detailTile(
+          Icons.person,
+          'Full Name',
+          player?.name ?? '',
+        ),
+        _detailTile(
+          Icons.security,
+          'Account Role',
+          player?.admin == true ? 'Administrator' : 'Player',
+        ),
+
+        const SizedBox(height: 18),
+
+        // SAVED VIEW
+        if (!editing && hasDetails) ...[
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'MY PLAYER DETAILS',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Edit details',
+                icon: const Icon(Icons.edit),
+                onPressed: startEditing,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _detailTile(
+            Icons.phone,
+            'Phone Number',
+            player?.phoneNumber ?? '',
+          ),
+          _detailTile(
+            Icons.public,
+            'Country',
+            player?.country ?? '',
+          ),
+          _detailTile(
+            Icons.language,
+            'Country Code',
+            player?.countryCode ?? '',
+          ),
+          _detailTile(
+            Icons.chat,
+            'WhatsApp Number',
+            player?.whatsappNumber ?? '',
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: startEditing,
+            icon: const Icon(Icons.edit),
+            label: const Text('EDIT PROFILE DETAILS'),
+          ),
+        ],
+
+        // EDIT VIEW
+        if (editing) ...[
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'PLAYER DETAILS',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              if (hasDetails)
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () => setState(() => editing = false),
+                  child: const Text('CANCEL'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: phoneController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'Phone Number',
+              prefixIcon: Icon(Icons.phone),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: countryController,
+            decoration: const InputDecoration(
+              labelText: 'Country',
+              prefixIcon: Icon(Icons.public),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: countryCodeController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'Country Code (e.g. +234)',
+              prefixIcon: Icon(Icons.language),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: whatsappController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'WhatsApp Number',
+              prefixIcon: const Icon(Icons.chat),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 50,
+            child: FilledButton.icon(
+              onPressed: saving ? null : saveProfile,
+              icon: saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.save),
+              label: Text(
+                saving ? 'SAVING...' : 'SAVE PROFILE',
+              ),
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 18),
+
+        Card(
+          child: ListTile(
+            leading: Icon(
+              player?.isOnline == true
+                  ? Icons.circle
+                  : Icons.circle_outlined,
+            ),
+            title: Text(
+              player?.isOnline == true ? 'Online' : 'Offline',
+            ),
+            subtitle: Text(
+              player?.lastSeen == null
+                  ? 'Last seen information will appear here later.'
+                  : 'Last seen ${player!.lastSeen}',
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 8),
+
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.bar_chart),
+            title: const Text('My Stats & Match History'),
+            subtitle: const Text(
+              'View your confirmed results and league statistics.',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const PlayerStatsPage(),
+                ),
+              );
+            },
+          ),
+        ),
+
+        const SizedBox(height: 8),
+
+        FilledButton.icon(
+          onPressed: saving ? null : logout,
+          icon: const Icon(Icons.logout),
+          label: const Text('LOG OUT'),
+        ),
+      ],
+    );
+  }
+}
+
+// ============================================================
+// PLAYER STATS & MATCH HISTORY
+// ============================================================
+
+class PlayerStatsPage extends StatelessWidget {
+  const PlayerStatsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final store = Store.instance;
+    final player = store.current;
+
+    if (player == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('My Stats')),
+        body: const Center(child: Text('No player is signed in.')),
+      );
+    }
+
+    final stats = store.statsForPlayer(player.id);
+    final history = store.confirmedMatchesForPlayer(player.id);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('My Stats & History')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Center(
+            child: Text(
+              player.gamerTag,
+              style: const TextStyle(
+                fontSize: 25,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.65,
+            children: [
+              _statCard('Played', stats['played']!),
+              _statCard('Points', stats['points']!),
+              _statCard('Wins', stats['won']!),
+              _statCard('Draws', stats['drawn']!),
+              _statCard('Losses', stats['lost']!),
+              _statCard('Goals For', stats['gf']!),
+              _statCard('Goals Against', stats['ga']!),
+              _statCard('Goal Difference', stats['gd']!),
+            ],
+          ),
+          const SizedBox(height: 25),
+          const Text(
+            'CONFIRMED MATCH HISTORY',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (history.isEmpty)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: Text(
+                  'No confirmed matches yet.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
+          else
+            for (final match in history) _historyCard(store, player, match),
+          const SizedBox(height: 12),
+          const Text(
+            'Only CONFIRMED matches are included in these statistics.',
+            style: TextStyle(color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _statCard(String label, int value) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '$value',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(label, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Widget _historyCard(
+    Store store,
+    Player player,
+    MatchItem match,
+  ) {
+    final isHome = match.homeId == player.id;
+    final opponentId = isHome ? match.awayId : match.homeId;
+    final opponent = store.playerName(opponentId);
+    final homeScore = match.homeScore ?? 0;
+    final awayScore = match.awayScore ?? 0;
+    final myScore = isHome ? homeScore : awayScore;
+    final opponentScore = isHome ? awayScore : homeScore;
+
+    String result;
+    IconData icon;
+    if (myScore > opponentScore) {
+      result = 'WIN';
+      icon = Icons.emoji_events;
+    } else if (myScore < opponentScore) {
+      result = 'LOSS';
+      icon = Icons.close;
+    } else {
+      result = 'DRAW';
+      icon = Icons.remove;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ListTile(
+        leading: CircleAvatar(child: Icon(icon, size: 20)),
+        title: Text(
+          '${player.gamerTag} vs $opponent',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text('Matchday ${match.round} • $result'),
+        trailing: Text(
+          '$homeScore - $awayScore',
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 // ============================================================
 // LEAGUE MANAGEMENT
