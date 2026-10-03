@@ -216,7 +216,7 @@ class ChibbyballApp extends StatelessWidget {
       title: 'CHIBBYBALL League',
       debugShowCheckedModeBanner: false,
       theme: base.copyWith(
-        fontFamily: 'sans-serif-condensed',
+        textTheme: base.textTheme.apply(fontFamily: 'sans-serif-condensed'),
         scaffoldBackgroundColor: Colors.transparent,
         colorScheme: ColorScheme.fromSeed(
           seedColor: cyan,
