@@ -12,6 +12,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_config.dart';
 
+Future<FirebaseApp>? _firebaseInitialization;
+
 
 class ScreenshotCheck {
   final bool valid;
@@ -134,9 +136,10 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase in the background so a Firebase startup problem
-  // cannot keep the Android app stuck on the Flutter splash screen.
-  Firebase.initializeApp().then((_) {
+  // Start Firebase without blocking the first screen, but keep the same
+  // initialization Future so login/register can safely wait for it.
+  _firebaseInitialization ??= Firebase.initializeApp();
+  _firebaseInitialization!.then((_) {
     FirebaseMessaging.onBackgroundMessage(
       _firebaseMessagingBackgroundHandler,
     );
@@ -681,6 +684,11 @@ class Store {
     if (player == null || !Platform.isAndroid) return;
 
     try {
+      // Firebase is started in the background at app launch. Wait for that
+      // same initialization here so login cannot race Firebase startup.
+      _firebaseInitialization ??= Firebase.initializeApp();
+      await _firebaseInitialization;
+
       final messaging = FirebaseMessaging.instance;
 
       await messaging.requestPermission(
@@ -691,11 +699,16 @@ class Store {
       );
 
       final token = await messaging.getToken();
+
       if (token != null && token.isNotEmpty) {
         await supabase
             .from('profiles')
             .update({'fcm_token': token})
             .eq('id', player.id);
+
+        debugPrint('FCM token saved for player ${player.id}');
+      } else {
+        debugPrint('FCM getToken returned no token');
       }
 
       FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
@@ -707,9 +720,13 @@ class Store {
               .from('profiles')
               .update({'fcm_token': newToken})
               .eq('id', signedInPlayer.id);
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('FCM token refresh save failed: $e');
+        }
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('FCM token registration failed: $e');
+    }
   }
 
   Future<void> refreshPlayers() async {
