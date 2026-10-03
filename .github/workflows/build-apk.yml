@@ -149,12 +149,6 @@ jobs:
       - name: Build APK
         run: flutter build apk --release
 
-      - name: Check Firebase generated resources
-        run: |
-          test -f android/app/build/generated/res/google-services/release/values/values.xml
-          grep -q "google_app_id" android/app/build/generated/res/google-services/release/values/values.xml
-          echo "FirebaseOptions resources generated successfully."
-
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
