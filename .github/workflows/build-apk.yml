@@ -28,99 +28,113 @@ jobs:
           mkdir -p android/app
           cp google-services.json android/app/google-services.json
 
-      - name: Configure Google Services plugin
+      - name: Configure Google Services Gradle plugin
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          settings = Path("android/settings.gradle")
-          if settings.exists():
-              text = settings.read_text()
+          settings = Path("android/settings.gradle.kts")
+          if not settings.exists():
+              settings = Path("android/settings.gradle")
 
-              if "com.google.gms.google-services" not in text:
-                  text = text.replace(
+          app = Path("android/app/build.gradle.kts")
+          if not app.exists():
+              app = Path("android/app/build.gradle")
+
+          if not settings.exists():
+              raise SystemExit("Android settings Gradle file not found")
+          if not app.exists():
+              raise SystemExit("Android app Gradle file not found")
+
+          s = settings.read_text()
+          a = app.read_text()
+
+          if settings.suffix == ".kts":
+              if 'id("com.google.gms.google-services")' not in s:
+                  s = s.replace(
+                      "plugins {",
+                      'plugins {\n    id("com.google.gms.google-services") version "4.4.4" apply false',
+                      1,
+                  )
+              if 'id("com.google.gms.google-services")' not in a:
+                  a = a.replace(
+                      "plugins {",
+                      'plugins {\n    id("com.google.gms.google-services")',
+                      1,
+                  )
+          else:
+              if "com.google.gms.google-services" not in s:
+                  s = s.replace(
                       "plugins {",
                       "plugins {\n    id 'com.google.gms.google-services' version '4.4.4' apply false",
-                      1
+                      1,
                   )
-                  settings.write_text(text)
-
-          build = Path("android/app/build.gradle")
-          if build.exists():
-              text = build.read_text()
-
-              if "com.google.gms.google-services" not in text:
-                  text = text.replace(
+              if "com.google.gms.google-services" not in a:
+                  a = a.replace(
                       "plugins {",
                       "plugins {\n    id 'com.google.gms.google-services'",
-                      1
+                      1,
                   )
-                  build.write_text(text)
 
-          print("Google Services plugin configured")
+          settings.write_text(s)
+          app.write_text(a)
+          print(f"Google Services configured: {settings}, {app}")
           PY
 
-      - name: Add Internet permission
+      - name: Verify Firebase configuration
+        run: |
+          test -f android/app/google-services.json
+          grep -q '"project_id": "chibbyball-league"' google-services.json
+          grep -q '"package_name": "com.example.chibbyball_league"' google-services.json
+          echo "Firebase configuration verified."
+
+      - name: Add Android permissions
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-
           if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
             sed -i '/<manifest[^>]*>/a\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
           fi
+          if ! grep -q "android.permission.POST_NOTIFICATIONS" "$MANIFEST"; then
+            sed -i '/<manifest[^>]*>/a\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' "$MANIFEST"
+          fi
 
-      - name: Add ML Kit language dependencies
+      - name: Add ML Kit Android dependencies
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
-          deps = [
+          dependencies = [
               "com.google.mlkit:text-recognition-chinese:16.0.1",
               "com.google.mlkit:text-recognition-devanagari:16.0.1",
               "com.google.mlkit:text-recognition-japanese:16.0.1",
               "com.google.mlkit:text-recognition-korean:16.0.1",
           ]
-
           groovy = Path("android/app/build.gradle")
           kotlin = Path("android/app/build.gradle.kts")
-
           if groovy.exists():
-              path = groovy
-              text = path.read_text()
-
-              lines = "\n".join(
-                  f'    implementation "{d}"'
-                  for d in deps
-                  if d not in text
-              )
-
-              if lines:
-                  text += "\n\ndependencies {\n" + lines + "\n}\n"
-                  path.write_text(text)
-
-              print("Updated build.gradle")
-
+              path, text = groovy, groovy.read_text()
+              additions = "\n".join(f'    implementation "{d}"' for d in dependencies if d not in text)
           elif kotlin.exists():
-              path = kotlin
-              text = path.read_text()
-
-              lines = "\n".join(
-                  f'    implementation("{d}")'
-                  for d in deps
-                  if d not in text
-              )
-
-              if lines:
-                  text += "\n\ndependencies {\n" + lines + "\n}\n"
-                  path.write_text(text)
-
-              print("Updated build.gradle.kts")
-
+              path, text = kotlin, kotlin.read_text()
+              additions = "\n".join(f'    implementation("{d}")' for d in dependencies if d not in text)
           else:
-              raise SystemExit("Android Gradle file not found")
+              raise SystemExit("No Android app Gradle file found")
+          if additions:
+              if "dependencies {" not in text:
+                  raise SystemExit("Dependencies block not found")
+              text = text.replace("dependencies {", "dependencies {\n" + additions, 1)
+              path.write_text(text)
           PY
 
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Verify Google Services generated resources
+        run: |
+          cd android
+          ./gradlew :app:processReleaseGoogleServices
+          test -f app/build/generated/res/google-services/release/values/values.xml
+          grep -q "google_app_id" app/build/generated/res/google-services/release/values/values.xml
+          echo "FirebaseOptions resources generated successfully."
 
       - name: Build APK
         run: flutter build apk --release
