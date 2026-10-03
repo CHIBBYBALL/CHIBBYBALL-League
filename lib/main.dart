@@ -174,99 +174,63 @@ class ChibbyballApp extends StatelessWidget {
         brightness: Brightness.dark,
         useMaterial3: true,
         fontFamily: 'sans-serif-condensed',
-        scaffoldBackgroundColor: const Color(0xFF090D16),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00C8FF),
-          brightness: Brightness.dark,
-        ).copyWith(
-          primary: const Color(0xFF00C8FF),
-          onPrimary: const Color(0xFF001018),
-          secondary: const Color(0xFF8B5CF6),
-          onSecondary: Colors.white,
-          tertiary: const Color(0xFFFFC857),
-          surface: const Color(0xFF111827),
-          surfaceContainerHighest: const Color(0xFF1A2333),
-          error: const Color(0xFFFF5C7A),
+        scaffoldBackgroundColor: const Color(0xFF070A12),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF00D9FF),
+          secondary: Color(0xFF8B5CF6),
+          tertiary: Color(0xFFFFC857),
+          surface: Color(0xFF111827),
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0B1120),
-          foregroundColor: Color(0xFFF4F7FF),
+          backgroundColor: Color(0xFF0B1020),
+          foregroundColor: Colors.white,
           elevation: 0,
           centerTitle: false,
           titleTextStyle: TextStyle(
             fontFamily: 'sans-serif-condensed',
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.4,
-            color: Color(0xFFF4F7FF),
+            fontSize: 21,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.7,
+            color: Colors.white,
           ),
         ),
         cardTheme: CardThemeData(
-          color: const Color(0xFF151D2C),
-          surfaceTintColor: Colors.transparent,
-          shadowColor: const Color(0x9900C8FF),
-          elevation: 5,
-          margin: const EdgeInsets.symmetric(vertical: 6),
+          color: const Color(0xFF101827),
+          elevation: 8,
+          shadowColor: const Color(0x6600D9FF),
+          margin: const EdgeInsets.symmetric(vertical: 7),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
             side: const BorderSide(
-              color: Color(0x3300C8FF),
+              color: Color(0x6600D9FF),
               width: 1,
             ),
           ),
         ),
-        textTheme: ThemeData.dark().textTheme.apply(
-          fontFamily: 'sans-serif-condensed',
-          bodyColor: const Color(0xFFE9F0FF),
-          displayColor: const Color(0xFFF7FAFF),
-        ).copyWith(
-          headlineMedium: const TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.6,
-          ),
-          titleLarge: const TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.3,
-          ),
-          titleMedium: const TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.2,
-          ),
-          labelLarge: const TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.8,
-          ),
+        textTheme: const TextTheme(
+          headlineSmall: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.4),
+          titleLarge: TextStyle(fontWeight: FontWeight.w900),
+          titleMedium: TextStyle(fontWeight: FontWeight.w800),
+          bodyLarge: TextStyle(fontWeight: FontWeight.w600),
+          bodyMedium: TextStyle(fontWeight: FontWeight.w500),
         ),
-        navigationBarTheme: NavigationBarThemeData(
-          backgroundColor: const Color(0xFF0D1422),
-          indicatorColor: const Color(0xFF00C8FF),
-          elevation: 10,
-          height: 72,
+        navigationBarTheme: const NavigationBarThemeData(
+          backgroundColor: Color(0xFF0B1020),
+          indicatorColor: Color(0xFF173A55),
           labelTextStyle: WidgetStatePropertyAll(
-            TextStyle(
-              fontFamily: 'sans-serif-condensed',
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-              letterSpacing: 0.4,
-            ),
+            TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF00C8FF),
-            foregroundColor: const Color(0xFF001018),
-            elevation: 5,
-            shadowColor: const Color(0x8800C8FF),
-            minimumSize: const Size(0, 52),
+            backgroundColor: const Color(0xFF00BDEB),
+            foregroundColor: Colors.black,
+            elevation: 7,
+            shadowColor: const Color(0x9900D9FF),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(14),
             ),
             textStyle: const TextStyle(
-              fontFamily: 'sans-serif-condensed',
               fontWeight: FontWeight.w900,
               letterSpacing: 0.8,
             ),
@@ -274,108 +238,34 @@ class ChibbyballApp extends StatelessWidget {
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFF00C8FF),
-            side: const BorderSide(color: Color(0xAA00C8FF), width: 1.3),
-            minimumSize: const Size(0, 50),
+            foregroundColor: const Color(0xFF00D9FF),
+            side: const BorderSide(color: Color(0xFF00D9FF), width: 1.4),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            textStyle: const TextStyle(
-              fontFamily: 'sans-serif-condensed',
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.6,
-            ),
-          ),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
-            foregroundColor: const Color(0xFF66D9FF),
-            textStyle: const TextStyle(
-              fontFamily: 'sans-serif-condensed',
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.6,
+              borderRadius: BorderRadius.circular(14),
             ),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFF111827),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 15,
-          ),
-          labelStyle: const TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w600,
-          ),
-          hintStyle: const TextStyle(color: Color(0xFF7F8CA3)),
-          prefixIconColor: const Color(0xFF66D9FF),
+          fillColor: const Color(0xFF0D1422),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0x3348D9FF)),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0x5500D9FF)),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0x3348D9FF)),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0x5500D9FF)),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0xFF00C8FF), width: 1.8),
-          ),
-        ),
-        dataTableTheme: DataTableThemeData(
-          decoration: BoxDecoration(
-            color: const Color(0xFF111827),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0x3300C8FF)),
-          ),
-          headingRowColor: const WidgetStatePropertyAll(Color(0xFF17233A)),
-          headingTextStyle: const TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w900,
-            color: Color(0xFF66D9FF),
-            letterSpacing: 0.7,
-          ),
-          dataTextStyle: const TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w600,
-            color: Color(0xFFE9F0FF),
-          ),
-          dividerThickness: 0.7,
-          horizontalMargin: 10,
-          columnSpacing: 12,
-        ),
-        listTileTheme: const ListTileThemeData(
-          iconColor: Color(0xFF66D9FF),
-          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 5),
-          titleTextStyle: TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w800,
-            fontSize: 17,
-            color: Color(0xFFF4F7FF),
-          ),
-        ),
-        dividerTheme: const DividerThemeData(
-          color: Color(0x3348D9FF),
-          thickness: 1,
-        ),
-        snackBarTheme: SnackBarThemeData(
-          backgroundColor: const Color(0xFF17233A),
-          contentTextStyle: const TextStyle(
-            fontFamily: 'sans-serif-condensed',
-            fontWeight: FontWeight.w700,
-            color: Color(0xFFF4F7FF),
-          ),
-          shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFF00D9FF), width: 2),
           ),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          backgroundColor: Color(0xFF172033),
+          contentTextStyle: TextStyle(fontWeight: FontWeight.w700),
           behavior: SnackBarBehavior.floating,
-        ),
-        progressIndicatorTheme: const ProgressIndicatorThemeData(
-          color: Color(0xFF00C8FF),
-        ),
-        iconTheme: const IconThemeData(
-          color: Color(0xFF66D9FF),
         ),
       ),
       home: const LoginPage(),
@@ -882,89 +772,53 @@ class Store {
     return '$safe@chibbyball.app';
   }
 
-  String? lastFcmStatus;
-
   Future<void> registerFcmToken() async {
     final player = current;
-    if (player == null || !Platform.isAndroid) {
-      lastFcmStatus = 'FCM skipped: Android player session not available.';
-      return;
-    }
+    if (player == null || !Platform.isAndroid) return;
 
     try {
-      // Wait for the same Firebase initialization started by main().
+      // Firebase is started in the background at app launch. Wait for that
+      // same initialization here so login cannot race Firebase startup.
       _firebaseInitialization ??= Firebase.initializeApp();
       await _firebaseInitialization;
 
-      final firebaseApps = Firebase.apps;
-      if (firebaseApps.isEmpty) {
-        throw Exception('Firebase initialized but no Firebase app is available.');
-      }
-
       final messaging = FirebaseMessaging.instance;
 
-      // Make sure FCM auto-initialization is enabled before requesting a token.
-      await messaging.setAutoInitEnabled(true);
-
-      final settings = await messaging.requestPermission(
+      await messaging.requestPermission(
         alert: true,
         badge: true,
         sound: true,
         provisional: false,
       );
 
-      debugPrint(
-        'FCM notification permission: ${settings.authorizationStatus}',
-      );
+      final token = await messaging.getToken();
 
-      final token = await messaging
-          .getToken()
-          .timeout(const Duration(seconds: 20));
+      if (token != null && token.isNotEmpty) {
+        await supabase
+            .from('profiles')
+            .update({'fcm_token': token})
+            .eq('id', player.id);
 
-      if (token == null || token.isEmpty) {
-        lastFcmStatus = 'FCM is initialized, but Firebase returned no device token.';
-        debugPrint(lastFcmStatus);
-        return;
+        debugPrint('FCM token saved for player ${player.id}');
+      } else {
+        debugPrint('FCM getToken returned no token');
       }
-
-      // Use select() after the update so an RLS/no-row problem cannot fail
-      // silently. We never display or log the token itself.
-      final updatedRows = await supabase
-          .from('profiles')
-          .update({'fcm_token': token})
-          .eq('id', player.id)
-          .select('id');
-
-      if (updatedRows.isEmpty) {
-        throw Exception(
-          'FCM token was created, but Supabase did not update this player profile.',
-        );
-      }
-
-      lastFcmStatus = 'FCM token saved successfully.';
-      debugPrint(lastFcmStatus);
 
       FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
         final signedInPlayer = current;
         if (signedInPlayer == null || newToken.isEmpty) return;
 
         try {
-          final rows = await supabase
+          await supabase
               .from('profiles')
               .update({'fcm_token': newToken})
-              .eq('id', signedInPlayer.id)
-              .select('id');
-
-          if (rows.isNotEmpty) {
-            debugPrint('FCM token refresh saved successfully.');
-          }
+              .eq('id', signedInPlayer.id);
         } catch (e) {
           debugPrint('FCM token refresh save failed: $e');
         }
       });
     } catch (e) {
-      lastFcmStatus = 'FCM setup failed: $e';
-      debugPrint(lastFcmStatus);
+      debugPrint('FCM token registration failed: $e');
     }
   }
 
@@ -1672,13 +1526,6 @@ class _LoginPageState extends State<LoginPage> {
     if (player == null) {
       showMessage('Invalid gamer tag or password.');
       return;
-    }
-
-    final fcmStatus = Store.instance.lastFcmStatus;
-    if (fcmStatus != null && fcmStatus != 'FCM token saved successfully.') {
-      showMessage(fcmStatus);
-      await Future.delayed(const Duration(milliseconds: 800));
-      if (!mounted) return;
     }
 
     Navigator.pushReplacement(
@@ -2901,89 +2748,6 @@ class TablePage extends StatefulWidget {
 class _TablePageState extends State<TablePage> {
   bool loading = false;
 
-  Widget _positionBadge(BuildContext context, int position) {
-    final theme = Theme.of(context);
-
-    if (position == 1) {
-      return Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFFFFE08A), Color(0xFFFFC857)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x55FFC857),
-              blurRadius: 10,
-              spreadRadius: 1,
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('👑', style: TextStyle(fontSize: 13, height: 0.9)),
-            Text(
-              '1',
-              style: TextStyle(
-                color: const Color(0xFF3B2A00),
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-                fontFamily: theme.textTheme.bodyMedium?.fontFamily,
-                height: 1.0,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final medalColor = position == 2
-        ? const Color(0xFFC7D0D9)
-        : const Color(0xFFCD7F32);
-    final medalDark = position == 2
-        ? const Color(0xFF5C6874)
-        : const Color(0xFF6D3F16);
-
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            medalColor,
-            Color.lerp(medalColor, Colors.white, 0.18)!,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: medalColor.withOpacity(0.30),
-            blurRadius: 8,
-            spreadRadius: 1,
-          ),
-        ],
-      ),
-      child: Center(
-        child: Text(
-          '$position',
-          style: TextStyle(
-            color: medalDark,
-            fontSize: 15,
-            fontWeight: FontWeight.w900,
-            fontFamily: theme.textTheme.bodyMedium?.fontFamily,
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> _selectLeague(String? id) async {
     if (id == null || id == Store.instance.activeLeagueId) return;
     setState(() => loading = true);
@@ -3058,54 +2822,154 @@ class _TablePageState extends State<TablePage> {
             ),
           )
         else
-          Card(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columnSpacing: 10,
-                horizontalMargin: 8,
-                dataRowMinHeight: 48,
-                dataRowMaxHeight: 56,
-                headingRowHeight: 48,
-                columns: const [
-                  DataColumn(label: Text('#')),
-                  DataColumn(label: Text('PLAYER')),
-                  DataColumn(label: Text('P')),
-                  DataColumn(label: Text('W')),
-                  DataColumn(label: Text('D')),
-                  DataColumn(label: Text('L')),
-                  DataColumn(label: Text('GD')),
-                  DataColumn(label: Text('PTS')),
-                ],
-                rows: [
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D1422),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0x8800D9FF), width: 1.2),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x5500D9FF),
+                  blurRadius: 18,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Column(
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF00BDEB), Color(0xFF6D3BFF)],
+                      ),
+                    ),
+                    child: const Row(
+                      children: [
+                        SizedBox(width: 42, child: Text('#', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black))),
+                        Expanded(flex: 3, child: Text('PLAYER', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black))),
+                        Expanded(child: Center(child: Text('P', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
+                        Expanded(child: Center(child: Text('W', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
+                        Expanded(child: Center(child: Text('D', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
+                        Expanded(child: Center(child: Text('L', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
+                        Expanded(child: Center(child: Text('GD', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
+                        Expanded(child: Center(child: Text('PTS', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.black)))),
+                      ],
+                    ),
+                  ),
                   for (int i = 0; i < ordered.length; i++)
-                    DataRow(cells: [
-                      DataCell(_positionBadge(context, i + 1)),
-                      DataCell(SizedBox(
-                        width: 82,
-                        child: Text(
-                          store.playerName(ordered[i]),
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: i < 3 ? FontWeight.w800 : FontWeight.w600,
+                    Builder(
+                      builder: (context) {
+                        final stats = table[ordered[i]]!;
+                        final isFirst = i == 0;
+                        final isSecond = i == 1;
+                        final isThird = i == 2;
+                        final rowColor = isFirst
+                            ? const Color(0xFF3D3010)
+                            : isSecond
+                                ? const Color(0xFF292D35)
+                                : isThird
+                                    ? const Color(0xFF35251B)
+                                    : (i.isEven ? const Color(0xFF111A29) : const Color(0xFF0D1422));
+                        final badgeColor = isFirst
+                            ? const Color(0xFFFFC857)
+                            : isSecond
+                                ? const Color(0xFFC7CDD6)
+                                : isThird
+                                    ? const Color(0xFFCD8B52)
+                                    : const Color(0xFF24334A);
+                        final badgeTextColor = isFirst || isSecond || isThird ? Colors.black : const Color(0xFF00D9FF);
+
+                        Widget stat(String value, {bool points = false}) => Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+                              padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 2),
+                              decoration: BoxDecoration(
+                                color: points
+                                    ? (isFirst ? const Color(0xFFFFC857) : const Color(0xFF173A55))
+                                    : const Color(0xFF182438),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: points ? const Color(0x8800D9FF) : const Color(0x332A9CC5),
+                                ),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  value,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    color: points && isFirst ? Colors.black : Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            );
+
+                        return Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: rowColor,
+                            border: Border(
+                              bottom: BorderSide(color: const Color(0x331E9BC2)),
+                            ),
                           ),
-                        ),
-                      )),
-                      DataCell(Text('${table[ordered[i]]!['played']}')),
-                      DataCell(Text('${table[ordered[i]]!['won']}')),
-                      DataCell(Text('${table[ordered[i]]!['drawn']}')),
-                      DataCell(Text('${table[ordered[i]]!['lost']}')),
-                      DataCell(Text('${table[ordered[i]]!['gd']}')),
-                      DataCell(Text(
-                        '${table[ordered[i]]!['points']}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: i == 0
-                              ? const Color(0xFFFFC857)
-                              : Theme.of(context).colorScheme.primary,
-                        ),
-                      )),
-                    ]),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 42,
+                                child: Center(
+                                  child: Container(
+                                    width: 34,
+                                    height: 34,
+                                    decoration: BoxDecoration(
+                                      color: badgeColor,
+                                      shape: BoxShape.circle,
+                                      boxShadow: isFirst
+                                          ? const [BoxShadow(color: Color(0x99FFC857), blurRadius: 10)]
+                                          : null,
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        isFirst ? '👑' : '${i + 1}',
+                                        style: TextStyle(
+                                          fontSize: isFirst ? 16 : 13,
+                                          fontWeight: FontWeight.w900,
+                                          color: badgeTextColor,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                flex: 3,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                                  child: Text(
+                                    store.playerName(ordered[i]),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontWeight: isFirst || isSecond || isThird ? FontWeight.w900 : FontWeight.w700,
+                                      color: isFirst ? const Color(0xFFFFC857) : Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Expanded(child: stat('${stats['played']}')),
+                              Expanded(child: stat('${stats['won']}')),
+                              Expanded(child: stat('${stats['drawn']}')),
+                              Expanded(child: stat('${stats['lost']}')),
+                              Expanded(child: stat('${stats['gd']}')),
+                              Expanded(child: stat('${stats['points']}', points: true)),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
@@ -4605,6 +4469,26 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
+  Widget _adminStatCard(IconData icon, String label, String value, Color accent) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 13),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101827),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withAlpha(150)),
+        boxShadow: [BoxShadow(color: accent.withAlpha(55), blurRadius: 12)],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: accent, size: 25),
+          const SizedBox(height: 5),
+          Text(value, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900, color: accent)),
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Colors.white70)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
@@ -4616,76 +4500,40 @@ class _AdminPageState extends State<AdminPage> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text(
-              'CHIBBYBALL ADMIN',
-              style: TextStyle(
-                fontSize: 25,
-                fontWeight: FontWeight.bold,
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF00BDEB), Color(0xFF6D3BFF)],
+                ),
+                borderRadius: BorderRadius.circular(22),
+                boxShadow: const [
+                  BoxShadow(color: Color(0x6600D9FF), blurRadius: 18),
+                ],
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.admin_panel_settings, size: 38, color: Colors.black),
+                  SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('CHIBBYBALL ADMIN', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w900, color: Colors.black)),
+                      Text('CONTROL CENTER', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: 1.4)),
+                    ],
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 18),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.people),
-                title: const Text('Players'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('${store.players.where((p) => !p.admin).length}'),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.chevron_right),
-                  ],
-                ),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const PlayerManagementPage(),
-                  ),
-                ).then((_) async {
-                  await store.refreshPlayers();
-                  if (mounted) setState(() {});
-                }),
-              ),
-            ),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.sports_soccer),
-                title: const Text('Fixtures'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('${store.matches.length}'),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.chevron_right),
-                  ],
-                ),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminMatchSchedulePage(),
-                  ),
-                ),
-              ),
-            ),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.check_circle),
-                title: const Text('Confirmed Results'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('${store.confirmedMatches().length}'),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.chevron_right),
-                  ],
-                ),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const ResultReviewPage(),
-                  ),
-                ),
-              ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(child: _adminStatCard(Icons.people, 'PLAYERS', '${store.players.where((p) => !p.admin).length}', const Color(0xFF00D9FF))),
+                const SizedBox(width: 8),
+                Expanded(child: _adminStatCard(Icons.sports_soccer, 'FIXTURES', '${store.matches.length}', const Color(0xFF8B5CF6))),
+                const SizedBox(width: 8),
+                Expanded(child: _adminStatCard(Icons.check_circle, 'CONFIRMED', '${store.confirmedMatches().length}', const Color(0xFFFFC857))),
+              ],
             ),
             const SizedBox(height: 15),
             SizedBox(
