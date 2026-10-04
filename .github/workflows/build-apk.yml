@@ -1,4 +1,4 @@
-name: Build CHIBBYBALL APK
+name: Build CHIBBYBALL APK + Prepare iOS
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,10 +20,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate Android project
-        run: flutter create --platforms=android .
+      - name: Generate Android and iOS projects
+        run: flutter create --platforms=android,ios .
 
-      - name: Add Firebase configuration
+      - name: Add Firebase Android configuration
         run: |
           mkdir -p android/app
           cp google-services.json android/app/google-services.json
@@ -54,6 +54,7 @@ jobs:
                       'plugins {\n    id("com.google.gms.google-services") version "4.4.4" apply false',
                       1,
                   )
+
               if 'id("com.google.gms.google-services")' not in a:
                   a = a.replace(
                       "plugins {",
@@ -67,6 +68,7 @@ jobs:
                       "plugins {\n    id 'com.google.gms.google-services' version '4.4.4' apply false",
                       1,
                   )
+
               if "com.google.gms.google-services" not in a:
                   a = a.replace(
                       "plugins {",
@@ -76,15 +78,16 @@ jobs:
 
           settings.write_text(s)
           app.write_text(a)
+
           print("Google Services plugin configured.")
           PY
 
-      - name: Verify Firebase configuration
+      - name: Verify Firebase Android configuration
         run: |
           test -f android/app/google-services.json
           grep -q '"project_id": "chibbyball-league"' google-services.json
           grep -q '"package_name": "com.example.chibbyball_league"' google-services.json
-          echo "Firebase configuration verified."
+          echo "Firebase Android configuration verified."
 
       - name: Add Android permissions
         run: |
@@ -103,12 +106,18 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          files = [Path("android/app/build.gradle.kts"), Path("android/app/build.gradle")]
+          files = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle")
+          ]
+
           target = next((f for f in files if f.exists()), None)
+
           if target is None:
               raise SystemExit("Android Gradle file not found")
 
           text = target.read_text()
+
           deps = [
               'implementation("com.google.mlkit:text-recognition-chinese:16.0.1")',
               'implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")',
@@ -116,13 +125,11 @@ jobs:
               'implementation("com.google.mlkit:text-recognition-korean:16.0.1")',
           ]
 
-          # Flutter's generated Android project can use either Gradle Kotlin DSL
-          # or Groovy, and newer templates may not contain a dependencies block.
-          # Add only the missing ML Kit dependencies without assuming the block exists.
           missing = [dep for dep in deps if dep not in text]
 
           if missing:
               marker = "dependencies {"
+
               if marker in text:
                   text = text.replace(
                       marker,
@@ -130,9 +137,12 @@ jobs:
                       1,
                   )
               else:
-                  # A top-level dependencies block works for both Gradle Kotlin DSL
-                  # and Groovy, so do not fail just because the template has no block.
-                  text = text.rstrip() + "\n\ndependencies {\n    " + "\n    ".join(missing) + "\n}\n"
+                  text = (
+                      text.rstrip()
+                      + "\n\ndependencies {\n    "
+                      + "\n    ".join(missing)
+                      + "\n}\n"
+                  )
 
               target.write_text(text)
 
@@ -142,7 +152,19 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Verify iOS project was generated
+        run: |
+          test -d ios
+          test -f ios/Runner.xcodeproj/project.pbxproj
+          echo "iOS project generated successfully."
+
+      - name: Upload prepared iOS project
+        uses: actions/upload-artifact@v4
+        with:
+          name: CHIBBYBALL-iOS-Project
+          path: ios/
+
+      - name: Build Android APK
         run: flutter build apk --release
 
       - name: Upload APK
@@ -150,4 +172,3 @@ jobs:
         with:
           name: CHIBBYBALL-APK
           path: build/app/outputs/flutter-apk/app-release.apk
-
