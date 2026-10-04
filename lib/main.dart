@@ -290,7 +290,11 @@ class ChibbyballApp extends StatelessWidget {
       builder: (context, child) => Stack(
         children: [
           Positioned.fill(child: CustomPaint(painter: _ChibbyballBackgroundPainter())),
-          if (child != null) child,
+          if (child != null)
+            DefaultTextStyle.merge(
+              style: const TextStyle(decoration: TextDecoration.none),
+              child: child!,
+            ),
         ],
       ),
       home: const LoginPage(),
@@ -1099,7 +1103,7 @@ class Store {
         try {
           final row = await supabase
               .from('profiles')
-              .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, last_seen, is_online')
+              .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, avatar_url, last_seen, is_online')
               .eq('id', user.id)
               .maybeSingle();
 
@@ -1125,6 +1129,7 @@ class Store {
         country: profile['country']?.toString() ?? '',
         countryCode: profile['country_code']?.toString() ?? '',
         whatsappNumber: profile['whatsapp_number']?.toString() ?? '',
+        avatarUrl: profile['avatar_url']?.toString() ?? '',
         lastSeen: profile['last_seen'] == null
             ? null
             : DateTime.tryParse(profile['last_seen'].toString()),
@@ -1310,7 +1315,8 @@ class Store {
         ),
       );
 
-      final publicUrl = supabase.storage.from('avatars').getPublicUrl(path);
+      final publicUrl =
+          '${supabase.storage.from('avatars').getPublicUrl(path)}?v=${DateTime.now().millisecondsSinceEpoch}';
       await supabase
           .from('profiles')
           .update({'avatar_url': publicUrl})
@@ -1472,6 +1478,8 @@ class Store {
     }
 
     try {
+      // Save the same date/time to every fixture in the league.
+      // The direct update remains the fallback for existing databases.
       await supabase.from('matches').update({
         'scheduled_date': scheduledDate,
         'match_start_time': startTime,
@@ -1678,20 +1686,28 @@ class Store {
     required String endTime,
   }) async {
     if (current?.admin != true) return 'Admin access required.';
+
     try {
-      await supabase.from('matches').update({
-        'scheduled_date': scheduledDate,
-        'match_start_time': startTime,
-        'match_end_time': endTime,
-      }).eq('league_id', leagueId).eq('round', round);
+      await supabase.rpc(
+        'admin_set_match_day_schedule',
+        params: {
+          'p_league_id': leagueId,
+          'p_round': round,
+          'p_scheduled_date': scheduledDate,
+          'p_start_time': startTime,
+          'p_end_time': endTime,
+        },
+      );
+
       if (activeLeagueId == leagueId) {
         await loadMatchesFromSupabase();
       }
+
       return null;
     } on PostgrestException catch (e) {
-      return 'Could not update Match Day $round: ${e.message}';
+      return 'Could not save Match Day $round date: ${e.message}';
     } catch (e) {
-      return 'Could not update Match Day $round: $e';
+      return 'Could not save Match Day $round date: $e';
     }
   }
 
@@ -3529,7 +3545,9 @@ class _ResultPageState extends State<ResultPage> {
 
 class TablePage extends StatefulWidget {
   const TablePage({super.key});
-  @override State<TablePage> createState() => _TablePageState();
+
+  @override
+  State<TablePage> createState() => _TablePageState();
 }
 
 class _TablePageState extends State<TablePage> {
@@ -3541,143 +3559,368 @@ class _TablePageState extends State<TablePage> {
     final error = await Store.instance.selectLeague(id);
     if (!mounted) return;
     setState(() => loading = false);
-    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    if (error != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 
-  Color _rankColor(int rank) => rank == 1 ? _yellow : rank == 2 ? _cyan : rank == 3 ? _purple : _blue;
+  Color _rankColor(int rank) =>
+      rank == 1 ? _yellow : rank == 2 ? _cyan : rank == 3 ? _purple : _blue;
 
-  Widget _headerCell(String text, {double width = 30, Color color = _muted, TextAlign align = TextAlign.center}) => SizedBox(
-    width: width,
-    child: Text(text, textAlign: align, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: .2)),
-  );
+  Widget _statHeader(String text, {Color color = _muted}) {
+    return SizedBox(
+      width: 31,
+      child: Center(
+        child: Text(
+          text,
+          maxLines: 1,
+          softWrap: false,
+          style: TextStyle(
+            color: color,
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
 
-  Widget _valueCell(String text, Color color, {double width = 30}) => SizedBox(
-    width: width,
-    child: Center(child: Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w900))),
-  );
+  Widget _statValue(String text, Color color) {
+    return SizedBox(
+      width: 31,
+      child: Center(
+        child: Text(
+          text,
+          maxLines: 1,
+          softWrap: false,
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
     final table = store.buildTable();
-    final ordered = table.keys.toList()..sort((a, b) {
-      final x = table[a]!; final y = table[b]!;
-      final p = y['points']!.compareTo(x['points']!); if (p != 0) return p;
-      final gd = y['gd']!.compareTo(x['gd']!); if (gd != 0) return gd;
-      final gf = y['gf']!.compareTo(x['gf']!); if (gf != 0) return gf;
-      return store.playerName(a).toLowerCase().compareTo(store.playerName(b).toLowerCase());
-    });
-    final selected = store.activeLeagueId == null ? null : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
 
-    return ListView(padding: const EdgeInsets.fromLTRB(12, 12, 12, 30), children: [
-      Container(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 17),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(colors: [Color(0xEE071C35), Color(0xE9040A14)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: _cyan.withOpacity(.75), width: 1.4),
-          boxShadow: const [BoxShadow(color: Color(0x3300D9FF), blurRadius: 25)],
-        ),
-        child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('CHIBBYBALL COMPETITION', style: TextStyle(color: _muted, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-          SizedBox(height: 6),
-          Text('LEAGUE TABLE', style: TextStyle(fontSize: 27, fontWeight: FontWeight.w900, letterSpacing: .8)),
-          SizedBox(height: 4),
-          Text('RANK • COMPETE • WIN', style: TextStyle(color: _cyan, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: .9)),
-        ]),
-      ),
-      const SizedBox(height: 11),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 4),
-        decoration: _neonBox(_cyan, radius: 17),
-        child: DropdownButtonFormField<String>(
-          value: selected?.id,
-          dropdownColor: const Color(0xFF081426),
-          decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none),
-          items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text('${l.name} • ${l.status.toUpperCase()}'))).toList(),
-          onChanged: loading ? null : _selectLeague,
-        ),
-      ),
-      if (selected != null) ...[
-        const SizedBox(height: 13),
-        Row(children: [
-          Expanded(child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: .7))),
-          if (selected.status == 'active') Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5), decoration: BoxDecoration(color: _cyan.withOpacity(.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: _cyan.withOpacity(.7))), child: const Text('ACTIVE', style: TextStyle(color: _cyan, fontSize: 9, fontWeight: FontWeight.w900))),
-        ]),
-      ],
-      const SizedBox(height: 9),
-      if (ordered.isEmpty)
-        Container(padding: const EdgeInsets.all(20), decoration: _neonBox(_cyan, radius: 18), child: const Text('No players in this league yet.', style: TextStyle(color: _muted)))
-      else
+    final ordered = table.keys.toList()
+      ..sort((a, b) {
+        final x = table[a]!;
+        final y = table[b]!;
+        final p = y['points']!.compareTo(x['points']!);
+        if (p != 0) return p;
+        final gd = y['gd']!.compareTo(x['gd']!);
+        if (gd != 0) return gd;
+        final gf = y['gf']!.compareTo(x['gf']!);
+        if (gf != 0) return gf;
+        return store
+            .playerName(a)
+            .toLowerCase()
+            .compareTo(store.playerName(b).toLowerCase());
+      });
+
+    final selected = store.activeLeagueId == null
+        ? null
+        : store.leagues
+            .where((l) => l.id == store.activeLeagueId)
+            .firstOrNull;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 30),
+      children: [
         Container(
-          padding: const EdgeInsets.fromLTRB(8, 9, 8, 7),
-          decoration: _neonBox(_blue, radius: 19),
-          child: Column(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
-              decoration: BoxDecoration(color: const Color(0xFF0D2139), borderRadius: BorderRadius.circular(12), border: Border.all(color: _cyan.withOpacity(.35))),
-              child: Row(children: [
-                _headerCell('#', width: 27, color: _yellow),
-                const SizedBox(width: 5),
-                const SizedBox(width: 18),
-                _headerCell('PLAYER', width: 75, align: TextAlign.left),
-                _headerCell('P'), _headerCell('W'), _headerCell('D'), _headerCell('L'), _headerCell('GD'), _headerCell('PTS', color: _yellow),
-              ]),
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 17),
+          decoration: BoxDecoration(
+            color: const Color(0xEE071525),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _cyan.withOpacity(.55)),
+          ),
+          child: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'CHIBBYBALL COMPETITION',
+                style: TextStyle(
+                  color: _muted,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              SizedBox(height: 5),
+              Text(
+                'LEAGUE TABLE',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 27,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              SizedBox(height: 4),
+              Text(
+                'RANK • COMPETE • WIN',
+                style: TextStyle(
+                  color: _cyan,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+          decoration: BoxDecoration(
+            color: const Color(0xE9081426),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _cyan.withOpacity(.55)),
+          ),
+          child: DropdownButtonFormField<String>(
+            value: selected?.id,
+            dropdownColor: const Color(0xFF081426),
+            decoration: const InputDecoration(
+              labelText: 'SELECT LEAGUE',
+              border: InputBorder.none,
             ),
-            const SizedBox(height: 6),
-            for (int i = 0; i < ordered.length; i++) ...[
-              Builder(builder: (_) {
-                final id = ordered[i];
-                final row = table[id]!;
-                final player = store.findPlayer(id);
-                final rank = i + 1;
-                final accent = _rankColor(rank);
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 6),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [accent.withOpacity(.11), const Color(0xE9071425)]),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: accent.withOpacity(rank <= 3 ? .85 : .38), width: rank <= 3 ? 1.2 : .8),
-                    boxShadow: [BoxShadow(color: accent.withOpacity(.08), blurRadius: 14)],
+            items: store.leagues
+                .map(
+                  (l) => DropdownMenuItem(
+                    value: l.id,
+                    child: Text('${l.name} • ${l.status.toUpperCase()}'),
                   ),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: player == null ? null : () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerStatsPageFor(player: player))),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
-                      child: Row(children: [
-                        Container(width: 27, height: 27, decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withOpacity(.15), border: Border.all(color: accent, width: rank <= 3 ? 1.5 : 1)), child: Center(child: Text('$rank', style: TextStyle(color: accent, fontSize: 11, fontWeight: FontWeight.w900)))),
-                        const SizedBox(width: 5),
-                        _playerAvatar(player, radius: 18, accent: accent),
-                        const SizedBox(width: 7),
-                        SizedBox(
-                          width: 75,
-                          child: Text(
-                            store.playerName(id),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
-                          ),
-                        ),
-                        _valueCell('${row['played']}', accent),
-                        _valueCell('${row['won']}', accent),
-                        _valueCell('${row['drawn']}', accent),
-                        _valueCell('${row['lost']}', accent),
-                        _valueCell('${row['gd']}', accent),
-                        _valueCell('${row['points']}', _yellow),
-                      ]),
+                )
+                .toList(),
+            onChanged: loading ? null : _selectLeague,
+          ),
+        ),
+        if (selected != null) ...[
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  selected.name.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _yellow,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (selected.status == 'active')
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: _cyan.withOpacity(.10),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: _cyan.withOpacity(.55)),
+                  ),
+                  child: const Text(
+                    'ACTIVE',
+                    style: TextStyle(
+                      color: _cyan,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                );
-              }),
+                ),
             ],
-          ]),
+          ),
+        ],
+        const SizedBox(height: 10),
+        if (ordered.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: _panel,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _cyan.withOpacity(.45)),
+            ),
+            child: const Text(
+              'No players in this league yet.',
+              style: TextStyle(color: _muted),
+            ),
+          )
+        else
+          Container(
+            padding: const EdgeInsets.fromLTRB(7, 8, 7, 7),
+            decoration: BoxDecoration(
+              color: const Color(0xE9071425),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: _blue.withOpacity(.45)),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0D2139),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const SizedBox(
+                        width: 28,
+                        child: Center(
+                          child: Text(
+                            '#',
+                            style: TextStyle(
+                              color: _yellow,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      const SizedBox(width: 36),
+                      const Expanded(
+                        child: Text(
+                          'PLAYER',
+                          maxLines: 1,
+                          softWrap: false,
+                          style: TextStyle(
+                            color: _muted,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      _statHeader('P'),
+                      _statHeader('W'),
+                      _statHeader('D'),
+                      _statHeader('L'),
+                      _statHeader('GD'),
+                      _statHeader('PTS', color: _yellow),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                for (int i = 0; i < ordered.length; i++)
+                  Builder(
+                    builder: (_) {
+                      final id = ordered[i];
+                      final row = table[id]!;
+                      final player = store.findPlayer(id);
+                      final rank = i + 1;
+                      final accent = _rankColor(rank);
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xE90A1729),
+                          borderRadius: BorderRadius.circular(13),
+                          border: Border.all(
+                            color: accent.withOpacity(
+                              rank <= 3 ? .70 : .28,
+                            ),
+                          ),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(13),
+                          onTap: player == null
+                              ? null
+                              : () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          PlayerStatsPageFor(player: player),
+                                    ),
+                                  ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 8,
+                            ),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 28,
+                                  child: Center(
+                                    child: Text(
+                                      '$rank',
+                                      style: TextStyle(
+                                        color: accent,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                _playerAvatar(
+                                  player,
+                                  radius: 18,
+                                  accent: accent,
+                                ),
+                                const SizedBox(width: 7),
+                                Expanded(
+                                  child: Text(
+                                    store.playerName(id),
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                                _statValue('${row['played']}', accent),
+                                _statValue('${row['won']}', accent),
+                                _statValue('${row['drawn']}', accent),
+                                _statValue('${row['lost']}', accent),
+                                _statValue('${row['gd']}', accent),
+                                _statValue('${row['points']}', _yellow),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _panel,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _blue.withOpacity(.40)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.touch_app, color: _cyan, size: 17),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Tap a player to view confirmed match history and detailed stats.',
+                  style: TextStyle(color: _muted, fontSize: 11, height: 1.3),
+                ),
+              ),
+            ],
+          ),
         ),
-      const SizedBox(height: 10),
-      Container(padding: const EdgeInsets.all(12), decoration: _neonBox(_blue, radius: 15), child: const Row(children: [Icon(Icons.touch_app, color: _cyan, size: 17), SizedBox(width: 8), Expanded(child: Text('Tap any player to view confirmed match history and detailed stats.', style: TextStyle(color: _muted, fontSize: 11, height: 1.3)))])),
-      const SizedBox(height: 8),
-      const Text('Only CONFIRMED matches count toward the selected league table.', style: TextStyle(color: _muted, fontSize: 10)),
-    ]);
+        const SizedBox(height: 8),
+        const Text(
+          'Only CONFIRMED matches count toward the selected league table.',
+          style: TextStyle(color: _muted, fontSize: 10),
+        ),
+      ],
+    );
   }
 }
 
@@ -4728,6 +4971,11 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
                             if (d == null) return;
                             setState(() => roundDates[round] = d);
                             await _saveRound(round);
+                            // Re-read the server value after saving so the UI
+                            // cannot silently keep a local-only date.
+                            if (mounted) {
+                              await _loadSelectedLeague();
+                            }
                           },
                   ),
                 ),
