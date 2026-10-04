@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'supabase_config.dart';
 
@@ -217,7 +218,7 @@ class ChibbyballApp extends StatelessWidget {
       title: 'CHIBBYBALL League',
       debugShowCheckedModeBanner: false,
       theme: base.copyWith(
-        textTheme: base.textTheme,
+        textTheme: base.textTheme.apply(fontFamily: 'sans-serif-condensed'),
         scaffoldBackgroundColor: Colors.transparent,
         colorScheme: ColorScheme.fromSeed(
           seedColor: cyan,
@@ -697,18 +698,6 @@ class Store {
     }
   }
 
-  Future<String?> disregisterPlayerFromAllLeagues(String playerId) async {
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
-    try {
-      await supabase.from('league_members').delete().eq('player_id', playerId);
-      return null;
-    } on PostgrestException catch (e) {
-      return 'Could not disregister player: ${e.message}';
-    } catch (e) {
-      return 'Could not disregister player: $e';
-    }
-  }
-
   Future<void> loadMatchesFromSupabase() async {
     final leagueId = await _activeLeagueId();
     if (leagueId == null) {
@@ -958,6 +947,42 @@ class Store {
       );
 
     await save();
+  }
+
+  Future<Player?> findAdmin() async {
+    try {
+      final data = await supabase
+          .from('profiles')
+          .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, avatar_url, last_seen, is_online')
+          .eq('role', 'admin')
+          .limit(1);
+      if (data is List && data.isNotEmpty) {
+        final row = Map<String, dynamic>.from(data.first);
+        final admin = Player(
+          id: row['id'].toString(),
+          name: row['full_name']?.toString() ?? '',
+          gamerTag: row['gamer_tag']?.toString() ?? 'CHIBBY_ADMIN',
+          admin: true,
+          phoneNumber: row['phone_number']?.toString() ?? '',
+          country: row['country']?.toString() ?? '',
+          countryCode: row['country_code']?.toString() ?? '',
+          whatsappNumber: row['whatsapp_number']?.toString() ?? '',
+          lastSeen: row['last_seen'] == null ? null : DateTime.tryParse(row['last_seen'].toString()),
+          isOnline: row['is_online'] == true,
+          avatarUrl: row['avatar_url']?.toString() ?? '',
+        );
+        final index = players.indexWhere((p) => p.id == admin.id);
+        if (index >= 0) {
+          players[index] = admin;
+        } else {
+          players.add(admin);
+        }
+        return admin;
+      }
+    } catch (e) {
+      debugPrint('Could not find admin: $e');
+    }
+    return players.where((p) => p.admin).firstOrNull;
   }
 
   // IMPORTANT:
@@ -1222,7 +1247,7 @@ class Store {
       final path = '${player.id}/avatar.$extension';
       await supabase.storage.from('avatars').upload(
         path,
-        File(file.path),
+        bytes,
         fileOptions: FileOptions(
           contentType: contentType,
           upsert: true,
@@ -1983,26 +2008,10 @@ class MessagesPage extends StatefulWidget {
 }
 
 class _MessagesPageState extends State<MessagesPage> {
-  Timer? _presenceRefresh;
-
   @override
   void initState() {
     super.initState();
-    _refreshPlayers();
-    _presenceRefresh = Timer.periodic(const Duration(seconds: 15), (_) => _refreshPlayers());
-  }
-
-  Future<void> _refreshPlayers() async {
-    try {
-      await Store.instance.refreshPlayers();
-      if (mounted) setState(() {});
-    } catch (_) {}
-  }
-
-  @override
-  void dispose() {
-    _presenceRefresh?.cancel();
-    super.dispose();
+    Store.instance.refreshPlayers().then((_) { if (mounted) setState(() {}); }).catchError((_) {});
   }
 
   @override
@@ -2014,7 +2023,7 @@ class _MessagesPageState extends State<MessagesPage> {
       body: players.isEmpty
           ? const Center(child: Text('No other players available yet.'))
           : RefreshIndicator(
-              onRefresh: _refreshPlayers,
+              onRefresh: () async { await Store.instance.refreshPlayers(); if (mounted) setState(() {}); },
               child: ListView.builder(
                 padding: const EdgeInsets.all(14),
                 itemCount: players.length,
@@ -2420,73 +2429,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 }
 
-
-// ============================================================
-// CHIBBYBALL NEON UI HELPERS
-// ============================================================
-
-const _cyan = Color(0xFF00D9FF);
-const _yellow = Color(0xFFFFD21F);
-const _purple = Color(0xFF9B4DFF);
-const _blue = Color(0xFF278BFF);
-const _panel = Color(0xE9081426);
-const _muted = Color(0xFFAAB8CB);
-
-BoxDecoration _neonBox(Color accent, {double radius = 20}) => BoxDecoration(
-  color: _panel,
-  borderRadius: BorderRadius.circular(radius),
-  border: Border.all(color: accent.withOpacity(.78), width: 1.3),
-  boxShadow: [BoxShadow(color: accent.withOpacity(.12), blurRadius: 22)],
-);
-
-Widget _neonSectionTitle(String title, {Color accent = _cyan}) => Row(
-  children: [
-    Container(width: 5, height: 24, decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(4), boxShadow: [BoxShadow(color: accent.withOpacity(.45), blurRadius: 10)])),
-    const SizedBox(width: 10),
-    Text(title, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900, letterSpacing: .7)),
-  ],
-);
-
-Widget _neonAction(BuildContext context, IconData icon, String title, String subtitle, Color accent, VoidCallback onTap) => Container(
-  decoration: _neonBox(accent, radius: 18),
-  child: InkWell(
-    borderRadius: BorderRadius.circular(18),
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
-      child: Row(children: [
-        Container(width: 48, height: 48, decoration: BoxDecoration(color: accent.withOpacity(.12), borderRadius: BorderRadius.circular(15), border: Border.all(color: accent.withOpacity(.35))), child: Icon(icon, color: accent, size: 27)),
-        const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900)), const SizedBox(height: 3), Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _muted, fontSize: 11))])),
-        Icon(Icons.chevron_right, color: accent, size: 28),
-      ]),
-    ),
-  ),
-);
-
-Widget _neonStat(BuildContext context, IconData icon, String value, String label, Color accent, VoidCallback onTap) => Expanded(
-  child: Container(
-    margin: const EdgeInsets.symmetric(horizontal: 4),
-    decoration: _neonBox(accent, radius: 18),
-    child: InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: onTap,
-      child: Padding(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 5), child: Column(children: [Icon(icon, color: accent, size: 25), const SizedBox(height: 7), Text(value, style: TextStyle(color: accent, fontSize: 25, fontWeight: FontWeight.w900)), const SizedBox(height: 2), Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: .5))])),
-    ),
-  ),
-);
-
-Widget _playerAvatar(Player? player, {double radius = 24, Color accent = _cyan}) => CircleAvatar(
-  radius: radius,
-  backgroundColor: const Color(0xFF10233E),
-  backgroundImage: (player?.avatarUrl.isNotEmpty ?? false) ? NetworkImage(player!.avatarUrl) : null,
-  child: (player?.avatarUrl.isNotEmpty ?? false) ? null : Icon(Icons.person, color: accent, size: radius),
-);
-
 // ============================================================
 // DASHBOARD
 // ============================================================
-
 
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
@@ -2495,56 +2440,173 @@ class DashboardPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = Store.instance;
     final player = store.current;
-    final myMatches = player == null ? <MatchItem>[] : store.matches.where((m) => m.homeId == player.id || m.awayId == player.id).toList();
-    final confirmed = myMatches.where((m) => m.status == 'Confirmed').length;
-    final pending = myMatches.where((m) => m.status == 'Awaiting Confirmation').length;
+
+    final myMatches = player == null
+        ? <MatchItem>[]
+        : store.matches
+            .where(
+              (m) => m.homeId == player.id || m.awayId == player.id,
+            )
+            .toList();
+
+    final confirmed =
+        myMatches.where((m) => m.status == 'Confirmed').length;
+    final awaiting =
+        myMatches.where((m) => m.status == 'Awaiting Confirmation').length;
+    final disputed =
+        myMatches.where((m) => m.status == 'Disputed').length;
+
+    final hasDetails = player != null &&
+        (player.phoneNumber.trim().isNotEmpty ||
+            player.country.trim().isNotEmpty ||
+            player.countryCode.trim().isNotEmpty ||
+            player.whatsappNumber.trim().isNotEmpty);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+      padding: const EdgeInsets.all(18),
       children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xE90B2039), Color(0xE9061020)]),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: _cyan.withOpacity(.75)),
-            boxShadow: const [BoxShadow(color: Color(0x2200D9FF), blurRadius: 24)],
+        Text(
+          'Welcome, ${player?.gamerTag ?? ''}',
+          style: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('WELCOME ${player?.gamerTag.toUpperCase() ?? ''}', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-            const SizedBox(height: 8),
-            const Text('CHIBBYBALL', style: TextStyle(fontSize: 31, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-            const SizedBox(height: 3),
-            const Text('eFOOTBALL • LEAGUE • COMPETE', style: TextStyle(color: _cyan, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: .6)),
-            const SizedBox(height: 13),
-            const Text('PLAY • COMPETE • WIN', style: TextStyle(color: _yellow, fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-          ]),
         ),
+        const SizedBox(height: 18),
+
+        // MY PLAYER DETAILS
+        Card(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfilePage()),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const CircleAvatar(
+                    radius: 27,
+                    child: Icon(Icons.person),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'MY PLAYER DETAILS',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          hasDetails
+                              ? [
+                                  if (player!.country.trim().isNotEmpty)
+                                    player.country.trim(),
+                                  if (player.whatsappNumber.trim().isNotEmpty)
+                                    'WhatsApp: ${player.whatsappNumber.trim()}',
+                                ].join(' • ')
+                              : 'Add your contact details',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
+            ),
+          ),
+        ),
+
         const SizedBox(height: 14),
-        Row(children: [
-          _neonStat(context, Icons.sports_soccer, '${myMatches.length}', 'FIXTURES', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
-          _neonStat(context, Icons.check_circle, '$confirmed', 'CONFIRMED', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage(statusFilter: 'Confirmed')))),
-          _neonStat(context, Icons.hourglass_top, '$pending', 'PENDING', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage(statusFilter: 'Awaiting Confirmation')))),
-        ]),
-        const SizedBox(height: 18),
-        _neonAction(context, Icons.calendar_month, 'YOUR FIXTURES', 'View matches and submit results', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.person, 'PLAYER PROFILE', 'Edit details and profile photo', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.people_alt, 'PLAYERS & MESSAGES', 'See online players and chat', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
-        const SizedBox(height: 18),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: _neonBox(_blue, radius: 18),
-          child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('RESULT RULE', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-            SizedBox(height: 8),
-            Text('Both players submit the score and screenshot proof. The match only counts in the table after confirmation. Different claims can be disputed for admin review.', style: TextStyle(color: _muted, height: 1.45, fontSize: 12)),
-          ]),
+
+        _card(
+          context,
+          Icons.sports_soccer,
+          'Your Fixtures',
+          '${myMatches.length}',
+        ),
+        _card(
+          context,
+          Icons.check_circle,
+          'Confirmed Results',
+          '$confirmed',
+          statusFilter: 'Confirmed',
+        ),
+        _card(
+          context,
+          Icons.hourglass_top,
+          'Awaiting Confirmation',
+          '$awaiting',
+          statusFilter: 'Awaiting Confirmation',
+        ),
+        _card(
+          context,
+          Icons.warning,
+          'Disputed',
+          '$disputed',
+          statusFilter: 'Disputed',
+        ),
+        const SizedBox(height: 12),
+        const Card(
+          child: Padding(
+            padding: EdgeInsets.all(18),
+            child: Text(
+              'RESULT RULE\n\n'
+              'Both players must submit the result with screenshot proof '
+              'before the match becomes confirmed.\n\n'
+              'Different scores make the match DISPUTED for admin review.',
+            ),
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _card(
+    BuildContext context,
+    IconData icon,
+    String title,
+    String value, {
+    String? statusFilter,
+  }) {
+    return Card(
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => FixturesPage(statusFilter: statusFilter),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -2552,7 +2614,6 @@ class DashboardPage extends StatelessWidget {
 // ============================================================
 // FIXTURES
 // ============================================================
-
 
 class FixturesPage extends StatefulWidget {
   final String? statusFilter;
@@ -2581,12 +2642,14 @@ class _FixturesPageState extends State<FixturesPage> {
 
   Color _accent(MatchItem m) {
     switch (m.status) {
-      case 'Confirmed': return _yellow;
+      case 'Confirmed': return const Color(0xFFFFD21F);
       case 'Disputed': return const Color(0xFFFF4D7D);
-      case 'Awaiting Confirmation': return _purple;
-      default: return _cyan;
+      case 'Awaiting Confirmation': return const Color(0xFF8B3DFF);
+      default: return const Color(0xFF00D9FF);
     }
   }
+
+  Widget _avatar(Player? p, Color accent) => CircleAvatar(radius: 27, backgroundColor: const Color(0xFF10233E), backgroundImage: (p?.avatarUrl.isNotEmpty ?? false) ? NetworkImage(p!.avatarUrl) : null, child: (p?.avatarUrl.isNotEmpty ?? false) ? null : Icon(Icons.person, color: accent));
 
   Widget _fixtureCard(MatchItem m) {
     final store = Store.instance;
@@ -2595,27 +2658,24 @@ class _FixturesPageState extends State<FixturesPage> {
     final accent = _accent(m);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      decoration: _neonBox(accent, radius: 20),
+      decoration: BoxDecoration(color: const Color(0xE9081426), borderRadius: BorderRadius.circular(18), border: Border.all(color: accent.withOpacity(.75), width: 1.4), boxShadow: [BoxShadow(color: accent.withOpacity(.10), blurRadius: 18)]),
       child: InkWell(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ResultPage(match: m))).then((_) { if (mounted) setState(() {}); }),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
-          child: Column(children: [
-            Row(children: [
-              Expanded(child: Text('MATCHDAY ${m.round} • ${_dateLabel(m)}', style: TextStyle(color: accent, fontWeight: FontWeight.w900, fontSize: 11))),
-              Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4), decoration: BoxDecoration(color: accent.withOpacity(.12), borderRadius: BorderRadius.circular(20)), child: Text(m.status.toUpperCase(), style: TextStyle(color: accent, fontSize: 9, fontWeight: FontWeight.w900))),
-            ]),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: Column(children: [_playerAvatar(home, radius: 27, accent: accent), const SizedBox(height: 6), Text(home?.gamerTag ?? store.playerName(m.homeId), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13))])),
-              SizedBox(width: 92, child: Column(children: [const Text('VS', style: TextStyle(color: _cyan, fontSize: 18, fontWeight: FontWeight.w900)), const SizedBox(height: 4), Text(m.status == 'Confirmed' ? '${m.homeScore} - ${m.awayScore}' : 'MATCH', style: TextStyle(color: m.status == 'Confirmed' ? _yellow : _muted, fontWeight: FontWeight.w900, fontSize: 15)), const SizedBox(height: 5), Text(m.scheduleLabel, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF7F91A8), fontSize: 9))])),
-              Expanded(child: Column(children: [_playerAvatar(away, radius: 27, accent: accent), const SizedBox(height: 6), Text(away?.gamerTag ?? store.playerName(m.awayId), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13))])),
-            ]),
-            const SizedBox(height: 10),
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.touch_app, size: 13, color: accent), const SizedBox(width: 5), Text(m.status == 'Scheduled' ? 'TAP TO SUBMIT RESULT' : 'TAP TO VIEW RESULT', style: TextStyle(color: accent, fontSize: 9, fontWeight: FontWeight.w900))]),
+        child: Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 10), child: Column(children: [
+          Row(children: [
+            Expanded(child: Text(_dateLabel(m), style: TextStyle(color: accent, fontWeight: FontWeight.w900, fontSize: 12))),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4), decoration: BoxDecoration(color: accent.withOpacity(.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: accent.withOpacity(.55))), child: Text(m.status.toUpperCase(), style: TextStyle(color: accent, fontSize: 9, fontWeight: FontWeight.w900))),
           ]),
-        ),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: Column(children: [_avatar(home, accent), const SizedBox(height: 6), Text(home?.gamerTag ?? store.playerName(m.homeId), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900))])),
+            SizedBox(width: 82, child: Column(children: [const Text('VS', style: TextStyle(color: Color(0xFF00D9FF), fontSize: 17, fontWeight: FontWeight.w900)), const SizedBox(height: 4), Text(m.status == 'Confirmed' ? '${m.homeScore} - ${m.awayScore}' : 'MATCH', style: TextStyle(color: m.status == 'Confirmed' ? const Color(0xFFFFD21F) : const Color(0xFFAAB8CB), fontWeight: FontWeight.w900)), const SizedBox(height: 4), Text(m.scheduleLabel, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF8494A8), fontSize: 9))])),
+            Expanded(child: Column(children: [_avatar(away, accent), const SizedBox(height: 6), Text(away?.gamerTag ?? store.playerName(m.awayId), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900))])),
+          ]),
+          const SizedBox(height: 9),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.touch_app, size: 13, color: accent), const SizedBox(width: 5), Text(m.status == 'Scheduled' ? 'Tap to submit result after the match' : 'Tap to view match result', style: const TextStyle(color: Color(0xFF8494A8), fontSize: 10))]),
+        ])),
       ),
     );
   }
@@ -2630,41 +2690,12 @@ class _FixturesPageState extends State<FixturesPage> {
     if (widget.statusFilter != null) visible = visible.where((m) => m.status == widget.statusFilter).toList();
     final rounds = visible.map((m) => m.round).toSet().toList()..sort();
 
-    return ListView(padding: const EdgeInsets.fromLTRB(14, 12, 14, 30), children: [
-      Container(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
-        decoration: _neonBox(_cyan, radius: 22),
-        child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('CHIBBYBALL', style: TextStyle(fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: 1)),
-          SizedBox(height: 3),
-          Text('FIXTURES', style: TextStyle(color: _cyan, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
-          SizedBox(height: 8),
-          Text('PLAY • COMPETE • WIN', style: TextStyle(color: _yellow, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1)),
-        ]),
-      ),
-      const SizedBox(height: 12),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-        decoration: _neonBox(_blue, radius: 18),
-        child: DropdownButtonFormField<String>(value: selected?.id, decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text('${l.name} • ${l.status.toUpperCase()}'))).toList(), onChanged: loading ? null : _selectLeague),
-      ),
-      if (selected != null) Padding(padding: const EdgeInsets.fromLTRB(3, 16, 3, 10), child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: .7))),
-      if (widget.statusFilter != null) Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(widget.statusFilter!.toUpperCase(), style: const TextStyle(color: _purple, fontWeight: FontWeight.w900))),
-      if (visible.isEmpty) ...[
-        const SizedBox(height: 55),
-        const Center(child: Icon(Icons.sports_soccer, size: 60, color: _cyan)),
-        const SizedBox(height: 10),
-        const Center(child: Text('No fixtures found.', style: TextStyle(color: _muted, fontSize: 16))),
-        if (selected?.status == 'active' && player?.admin == true) ...[
-          const SizedBox(height: 18),
-          FilledButton.icon(onPressed: loading ? null : () async { setState(() => loading = true); final e = await store.generateFixtures(); if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e ?? 'Fixtures generated successfully.'))); } }, icon: const Icon(Icons.auto_awesome), label: const Text('GENERATE FIXTURES')),
-        ],
-      ] else ...[
-        for (final round in rounds) ...[
-          Padding(padding: const EdgeInsets.fromLTRB(2, 14, 2, 9), child: _neonSectionTitle('MATCHDAY $round', accent: _cyan)),
-          ...visible.where((m) => m.round == round).map(_fixtureCard),
-        ],
-      ],
+    return ListView(padding: const EdgeInsets.fromLTRB(14, 12, 14, 28), children: [
+      Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: const Color(0xE9081426), borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFF00D9FF).withOpacity(.65))), child: DropdownButtonFormField<String>(value: selected?.id, decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text('${l.name} • ${l.status.toUpperCase()}'))).toList(), onChanged: loading ? null : _selectLeague)),
+      if (selected != null) ...[const SizedBox(height: 16), Text(selected.name.toUpperCase(), style: const TextStyle(color: Color(0xFFFFD21F), fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: .7))],
+      if (widget.statusFilter != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(widget.statusFilter!.toUpperCase(), style: const TextStyle(color: Color(0xFF8B3DFF), fontWeight: FontWeight.w900))),
+      if (visible.isEmpty) ...[const SizedBox(height: 70), Icon(Icons.sports_soccer, size: 62, color: Color(0xFF00D9FF)), const SizedBox(height: 12), Center(child: Text('No fixtures found.', style: TextStyle(color: Color(0xFFAAB8CB), fontSize: 16))), if (selected?.status == 'active' && player?.admin == true) ...[const SizedBox(height: 18), FilledButton.icon(onPressed: loading ? null : () async { setState(() => loading = true); final e = await store.generateFixtures(); if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e ?? 'Fixtures generated successfully.'))); } }, icon: const Icon(Icons.auto_awesome), label: const Text('GENERATE FIXTURES'))]]
+      else for (final round in rounds) ...[Padding(padding: const EdgeInsets.fromLTRB(2, 18, 2, 10), child: Row(children: [const Icon(Icons.sports_soccer, color: Color(0xFF00D9FF), size: 20), const SizedBox(width: 8), Text('MATCHDAY $round', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900))])), ...visible.where((m) => m.round == round).map(_fixtureCard)],
     ]);
   }
 }
@@ -2679,7 +2710,10 @@ extension MatchScheduleDisplay on MatchItem {
       final displayHour = hour % 12 == 0 ? 12 : hour % 12;
       return '$displayHour:${minute.toString().padLeft(2, '0')} $suffix';
     }
-    final date = scheduledDate == null || scheduledDate!.isEmpty ? 'Date set by admin' : scheduledDate!;
+
+    final date = scheduledDate == null || scheduledDate!.isEmpty
+        ? 'Date set by admin'
+        : scheduledDate!;
     return '$date • ${formatTime(startTime)} – ${formatTime(endTime)}';
   }
 }
@@ -3004,7 +3038,9 @@ class _ResultPageState extends State<ResultPage> {
 
 class TablePage extends StatefulWidget {
   const TablePage({super.key});
-  @override State<TablePage> createState() => _TablePageState();
+
+  @override
+  State<TablePage> createState() => _TablePageState();
 }
 
 class _TablePageState extends State<TablePage> {
@@ -3016,76 +3052,162 @@ class _TablePageState extends State<TablePage> {
     final error = await Store.instance.selectLeague(id);
     if (!mounted) return;
     setState(() => loading = false);
-    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 
-  Color _rankColor(int rank) => rank == 1 ? _yellow : rank == 2 ? _cyan : rank == 3 ? _purple : _blue;
+  Color _rankColor(int rank) {
+    if (rank == 1) return const Color(0xFFFFD21F);
+    if (rank == 2) return const Color(0xFF00D9FF);
+    if (rank == 3) return const Color(0xFF9B4DFF);
+    return const Color(0xFF2E86FF);
+  }
+
+  Widget _metric(String label, String value, Color accent) {
+    return SizedBox(
+      width: 43,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(label, style: TextStyle(color: accent.withOpacity(.85), fontSize: 9, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 3),
+          Text(value, style: const TextStyle(color: Color(0xFFE7EEF8), fontSize: 14, fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+  }
+
+  Widget _playerRow(Store store, String playerId, Map<String, int> stats, int rank) {
+    final player = store.players.where((p) => p.id == playerId).firstOrNull;
+    final name = store.playerName(playerId);
+    final accent = _rankColor(rank);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xE6081426),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: accent.withOpacity(.72), width: rank <= 3 ? 1.6 : 1.2),
+        boxShadow: [BoxShadow(color: accent.withOpacity(.10), blurRadius: 16)],
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () {
+          if (player == null) return;
+          Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerStatsPage(player: player)));
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: accent, width: 2), color: accent.withOpacity(.10)),
+                child: Text('$rank', style: TextStyle(color: accent, fontSize: 18, fontWeight: FontWeight.w900)),
+              ),
+              const SizedBox(width: 9),
+              CircleAvatar(
+                radius: 21,
+                backgroundColor: const Color(0xFF12233C),
+                backgroundImage: player != null && player.avatarUrl.isNotEmpty ? NetworkImage(player.avatarUrl) : null,
+                child: player == null || player.avatarUrl.isEmpty ? Icon(Icons.person, color: accent) : null,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFFE7EEF8), fontWeight: FontWeight.w900, fontSize: 14)),
+              ),
+              _metric('P', '${stats['played']}', accent),
+              _metric('W', '${stats['won']}', accent),
+              _metric('D', '${stats['drawn']}', accent),
+              _metric('L', '${stats['lost']}', accent),
+              _metric('GD', '${stats['gd']}', accent),
+              _metric('PTS', '${stats['points']}', accent),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
     final table = store.buildTable();
-    final ordered = table.keys.toList()..sort((a, b) {
-      final x = table[a]!; final y = table[b]!;
-      final p = y['points']!.compareTo(x['points']!); if (p != 0) return p;
-      final gd = y['gd']!.compareTo(x['gd']!); if (gd != 0) return gd;
-      return y['gf']!.compareTo(x['gf']!);
-    });
+    final ordered = table.keys.toList()
+      ..sort((a, b) {
+        final x = table[a]!;
+        final y = table[b]!;
+        final p = y['points']!.compareTo(x['points']!);
+        if (p != 0) return p;
+        final gd = y['gd']!.compareTo(x['gd']!);
+        if (gd != 0) return gd;
+        return y['gf']!.compareTo(x['gf']!);
+      });
+
     final selected = store.activeLeagueId == null ? null : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
 
-    Widget stat(String label, String value, Color color) => SizedBox(width: 34, child: Column(children: [Text(label, style: const TextStyle(color: Color(0xFF71829A), fontSize: 8, fontWeight: FontWeight.w900)), const SizedBox(height: 3), Text(value, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w900))]));
-
-    return ListView(padding: const EdgeInsets.fromLTRB(14, 12, 14, 28), children: [
-      Container(padding: const EdgeInsets.fromLTRB(18, 19, 18, 18), decoration: _neonBox(_blue, radius: 22), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('CHIBBYBALL COMPETITION', style: TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.4)), SizedBox(height: 7), Text('LEAGUE TABLE', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: .8)), SizedBox(height: 5), Text('RANK • COMPETE • WIN', style: TextStyle(color: _cyan, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: .8)), Text('PLAY • COMPETE • WIN', style: TextStyle(color: _yellow, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: .8))])),
-      const SizedBox(height: 12),
-      Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5), decoration: _neonBox(_cyan, radius: 18), child: DropdownButtonFormField<String>(value: selected?.id, decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text('${l.name} • ${l.status.toUpperCase()}'))).toList(), onChanged: loading ? null : _selectLeague)),
-      if (selected != null) Padding(padding: const EdgeInsets.fromLTRB(3, 15, 3, 9), child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 20, fontWeight: FontWeight.w900))),
-      if (ordered.isEmpty)
-        Container(padding: const EdgeInsets.all(20), decoration: _neonBox(_cyan, radius: 18), child: const Text('No players in this league yet.', style: TextStyle(color: _muted)))
-      else ...[
-        Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9), decoration: _neonBox(_blue, radius: 14), child: Row(children: [const SizedBox(width: 39), const Expanded(child: Text('PLAYER', style: TextStyle(color: _muted, fontSize: 9, fontWeight: FontWeight.w900))), stat('P','',_muted), stat('W','',_muted), stat('D','',_muted), stat('L','',_muted), stat('GD','',_muted), stat('PTS','',_yellow)])),
-        const SizedBox(height: 7),
-        for (int i = 0; i < ordered.length; i++) ...[
-          Builder(builder: (_) {
-            final id = ordered[i]; final row = table[id]!; final player = store.findPlayer(id); final rank = i + 1; final accent = _rankColor(rank);
-            return Container(
-              margin: const EdgeInsets.only(bottom: 7),
-              decoration: _neonBox(accent, radius: 16),
-              child: InkWell(borderRadius: BorderRadius.circular(16), onTap: () {
-                if (player != null) Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerStatsPageFor(player: player)));
-              }, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9), child: Row(children: [
-                Container(width: 36, height: 36, decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withOpacity(.12), border: Border.all(color: accent, width: 1.3)), child: Center(child: Text('$rank', style: TextStyle(color: accent, fontWeight: FontWeight.w900)))),
-                const SizedBox(width: 8),
-                _playerAvatar(player, radius: 18, accent: accent),
-                const SizedBox(width: 8),
-                Expanded(child: Text(store.playerName(id), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900))),
-                stat('P','${row['played']}',accent), stat('W','${row['won']}',accent), stat('D','${row['drawn']}',accent), stat('L','${row['lost']}',accent), stat('GD','${row['gd']}',accent), stat('PTS','${row['points']}',accent),
-              ]))),
-            );
-          }),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(14, 16, 14, 30),
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+          decoration: BoxDecoration(
+            color: const Color(0xE9081426),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFF2E86FF), width: 1.5),
+            boxShadow: const [BoxShadow(color: Color(0x2200D9FF), blurRadius: 22)],
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('CHIBBYBALL COMPETITION', style: TextStyle(color: Color(0xFF00D9FF), fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 2)),
+            const SizedBox(height: 5),
+            const Text('LEAGUE TABLE', style: TextStyle(color: Color(0xFFEAF2FF), fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 1)),
+            const SizedBox(height: 4),
+            Text(selected?.name ?? 'SELECT A LEAGUE', style: const TextStyle(color: Color(0xFFFFD21F), fontSize: 14, fontWeight: FontWeight.w800)),
+          ]),
+        ),
+        const SizedBox(height: 12),
+        if (store.leagues.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(color: const Color(0xDD081426), borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFF00D9FF).withOpacity(.7))),
+            child: DropdownButtonFormField<String>(
+              value: selected?.id,
+              decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none),
+              items: store.leagues.map((league) => DropdownMenuItem<String>(value: league.id, child: Text('${league.name} • ${league.status.toUpperCase()}'))).toList(),
+              onChanged: loading ? null : _selectLeague,
+            ),
+          ),
+        const SizedBox(height: 14),
+        if (ordered.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(color: const Color(0xDD081426), borderRadius: BorderRadius.circular(22), border: Border.all(color: const Color(0xFF00D9FF).withOpacity(.65))),
+            child: const Column(children: [Icon(Icons.sports_soccer, color: Color(0xFF00D9FF), size: 46), SizedBox(height: 10), Text('No players in this league yet.', textAlign: TextAlign.center, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800))]),
+          )
+        else ...[
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            decoration: BoxDecoration(color: const Color(0xCC0B1A2F), borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFF1D6FFF).withOpacity(.55))),
+            child: Row(children: [
+              const SizedBox(width: 47),
+              const SizedBox(width: 30),
+              const Expanded(child: Text('PLAYER', style: TextStyle(color: Color(0xFFAAB8CB), fontSize: 10, fontWeight: FontWeight.w900))),
+              for (final label in const ['P', 'W', 'D', 'L', 'GD', 'PTS'])
+                SizedBox(width: 43, child: Text(label, textAlign: TextAlign.center, style: TextStyle(color: Color(0xFFAAB8CB), fontSize: 9, fontWeight: FontWeight.w900))),
+            ]),
+          ),
+          for (int i = 0; i < ordered.length; i++) _playerRow(store, ordered[i], table[ordered[i]]!, i + 1),
         ],
+        const SizedBox(height: 8),
+        const Text('Tap any player to view confirmed match history and statistics.', style: TextStyle(color: Color(0xFFAAB8CB), fontSize: 12)),
+        const SizedBox(height: 4),
+        const Text('Only CONFIRMED matches count toward the selected league table.', style: TextStyle(color: Color(0xFFAAB8CB), fontSize: 12)),
       ],
-      const SizedBox(height: 12),
-      const Text('Only CONFIRMED matches count toward the selected league table.', style: TextStyle(color: _muted, fontSize: 11)),
-    ]);
-  }
-}
-
-class PlayerStatsPageFor extends StatelessWidget {
-  final Player player;
-  const PlayerStatsPageFor({super.key, required this.player});
-  @override
-  Widget build(BuildContext context) {
-    final store = Store.instance;
-    final stats = store.statsForPlayer(player.id);
-    final history = store.confirmedMatchesForPlayer(player.id);
-    return Scaffold(appBar: AppBar(title: Text(player.gamerTag)), body: ListView(padding: const EdgeInsets.all(16), children: [
-      Center(child: _playerAvatar(player, radius: 42, accent: _cyan)), const SizedBox(height: 8), Center(child: Text(player.gamerTag, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900))), const SizedBox(height: 18),
-      Wrap(spacing: 8, runSpacing: 8, children: ['played','won','drawn','lost','gf','ga','gd','points'].map((k) => Container(width: 95, padding: const EdgeInsets.all(12), decoration: _neonBox(k == 'points' ? _yellow : _cyan, radius: 14), child: Column(children: [Text('${stats[k]}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)), const SizedBox(height: 3), Text(k.toUpperCase(), style: const TextStyle(fontSize: 9, color: _muted, fontWeight: FontWeight.w900))]))).toList()),
-      const SizedBox(height: 20),
-      _neonSectionTitle('CONFIRMED MATCH HISTORY', accent: _yellow), const SizedBox(height: 10),
-      if (history.isEmpty) Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_blue, radius: 16), child: const Text('No confirmed matches yet.', style: TextStyle(color: _muted))) else ...history.map((m) => Container(margin: const EdgeInsets.only(bottom: 8), decoration: _neonBox(_blue, radius: 14), child: ListTile(title: Text('${store.playerName(m.homeId)} vs ${store.playerName(m.awayId)}'), subtitle: Text('Matchday ${m.round}'), trailing: Text('${m.homeScore} - ${m.awayScore}', style: const TextStyle(color: _yellow, fontWeight: FontWeight.w900))))),
-    ]));
+    );
   }
 }
 
@@ -3095,7 +3217,8 @@ class PlayerStatsPageFor extends StatelessWidget {
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
-  @override State<ProfilePage> createState() => _ProfilePageState();
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
 }
 
 class _ProfilePageState extends State<ProfilePage> {
@@ -3121,14 +3244,16 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _hasSavedDetails(Player? p) => p != null && (p.phoneNumber.trim().isNotEmpty || p.country.trim().isNotEmpty || p.countryCode.trim().isNotEmpty || p.whatsappNumber.trim().isNotEmpty);
 
   @override
-  void dispose() { phoneController.dispose(); countryController.dispose(); countryCodeController.dispose(); whatsappController.dispose(); super.dispose(); }
+  void dispose() {
+    phoneController.dispose(); countryController.dispose(); countryCodeController.dispose(); whatsappController.dispose(); super.dispose();
+  }
 
   Future<void> changeAvatar() async {
     if (uploadingAvatar) return;
-    final image = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 82);
-    if (image == null || !mounted) return;
+    final file = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 88, maxWidth: 1200, maxHeight: 1200);
+    if (file == null || !mounted) return;
     setState(() => uploadingAvatar = true);
-    final error = await Store.instance.uploadMyAvatar(image);
+    final error = await Store.instance.uploadMyAvatar(file);
     if (!mounted) return;
     setState(() => uploadingAvatar = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Profile photo updated.')));
@@ -3156,84 +3281,113 @@ class _ProfilePageState extends State<ProfilePage> {
     Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
   }
 
-  Widget _info(IconData icon, String title, String value, Color accent) => Container(margin: const EdgeInsets.only(bottom: 10), decoration: _neonBox(accent, radius: 16), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 3), leading: Icon(icon, color: accent, size: 25), title: Text(title, style: const TextStyle(color: _muted, fontSize: 13, fontWeight: FontWeight.w700)), subtitle: Text(value.trim().isEmpty ? 'Not provided' : value.trim(), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))));
+  Widget _tile(IconData icon, String title, String value, {Color accent = const Color(0xFF00D9FF), VoidCallback? onTap}) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(color: const Color(0xDD081426), borderRadius: BorderRadius.circular(18), border: Border.all(color: accent.withOpacity(.65)), boxShadow: [BoxShadow(color: accent.withOpacity(.12), blurRadius: 18)]),
+      child: ListTile(onTap: onTap, contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5), leading: Icon(icon, color: accent, size: 28), title: Text(title, style: const TextStyle(color: Color(0xFFD9E4F2), fontSize: 16, fontWeight: FontWeight.w600)), subtitle: Text(value.trim().isEmpty ? 'Not provided' : value.trim(), style: const TextStyle(color: Color(0xFFAAB8CB), fontSize: 14)), trailing: onTap == null ? null : const Icon(Icons.chevron_right)),
+    );
+  }
+
+  Future<void> openAdminSupport({required bool whatsapp}) async {
+    if (whatsapp) {
+      final uri = Uri.parse('https://wa.me/2348038453858?text=${Uri.encodeComponent('Hello CHIBBYBALL Admin, I need support with my CHIBBYBALL League account.')}');
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open WhatsApp.')));
+      return;
+    }
+
+    final admin = await Store.instance.findAdmin();
+    if (!mounted) return;
+    if (admin == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('CHIBBYBALL Admin account could not be found.')));
+      return;
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: admin)));
+  }
+
+  Widget _sectionTitle(String title, Color color) => Row(children: [Container(width: 5, height: 30, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5), boxShadow: [BoxShadow(color: color.withOpacity(.45), blurRadius: 12)])), const SizedBox(width: 10), Text(title, style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: .8))]);
+
+  Widget _profileCard({required IconData icon, required String title, required String value, required Color accent}) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      decoration: BoxDecoration(color: const Color(0xE9081426), borderRadius: BorderRadius.circular(18), border: Border.all(color: accent.withOpacity(.75), width: 1.2), boxShadow: [BoxShadow(color: accent.withOpacity(.08), blurRadius: 16)]),
+      child: Row(children: [Icon(icon, color: accent, size: 27), const SizedBox(width: 14), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(color: Color(0xFFAAB8CB), fontSize: 12, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis), const SizedBox(height: 3), Text(value.trim().isEmpty ? 'Not provided' : value.trim(), style: const TextStyle(color: Color(0xFFE7EEF8), fontSize: 16, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)]))]),
+    );
+  }
+
+  Widget _supportButton({required IconData icon, required String title, required String subtitle, required Color accent, required VoidCallback onTap}) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(color: const Color(0xE9081426), borderRadius: BorderRadius.circular(18), border: Border.all(color: accent.withOpacity(.8), width: 1.3), boxShadow: [BoxShadow(color: accent.withOpacity(.10), blurRadius: 18)]),
+      child: ListTile(onTap: onTap, contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 6), leading: Container(width: 48, height: 48, decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withOpacity(.12), border: Border.all(color: accent.withOpacity(.6))), child: Icon(icon, color: accent)), title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(subtitle, style: const TextStyle(color: Color(0xFFAAB8CB))), trailing: Icon(Icons.arrow_forward_ios, size: 17, color: accent)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final p = Store.instance.current;
+    final hasDetails = _hasSavedDetails(p);
     final online = p?.isOnline == true && (p?.lastSeen == null || DateTime.now().toUtc().difference(p!.lastSeen!.toUtc()).inMinutes < 3);
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 14, 16, 30), children: [
-      Container(padding: const EdgeInsets.fromLTRB(18, 20, 18, 18), decoration: _neonBox(_blue, radius: 24), child: Column(children: [
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              width: 122,
-              height: 122,
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(colors: [_cyan, _purple, _yellow]),
-                boxShadow: const [BoxShadow(color: Color(0x4400D9FF), blurRadius: 25)],
-              ),
-              child: CircleAvatar(
-                backgroundColor: const Color(0xFF071225),
-                backgroundImage: (p?.avatarUrl.isNotEmpty ?? false)
-                    ? NetworkImage(p!.avatarUrl)
-                    : null,
-                child: (p?.avatarUrl.isNotEmpty ?? false)
-                    ? null
-                    : const Icon(Icons.person, size: 60, color: _muted),
-              ),
-            ),
-            Positioned(
-              right: -4,
-              bottom: 0,
-              child: IconButton.filled(
-                onPressed: uploadingAvatar ? null : changeAvatar,
-                icon: uploadingAvatar
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.edit),
-              ),
-            ),
-          ],
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 20, 18, 30),
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
+          decoration: BoxDecoration(color: const Color(0xE9081426), borderRadius: BorderRadius.circular(26), border: Border.all(color: const Color(0xFF2E86FF), width: 1.5), boxShadow: const [BoxShadow(color: Color(0x2200D9FF), blurRadius: 24)]),
+          child: Column(children: [
+            Stack(clipBehavior: Clip.none, children: [
+              Container(width: 126, height: 126, padding: const EdgeInsets.all(4), decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF00D9FF), Color(0xFF8B3DFF), Color(0xFFFFD21F)]), boxShadow: const [BoxShadow(color: Color(0x4400D9FF), blurRadius: 26)]), child: CircleAvatar(backgroundColor: const Color(0xFF071225), backgroundImage: (p?.avatarUrl.isNotEmpty ?? false) ? NetworkImage(p!.avatarUrl) : null, child: (p?.avatarUrl.isNotEmpty ?? false) ? null : const Icon(Icons.person, size: 64, color: Color(0xFFB9C7DA)))),
+              Positioned(right: -3, bottom: 3, child: IconButton.filled(onPressed: uploadingAvatar ? null : changeAvatar, icon: uploadingAvatar ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.edit))),
+            ]),
+            const SizedBox(height: 14),
+            Text(p?.gamerTag ?? 'PLAYER', textAlign: TextAlign.center, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 3),
+            Text(p?.name ?? '', textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFAAB8CB), fontSize: 14)),
+            const SizedBox(height: 9),
+            Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6), decoration: BoxDecoration(color: (online ? const Color(0xFF20E070) : const Color(0xFF667085)).withOpacity(.10), borderRadius: BorderRadius.circular(30), border: Border.all(color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 9, height: 9, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), const SizedBox(width: 7), Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : const Color(0xFFAAB8CB), fontWeight: FontWeight.w900, fontSize: 12))])),
+          ]),
         ),
-        const SizedBox(height: 12), Text(p?.gamerTag ?? 'PLAYER', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900)), Text(p?.name ?? '', style: const TextStyle(color: _muted)), const SizedBox(height: 8),
-        Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: (online ? const Color(0xFF20E070) : const Color(0xFF667085)).withOpacity(.12), borderRadius: BorderRadius.circular(30), border: Border.all(color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), const SizedBox(width: 7), Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11, fontWeight: FontWeight.w900))])),
-      ])),
-      const SizedBox(height: 16),
-      _neonSectionTitle('ACCOUNT', accent: _yellow), const SizedBox(height: 10),
-      _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
-      _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
-      _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
-      const SizedBox(height: 6),
-      Row(children: [Expanded(child: _neonSectionTitle('PLAYER DETAILS', accent: _cyan)), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: _cyan))]),
-      const SizedBox(height: 8),
-      if (!editing) ...[
-        _info(Icons.phone, 'Phone Number', p?.phoneNumber ?? '', _cyan),
-        _info(Icons.public, 'Country', p?.country ?? '', _cyan),
-        _info(Icons.language, 'Country Code', p?.countryCode ?? '', _cyan),
-        _info(Icons.chat, 'WhatsApp Number', p?.whatsappNumber ?? '', const Color(0xFF20E070)),
+        const SizedBox(height: 22),
+        _sectionTitle('ACCOUNT', const Color(0xFFFFD21F)),
+        const SizedBox(height: 10),
+        _profileCard(icon: Icons.badge_outlined, title: 'Gamer Tag', value: p?.gamerTag ?? '', accent: const Color(0xFF00D9FF)),
+        _profileCard(icon: Icons.person_outline, title: 'Full Name', value: p?.name ?? '', accent: const Color(0xFF00D9FF)),
+        _profileCard(icon: Icons.shield_outlined, title: 'Account Role', value: p?.admin == true ? 'Administrator' : 'Player', accent: const Color(0xFF9B4DFF)),
+        const SizedBox(height: 12),
+        Row(children: [Expanded(child: _sectionTitle('PLAYER DETAILS', const Color(0xFF00D9FF))), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: Color(0xFF00D9FF)))]),
+        const SizedBox(height: 8),
+        if (!editing && hasDetails) ...[
+          _profileCard(icon: Icons.phone, title: 'Phone Number', value: p?.phoneNumber ?? '', accent: const Color(0xFF00D9FF)),
+          _profileCard(icon: Icons.public, title: 'Country', value: p?.country ?? '', accent: const Color(0xFF00D9FF)),
+          _profileCard(icon: Icons.language, title: 'Country Code', value: p?.countryCode ?? '', accent: const Color(0xFF00D9FF)),
+          _profileCard(icon: Icons.chat, title: 'WhatsApp Number', value: p?.whatsappNumber ?? '', accent: const Color(0xFF20E070)),
+        ],
+        if (!editing && !hasDetails) const Padding(padding: EdgeInsets.only(bottom: 8), child: Text('Add your contact details so other players can reach you.', style: TextStyle(color: Color(0xFFAAB8CB)))),
+        if (editing) ...[
+          TextField(controller: phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone Number', prefixIcon: Icon(Icons.phone))),
+          const SizedBox(height: 10),
+          TextField(controller: countryController, decoration: const InputDecoration(labelText: 'Country', prefixIcon: Icon(Icons.public))),
+          const SizedBox(height: 10),
+          TextField(controller: countryCodeController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Country Code (e.g. +234)', prefixIcon: Icon(Icons.language))),
+          const SizedBox(height: 10),
+          TextField(controller: whatsappController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'WhatsApp Number', prefixIcon: Icon(Icons.chat))),
+          const SizedBox(height: 12),
+          FilledButton.icon(onPressed: saving ? null : saveProfile, icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save), label: Text(saving ? 'SAVING...' : 'SAVE PROFILE')),
+        ],
+        const SizedBox(height: 16),
+        _supportButton(icon: Icons.chat_bubble_outline, title: 'CONTACT ADMIN IN APP', subtitle: 'Message CHIBBYBALL Admin privately.', accent: const Color(0xFF8B3DFF), onTap: () => openAdminSupport(whatsapp: false)),
+        _supportButton(icon: Icons.chat, title: 'WHATSAPP SUPPORT', subtitle: '+234 803 845 3858', accent: const Color(0xFF20E070), onTap: () => openAdminSupport(whatsapp: true)),
+        const SizedBox(height: 6),
+        InkWell(onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerStatsPage())), child: _profileCard(icon: Icons.bar_chart, title: 'My Stats & Match History', value: 'View confirmed results and league statistics.', accent: const Color(0xFFFFD21F))),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(onPressed: logout, icon: const Icon(Icons.logout), label: const Text('LOG OUT')),
       ],
-      if (editing) ...[
-        TextField(controller: phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone Number', prefixIcon: Icon(Icons.phone))), const SizedBox(height: 10),
-        TextField(controller: countryController, decoration: const InputDecoration(labelText: 'Country', prefixIcon: Icon(Icons.public))), const SizedBox(height: 10),
-        TextField(controller: countryCodeController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Country Code (e.g. +234)', prefixIcon: Icon(Icons.language))), const SizedBox(height: 10),
-        TextField(controller: whatsappController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'WhatsApp Number', prefixIcon: Icon(Icons.chat))), const SizedBox(height: 12),
-        Row(children: [Expanded(child: FilledButton.icon(onPressed: saving ? null : saveProfile, icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save), label: Text(saving ? 'SAVING...' : 'SAVE PROFILE'))), const SizedBox(width: 8), if (_hasSavedDetails(p)) IconButton(onPressed: saving ? null : () => setState(() => editing = false), icon: const Icon(Icons.close, color: _muted))]),
-      ],
-      const SizedBox(height: 8),
-      Container(decoration: _neonBox(_purple, radius: 18), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 4), leading: Stack(children: [const Icon(Icons.chat_bubble_outline, color: _purple, size: 29), Positioned(right: -2, bottom: -2, child: Container(width: 9, height: 9, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]), title: const Text('PLAYERS & MESSAGES', style: TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'You are online • chat with other players' : 'Chat with other players and see their status'), trailing: const Icon(Icons.chevron_right, color: _purple), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())))),
-      const SizedBox(height: 10),
-      _neonAction(context, Icons.bar_chart, 'MY STATS & HISTORY', 'Confirmed results and league statistics', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerStatsPage()))),
-      const SizedBox(height: 10),
-      OutlinedButton.icon(onPressed: logout, icon: const Icon(Icons.logout), label: const Text('LOG OUT')),
-    ]);
+    );
   }
+
 }
 
 // ============================================================
@@ -3241,12 +3395,13 @@ class _ProfilePageState extends State<ProfilePage> {
 // ============================================================
 
 class PlayerStatsPage extends StatelessWidget {
-  const PlayerStatsPage({super.key});
+  final Player? player;
+  const PlayerStatsPage({super.key, this.player});
 
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
-    final player = store.current;
+    final player = this.player ?? store.current;
 
     if (player == null) {
       return Scaffold(
@@ -4113,7 +4268,9 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
 
 class PlayerManagementPage extends StatefulWidget {
   const PlayerManagementPage({super.key});
-  @override State<PlayerManagementPage> createState() => _PlayerManagementPageState();
+
+  @override
+  State<PlayerManagementPage> createState() => _PlayerManagementPageState();
 }
 
 class _PlayerManagementPageState extends State<PlayerManagementPage> {
@@ -4121,69 +4278,196 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
   String? selectedLeagueId;
   Set<String> memberIds = {};
   bool loading = false;
+
   Store get store => Store.instance;
 
-  @override void initState() { super.initState(); _load(); }
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
   Future<void> _load() async {
     setState(() => loading = true);
-    try { await store.refreshPlayers(); await store.refreshLeagues(); if (store.leagues.isNotEmpty) { selectedLeagueId ??= store.leagues.first.id; memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet(); } }
-    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load player management: $e'))); }
+    try {
+      await store.refreshPlayers();
+      await store.refreshLeagues();
+      if (store.leagues.isNotEmpty) {
+        selectedLeagueId ??= store.leagues.first.id;
+        memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load player management: $e')),
+        );
+      }
+    }
     if (mounted) setState(() => loading = false);
   }
 
   Future<void> _selectLeague(String? id) async {
-    if (id == null) return; setState(() { selectedLeagueId = id; loading = true; });
-    try { memberIds = (await store.leagueMemberIds(id)).toSet(); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load league members: $e'))); }
+    if (id == null) return;
+    setState(() {
+      selectedLeagueId = id;
+      loading = true;
+    });
+    try {
+      memberIds = (await store.leagueMemberIds(id)).toSet();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load league members: $e')),
+        );
+      }
+    }
     if (mounted) setState(() => loading = false);
   }
 
   Future<void> _toggleMember(Player player, bool shouldAdd) async {
-    final leagueId = selectedLeagueId; if (leagueId == null) return;
+    final leagueId = selectedLeagueId;
+    if (leagueId == null) return;
+
     setState(() => loading = true);
-    final error = shouldAdd ? await store.addLeagueMember(leagueId, player.id) : await store.removeLeagueMember(leagueId, player.id);
-    if (error == null) shouldAdd ? memberIds.add(player.id) : memberIds.remove(player.id);
-    if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? (shouldAdd ? '${player.gamerTag} added to league.' : '${player.gamerTag} removed from league.')))); }
+    final error = shouldAdd
+        ? await store.addLeagueMember(leagueId, player.id)
+        : await store.removeLeagueMember(leagueId, player.id);
+
+    if (error == null) {
+      if (shouldAdd) {
+        memberIds.add(player.id);
+      } else {
+        memberIds.remove(player.id);
+      }
+    }
+
+    if (mounted) {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error ?? (shouldAdd
+                ? '${player.gamerTag} added to league.'
+                : '${player.gamerTag} removed from league.'),
+          ),
+        ),
+      );
+    }
   }
 
-  Future<void> _disregister(Player player) async {
-    final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(title: const Text('Disregister player?'), content: Text('${player.gamerTag} will be removed from every league. The account itself will not be deleted.'), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('DISREGISTER'))]));
-    if (ok != true) return;
-    setState(() => loading = true);
-    final error = await store.disregisterPlayerFromAllLeagues(player.id);
-    if (error == null) { memberIds.remove(player.id); await store.refreshLeagues(); await store.loadMatchesFromSupabase(); }
-    if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? '${player.gamerTag} disregistered from all leagues.'))); }
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
   }
-
-  @override void dispose() { searchController.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
     final query = searchController.text.trim().toLowerCase();
-    final players = store.players.where((p) => !p.admin && (query.isEmpty || p.gamerTag.toLowerCase().contains(query) || p.name.toLowerCase().contains(query))).toList();
-    final league = store.leagues.where((l) => l.id == selectedLeagueId).firstOrNull;
+    final players = store.players.where((p) {
+      if (p.admin) return false;
+      if (query.isEmpty) return true;
+      return p.gamerTag.toLowerCase().contains(query) ||
+          p.name.toLowerCase().contains(query);
+    }).toList();
+
+    final selectedLeague = store.leagues.where((l) => l.id == selectedLeagueId).toList();
+    final league = selectedLeague.isEmpty ? null : selectedLeague.first;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Manage Players')),
-      body: RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.fromLTRB(14, 14, 14, 28), children: [
-        Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_blue, radius: 20), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('REGISTERED PLAYERS', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)), SizedBox(height: 4), Text('Assign, remove or disregister players while keeping their account safe.', style: TextStyle(color: _muted, fontSize: 12))])),
-        const SizedBox(height: 12),
-        TextField(controller: searchController, onChanged: (_) => setState(() {}), decoration: const InputDecoration(labelText: 'Search player or gamer tag', prefixIcon: Icon(Icons.search))),
-        const SizedBox(height: 10),
-        if (store.leagues.isNotEmpty) Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), decoration: _neonBox(_cyan, radius: 16), child: DropdownButtonFormField<String>(value: selectedLeagueId, decoration: const InputDecoration(labelText: 'LEAGUE', border: InputBorder.none), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text(l.name))).toList(), onChanged: loading ? null : _selectLeague)),
-        if (league != null) Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text('${memberIds.length} players in ${league.name}', style: const TextStyle(color: _muted, fontWeight: FontWeight.w700))),
-        if (players.isEmpty) Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_cyan, radius: 16), child: const Text('No matching players found.')),
-        ...players.map((player) {
-          final isMember = memberIds.contains(player.id);
-          final online = player.isOnline && (player.lastSeen == null || DateTime.now().toUtc().difference(player.lastSeen!.toUtc()).inMinutes < 3);
-          return Container(margin: const EdgeInsets.only(bottom: 9), decoration: _neonBox(isMember ? _cyan : _blue, radius: 17), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8), child: Row(children: [
-            Stack(children: [_playerAvatar(player, radius: 23, accent: isMember ? _cyan : _blue), Positioned(right: 0, bottom: 0, child: Container(width: 11, height: 11, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]),
-            const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)), Text(online ? 'Online' : 'Offline', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11)), const SizedBox(height: 2), Text(isMember ? 'Registered in selected league' : 'Not in selected league', style: const TextStyle(color: _muted, fontSize: 10))])),
-            IconButton(tooltip: 'Message', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: player))), icon: const Icon(Icons.chat_bubble_outline, color: _purple)),
-            if (selectedLeagueId != null) IconButton(tooltip: isMember ? 'Remove from league' : 'Add to league', onPressed: loading ? null : () => _toggleMember(player, !isMember), icon: Icon(isMember ? Icons.remove_circle_outline : Icons.add_circle_outline, color: isMember ? const Color(0xFFFF4D7D) : _cyan)),
-            PopupMenuButton<String>(onSelected: (value) { if (value == 'disregister') _disregister(player); }, itemBuilder: (_) => const [PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues'))]),
-          ])));
-        }),
-      ])),
+      appBar: AppBar(title: const Text('Player Management')),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text(
+              'PLAYERS',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Manage registered players and their league membership.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 18),
+            TextField(
+              controller: searchController,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Search player or gamer tag',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (store.leagues.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('Create a league first before assigning players.'),
+                ),
+              )
+            else ...[
+              DropdownButtonFormField<String>(
+                value: selectedLeagueId,
+                decoration: const InputDecoration(
+                  labelText: 'League',
+                  border: OutlineInputBorder(),
+                ),
+                items: store.leagues
+                    .map(
+                      (league) => DropdownMenuItem<String>(
+                        value: league.id,
+                        child: Text(league.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: loading ? null : _selectLeague,
+              ),
+              const SizedBox(height: 10),
+              if (league != null)
+                Text(
+                  '${memberIds.length} player${memberIds.length == 1 ? '' : 's'} in ${league.name} • ${league.status.toUpperCase()}',
+                  style: const TextStyle(color: Colors.grey),
+                ),
+            ],
+            const SizedBox(height: 16),
+            if (players.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(18),
+                  child: Text('No matching players found.'),
+                ),
+              )
+            else
+              ...players.map(
+                (player) {
+                  final isMember = memberIds.contains(player.id);
+                  return Card(
+                    child: CheckboxListTile(
+                      value: isMember,
+                      onChanged: loading || selectedLeagueId == null
+                          ? null
+                          : (value) => _toggleMember(player, value == true),
+                      secondary: CircleAvatar(
+                        child: Text(
+                          player.gamerTag.isEmpty
+                              ? '?'
+                              : player.gamerTag[0].toUpperCase(),
+                        ),
+                      ),
+                      title: Text(player.gamerTag),
+                      subtitle: Text(
+                        '${player.name} • ${player.admin ? 'Admin' : 'Player'}',
+                      ),
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -4194,52 +4478,203 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
 
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
-  @override State<AdminPage> createState() => _AdminPageState();
+
+  @override
+  State<AdminPage> createState() => _AdminPageState();
 }
 
 class _AdminPageState extends State<AdminPage> {
   bool loading = false;
-  Future<void> refresh() async { setState(() => loading = true); try { await Store.instance.refreshPlayers(); await Store.instance.refreshLeagues(); await Store.instance.loadMatchesFromSupabase(); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh error: $e'))); } if (mounted) setState(() => loading = false); }
-  Future<void> generateFixtures() async { setState(() => loading = true); final error = await Store.instance.generateFixtures(); if (!mounted) return; setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Fixtures saved to Supabase successfully.'))); }
 
-  void open(Widget page) => Navigator.push(context, MaterialPageRoute(builder: (_) => page)).then((_) { if (mounted) setState(() {}); });
+  Future<void> refresh() async {
+    setState(() => loading = true);
+
+    try {
+      await Store.instance.refreshPlayers();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Refresh error: $e')),
+        );
+      }
+    }
+
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> generateFixtures() async {
+    setState(() => loading = true);
+
+    final error = await Store.instance.generateFixtures();
+
+    if (!mounted) return;
+
+    setState(() => loading = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error ?? 'Fixtures saved to Supabase successfully.',
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
-    final players = store.players.where((p) => !p.admin).toList();
-    final confirmed = store.confirmedMatches().length;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Admin Dashboard'), actions: [IconButton(onPressed: refresh, icon: const Icon(Icons.refresh))]),
-      body: RefreshIndicator(onRefresh: refresh, child: ListView(padding: const EdgeInsets.fromLTRB(14, 14, 14, 30), children: [
-        Container(padding: const EdgeInsets.fromLTRB(18, 20, 18, 18), decoration: _neonBox(_blue, radius: 24), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('THIS IS MORE THAN A GAME', style: TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2)), SizedBox(height: 7), Text('CHIBBYBALL', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900)), SizedBox(height: 4), Text('ADMIN CONTROL CENTER', style: TextStyle(color: _cyan, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: .8)), SizedBox(height: 14), Text('PLAY • COMPETE • WIN', style: TextStyle(color: _yellow, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1))])),
-        const SizedBox(height: 13),
-        Row(children: [
-          _neonStat(context, Icons.people, '${players.length}', 'PLAYERS', _cyan, () => open(const PlayerManagementPage())),
-          _neonStat(context, Icons.sports_soccer, '${store.matches.length}', 'FIXTURES', _purple, () => open(const AdminMatchSchedulePage())),
-          _neonStat(context, Icons.check_circle, '$confirmed', 'CONFIRMED', _yellow, () => open(const ResultReviewPage())),
-        ]),
-        const SizedBox(height: 16),
-        _neonAction(context, Icons.emoji_events, 'MANAGE LEAGUES', 'Create and activate multiple leagues', _yellow, () => open(const LeagueManagementPage())),
-        const SizedBox(height: 9),
-        _neonAction(context, Icons.calendar_month, 'MATCH SCHEDULE', 'Set date and time windows', _cyan, () => open(const AdminMatchSchedulePage())),
-        const SizedBox(height: 9),
-        _neonAction(context, Icons.fact_check, 'RESULT REVIEW', 'Confirm or dispute submitted results', _purple, () => open(const ResultReviewPage())),
-        const SizedBox(height: 9),
-        _neonAction(context, Icons.manage_accounts, 'MANAGE PLAYERS', 'Assign, remove or disregister players', _cyan, () => open(const PlayerManagementPage())),
-        const SizedBox(height: 9),
-        _neonAction(context, Icons.refresh, 'REFRESH PLAYERS', 'Reload players and league data', _blue, refresh),
-        const SizedBox(height: 9),
-        _neonAction(context, Icons.auto_awesome, 'GENERATE FIXTURES', 'Create round-robin fixtures', _yellow, loading ? () {} : generateFixtures),
-        const SizedBox(height: 18),
-        Row(children: [Expanded(child: _neonSectionTitle('REGISTERED PLAYERS', accent: _cyan)), Text('${players.length}', style: const TextStyle(color: _yellow, fontSize: 18, fontWeight: FontWeight.w900))]),
-        const SizedBox(height: 10),
-        ...players.take(20).map((player) {
-          final online = player.isOnline && (player.lastSeen == null || DateTime.now().toUtc().difference(player.lastSeen!.toUtc()).inMinutes < 3);
-          return Container(margin: const EdgeInsets.only(bottom: 8), decoration: _neonBox(online ? _cyan : _blue, radius: 16), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2), leading: Stack(children: [_playerAvatar(player, radius: 22, accent: online ? _cyan : _blue), Positioned(right: 0, bottom: 0, child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]), title: Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'Online' : 'Offline', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11)), trailing: IconButton(tooltip: 'Message', onPressed: () => open(ChatPage(player: player)), icon: const Icon(Icons.chat_bubble_outline, color: _purple))));
-        }),
-      ])),
+      appBar: AppBar(title: const Text('Admin Dashboard')),
+      body: RefreshIndicator(
+        onRefresh: refresh,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text(
+              'CHIBBYBALL ADMIN',
+              style: TextStyle(
+                fontSize: 25,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 18),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.people),
+                title: const Text('Players'),
+                trailing: Text(
+                  '${store.players.where((p) => !p.admin).length}',
+                ),
+              ),
+            ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.sports_soccer),
+                title: const Text('Fixtures'),
+                trailing: Text('${store.matches.length}'),
+              ),
+            ),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.check_circle),
+                title: const Text('Confirmed Results'),
+                trailing: Text(
+                  '${store.confirmedMatches().length}',
+                ),
+              ),
+            ),
+            const SizedBox(height: 15),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const LeagueManagementPage(),
+                          ),
+                        ).then((_) async {
+                          await store.refreshLeagues();
+                          await store.loadMatchesFromSupabase();
+                          if (mounted) setState(() {});
+                        }),
+                icon: const Icon(Icons.emoji_events),
+                label: const Text('MANAGE LEAGUES'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const AdminMatchSchedulePage()),
+                        ),
+                icon: const Icon(Icons.schedule),
+                label: const Text('MATCH SCHEDULE'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ResultReviewPage()),
+                        ),
+                icon: const Icon(Icons.fact_check),
+                label: const Text('RESULT REVIEW'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const PlayerManagementPage(),
+                          ),
+                        ).then((_) async {
+                          await store.refreshPlayers();
+                          await store.refreshLeagues();
+                          if (mounted) setState(() {});
+                        }),
+                icon: const Icon(Icons.manage_accounts),
+                label: const Text('MANAGE PLAYERS'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading ? null : refresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('REFRESH PLAYERS'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 50,
+              child: FilledButton.icon(
+                onPressed: loading ? null : generateFixtures,
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text('GENERATE FIXTURES'),
+              ),
+            ),
+            const SizedBox(height: 25),
+            const Text(
+              'REGISTERED PLAYERS',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...store.players
+                .where((p) => !p.admin)
+                .map(
+                  (player) => Card(
+                    child: ListTile(
+                      leading: const CircleAvatar(
+                        child: Icon(Icons.person),
+                      ),
+                      title: Text(player.gamerTag),
+                      subtitle: Text(player.name),
+                    ),
+                  ),
+                ),
+          ],
+        ),
+      ),
     );
   }
 }
-
