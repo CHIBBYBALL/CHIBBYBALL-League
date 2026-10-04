@@ -168,36 +168,53 @@ class _ChibbyballBackgroundPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
-    final bg = Paint()..shader = const LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [Color(0xFF02050B), Color(0xFF071225), Color(0xFF02040A)],
-    ).createShader(rect);
+    final bg = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color(0xFF07111F),
+          Color(0xFF0A1626),
+          Color(0xFF050B14),
+        ],
+      ).createShader(rect);
     canvas.drawRect(rect, bg);
 
-    void stroke(List<Offset> points, Color color, double width) {
-      final paint = Paint()
-        ..color = color
-        ..strokeWidth = width
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7);
-      final path = Path()..moveTo(points.first.dx, points.first.dy);
-      for (var i = 1; i < points.length; i++) {
-        path.lineTo(points[i].dx, points[i].dy);
-      }
-      canvas.drawPath(path, paint);
-    }
+    // Clean football-pitch inspired background. No large neon streaks.
+    final line = Paint()
+      ..color = const Color(0x1426D9FF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
 
-    stroke([Offset(-80, size.height * .18), Offset(size.width * .42, -20)], const Color(0x55008CFF), 26);
-    stroke([Offset(size.width * .58, -30), Offset(size.width + 80, size.height * .18)], const Color(0x443B5CFF), 22);
-    stroke([Offset(-70, size.height * .86), Offset(size.width * .42, size.height * .55)], const Color(0x3322C8FF), 18);
-    stroke([Offset(size.width * .55, size.height * .96), Offset(size.width + 70, size.height * .72)], const Color(0x44FFC400), 15);
+    final center = Offset(size.width / 2, size.height * .52);
+    final radius = size.width * .23;
+    canvas.drawCircle(center, radius, line);
+    canvas.drawLine(
+      Offset(0, center.dy),
+      Offset(size.width, center.dy),
+      line,
+    );
 
-    final blueGlow = Paint()..color = const Color(0x2200C8FF)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 45);
-    canvas.drawCircle(Offset(size.width * .12, size.height * .28), 75, blueGlow);
-    final yellowGlow = Paint()..color = const Color(0x18FFD000)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50);
-    canvas.drawCircle(Offset(size.width * .9, size.height * .72), 90, yellowGlow);
+    final boxW = size.width * .32;
+    final boxH = size.height * .11;
+    canvas.drawRect(
+      Rect.fromCenter(center: Offset(0, center.dy), width: boxW, height: boxH),
+      line,
+    );
+    canvas.drawRect(
+      Rect.fromCenter(
+        center: Offset(size.width, center.dy),
+        width: boxW,
+        height: boxH,
+      ),
+      line,
+    );
+
+    final glow = Paint()
+      ..color = const Color(0x0B00D9FF)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 55);
+    canvas.drawCircle(Offset(size.width * .12, size.height * .18), 90, glow);
+    canvas.drawCircle(Offset(size.width * .86, size.height * .82), 100, glow);
   }
 
   @override
@@ -414,8 +431,30 @@ class LeagueInfo {
   final double entryFee;
   final String currency;
   final DateTime? createdAt;
-  const LeagueInfo({required this.id, required this.name, required this.status, this.isPaid = false, this.entryFee = 0, this.currency = 'NGN', this.createdAt});
-  String get feeLabel => isPaid ? '$currency ${entryFee.toStringAsFixed(0)} entry fee' : 'FREE ENTRY';
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final String fixtureMode;
+
+  const LeagueInfo({
+    required this.id,
+    required this.name,
+    required this.status,
+    this.isPaid = false,
+    this.entryFee = 0,
+    this.currency = 'NGN',
+    this.createdAt,
+    this.startDate,
+    this.endDate,
+    this.fixtureMode = 'single_round',
+  });
+
+  String get feeLabel =>
+      isPaid ? '$currency ${entryFee.toStringAsFixed(0)} entry fee' : 'FREE ENTRY';
+
+  bool get isHomeAway => fixtureMode == 'home_away';
+
+  String get fixtureModeLabel =>
+      isHomeAway ? 'HOME & AWAY' : 'SINGLE ROUND';
 }
 
 class MatchItem {
@@ -541,6 +580,9 @@ class Store {
   String? activeLeagueName;
   String? activeLeagueStatus;
   Set<String> activeLeagueMemberIds = {};
+  final Map<String, int> pointAdjustments = {};
+  final Map<String, double> fineTotals = {};
+  final Map<String, bool> suspendedPlayers = {};
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -578,13 +620,14 @@ class Store {
       await refreshPlayers();
       await refreshLeagues();
       await loadMatchesFromSupabase();
+      if (activeLeagueId != null) await loadDisciplineForLeague(activeLeagueId!);
     } catch (_) {}
   }
 
   Future<void> refreshLeagues() async {
     final data = await supabase
         .from('leagues')
-        .select('id, name, status, is_paid, entry_fee, currency, created_at')
+        .select('id, name, status, is_paid, entry_fee, currency, created_at, start_date, end_date, fixture_mode')
         .order('created_at', ascending: false);
 
     leagues
@@ -601,6 +644,13 @@ class Store {
           createdAt: row['created_at'] == null
               ? null
               : DateTime.tryParse(row['created_at'].toString()),
+          startDate: row['start_date'] == null
+              ? null
+              : DateTime.tryParse(row['start_date'].toString()),
+          endDate: row['end_date'] == null
+              ? null
+              : DateTime.tryParse(row['end_date'].toString()),
+          fixtureMode: row['fixture_mode']?.toString() ?? 'single_round',
         );
       }));
 
@@ -649,20 +699,21 @@ class Store {
     try {
       activeLeagueMemberIds = (await leagueMemberIds(league.id)).toSet();
       await loadMatchesFromSupabase();
+      await loadDisciplineForLeague(league.id);
       return null;
     } catch (e) {
       return 'Could not load league: $e';
     }
   }
 
-  Future<String?> createLeague(String name, {required bool isPaid, required double entryFee, String currency = 'NGN'}) async {
+  Future<String?> createLeague(String name, {required bool isPaid, required double entryFee, String currency = 'NGN', String fixtureMode = 'single_round'}) async {
     final clean = name.trim();
     if (clean.isEmpty) return 'League name is required.';
     if (Store.instance.current?.admin != true) return 'Admin access required.';
     if (isPaid && entryFee <= 0) return 'Enter a valid entry fee for a paid league.';
     if (!isPaid) entryFee = 0;
     try {
-      await supabase.from('leagues').insert({'name': clean, 'status': 'open', 'is_paid': isPaid, 'entry_fee': entryFee, 'currency': currency});
+      await supabase.from('leagues').insert({'name': clean, 'status': 'open', 'is_paid': isPaid, 'entry_fee': entryFee, 'currency': currency, 'fixture_mode': fixtureMode});
       await refreshLeagues();
       return null;
     } on PostgrestException catch (e) { return 'Could not create league: ${e.message}'; }
@@ -812,6 +863,7 @@ class Store {
     matches
       ..clear()
       ..addAll(loaded);
+    await loadDisciplineForLeague(leagueId);
 
     await save();
   }
@@ -1332,9 +1384,7 @@ class Store {
 
   Future<String?> generateFixtures() async {
     final leagueId = await _activeLeagueId();
-    if (leagueId == null) {
-      return 'No league selected.';
-    }
+    if (leagueId == null) return 'No league selected.';
 
     final league = leagues.where((l) => l.id == leagueId).firstOrNull;
     if (league == null || league.status != 'active') {
@@ -1342,7 +1392,8 @@ class Store {
     }
 
     final memberIds = await leagueMemberIds(leagueId);
-    final activePlayers = players.where((p) => !p.admin && memberIds.contains(p.id)).toList();
+    final activePlayers =
+        players.where((p) => !p.admin && memberIds.contains(p.id)).toList();
 
     if (activePlayers.length < 2) {
       return 'Add at least 2 players to the active league first.';
@@ -1357,22 +1408,22 @@ class Store {
     if (ids.length.isOdd) ids.add('BYE');
 
     final total = ids.length;
-    final rounds = total - 1;
+    final firstLegRounds = total - 1;
     final rotation = List<String>.from(ids);
     final rows = <Map<String, dynamic>>[];
 
-    for (int round = 0; round < rounds; round++) {
+    for (int roundIndex = 0; roundIndex < firstLegRounds; roundIndex++) {
       for (int i = 0; i < total ~/ 2; i++) {
         final first = rotation[i];
         final second = rotation[total - 1 - i];
         if (first == 'BYE' || second == 'BYE') continue;
 
-        final homeId = round.isEven ? first : second;
-        final awayId = round.isEven ? second : first;
+        final homeId = roundIndex.isEven ? first : second;
+        final awayId = roundIndex.isEven ? second : first;
 
         rows.add({
           'league_id': leagueId,
-          'round': round + 1,
+          'round': roundIndex + 1,
           'home_player_id': homeId,
           'away_player_id': awayId,
           'status': 'scheduled',
@@ -1380,8 +1431,22 @@ class Store {
           'match_end_time': '23:59:00',
         });
       }
-
       rotation.insert(1, rotation.removeLast());
+    }
+
+    if (league.isHomeAway) {
+      final firstLegRows = List<Map<String, dynamic>>.from(rows);
+      for (final row in firstLegRows) {
+        rows.add({
+          'league_id': leagueId,
+          'round': firstLegRounds + (row['round'] as int),
+          'home_player_id': row['away_player_id'],
+          'away_player_id': row['home_player_id'],
+          'status': 'scheduled',
+          'match_start_time': '17:00:00',
+          'match_end_time': '23:59:00',
+        });
+      }
     }
 
     try {
@@ -1425,6 +1490,210 @@ class Store {
     }
   }
 
+
+
+  Future<void> loadDisciplineForLeague(String leagueId) async {
+    pointAdjustments.clear();
+    fineTotals.clear();
+    suspendedPlayers.clear();
+    try {
+      final data = await supabase
+          .from('league_player_status')
+          .select('player_id, points_adjustment, fine_total, is_suspended')
+          .eq('league_id', leagueId);
+      for (final item in (data as List)) {
+        final row = Map<String, dynamic>.from(item);
+        final id = row['player_id']?.toString();
+        if (id == null) continue;
+        pointAdjustments[id] = (row['points_adjustment'] as num?)?.toInt() ?? 0;
+        fineTotals[id] = (row['fine_total'] as num?)?.toDouble() ?? 0;
+        suspendedPlayers[id] = row['is_suspended'] == true;
+      }
+    } catch (e) {
+      debugPrint('Discipline load failed: $e');
+    }
+  }
+
+  bool isSuspended(String playerId) => suspendedPlayers[playerId] == true;
+
+  Future<String?> _writeDisciplinaryAction({
+    required String leagueId,
+    required String playerId,
+    required String actionType,
+    String reason = '',
+    int pointsDelta = 0,
+    double fineAmount = 0,
+    bool? suspended,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      final existing = await supabase
+          .from('league_player_status')
+          .select('points_adjustment, fine_total, is_suspended')
+          .eq('league_id', leagueId)
+          .eq('player_id', playerId)
+          .maybeSingle();
+
+      final oldPoints = (existing?['points_adjustment'] as num?)?.toInt() ?? 0;
+      final oldFine = (existing?['fine_total'] as num?)?.toDouble() ?? 0;
+      final oldSuspended = existing?['is_suspended'] == true;
+
+      final newSuspended = suspended ?? oldSuspended;
+      final newPoints = oldPoints + pointsDelta;
+      final newFine = oldFine + fineAmount;
+
+      await supabase.from('league_player_status').upsert({
+        'league_id': leagueId,
+        'player_id': playerId,
+        'points_adjustment': newPoints,
+        'fine_total': newFine,
+        'is_suspended': newSuspended,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'league_id,player_id');
+
+      await supabase.from('disciplinary_actions').insert({
+        'league_id': leagueId,
+        'player_id': playerId,
+        'admin_id': current!.id,
+        'action_type': actionType,
+        'reason': reason.trim(),
+        'points_delta': pointsDelta,
+        'fine_amount': fineAmount,
+        'suspended': newSuspended,
+      });
+
+      await loadDisciplineForLeague(leagueId);
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not apply disciplinary action: ${e.message}';
+    } catch (e) {
+      return 'Could not apply disciplinary action: $e';
+    }
+  }
+
+  Future<String?> suspendPlayer({
+    required String leagueId,
+    required String playerId,
+    required String reason,
+  }) => _writeDisciplinaryAction(
+        leagueId: leagueId,
+        playerId: playerId,
+        actionType: 'suspend',
+        reason: reason,
+        suspended: true,
+      );
+
+  Future<String?> unsuspendPlayer({
+    required String leagueId,
+    required String playerId,
+    required String reason,
+  }) => _writeDisciplinaryAction(
+        leagueId: leagueId,
+        playerId: playerId,
+        actionType: 'unsuspend',
+        reason: reason,
+        suspended: false,
+      );
+
+  Future<String?> deductPlayerPoints({
+    required String leagueId,
+    required String playerId,
+    required int points,
+    required String reason,
+  }) => _writeDisciplinaryAction(
+        leagueId: leagueId,
+        playerId: playerId,
+        actionType: 'points_deduction',
+        reason: reason,
+        pointsDelta: -points.abs(),
+      );
+
+  Future<String?> finePlayer({
+    required String leagueId,
+    required String playerId,
+    required double amount,
+    required String reason,
+  }) => _writeDisciplinaryAction(
+        leagueId: leagueId,
+        playerId: playerId,
+        actionType: 'fine',
+        reason: reason,
+        fineAmount: amount,
+      );
+
+  Future<String?> reportMatch({
+    required MatchItem match,
+    required String reason,
+  }) async {
+    final reporter = current;
+    if (reporter == null) return 'Please log in again.';
+    if (reporter.id != match.homeId && reporter.id != match.awayId) {
+      return 'Only players in this fixture can report it.';
+    }
+    final opponentId = reporter.id == match.homeId ? match.awayId : match.homeId;
+    try {
+      await supabase.from('match_reports').insert({
+        'match_id': match.id,
+        'league_id': activeLeagueId,
+        'reporter_id': reporter.id,
+        'reported_player_id': opponentId,
+        'reason': reason.trim(),
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not submit report: ${e.message}';
+    } catch (e) {
+      return 'Could not submit report: $e';
+    }
+  }
+
+  Future<String?> updateLeagueDates({
+    required String leagueId,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
+      return 'End date cannot be before start date.';
+    }
+    try {
+      await supabase.from('leagues').update({
+        'start_date': startDate?.toIso8601String().split('T').first,
+        'end_date': endDate?.toIso8601String().split('T').first,
+      }).eq('id', leagueId);
+      await refreshLeagues();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not save league dates: ${e.message}';
+    } catch (e) {
+      return 'Could not save league dates: $e';
+    }
+  }
+
+  Future<String?> updateRoundSchedule({
+    required String leagueId,
+    required int round,
+    required String? scheduledDate,
+    required String startTime,
+    required String endTime,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.from('matches').update({
+        'scheduled_date': scheduledDate,
+        'match_start_time': startTime,
+        'match_end_time': endTime,
+      }).eq('league_id', leagueId).eq('round', round);
+      if (activeLeagueId == leagueId) {
+        await loadMatchesFromSupabase();
+      }
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not update Match Day $round: ${e.message}';
+    } catch (e) {
+      return 'Could not update Match Day $round: $e';
+    }
+  }
 
   Future<String?> finalizeMatchAfterScreenshotCheck(
     MatchItem match,
@@ -1530,6 +1799,12 @@ class Store {
   }) async {
     if (player.id != match.homeId && player.id != match.awayId) {
       return 'You are not a player in this match.';
+    }
+    if (activeLeagueId != null) {
+      await loadDisciplineForLeague(activeLeagueId!);
+      if (isSuspended(player.id)) {
+        return 'You are suspended from this league and cannot submit this result.';
+      }
     }
 
     try {
@@ -1670,8 +1945,10 @@ class Store {
       }
     }
 
-    for (final stats in table.values) {
-      stats['gd'] = stats['gf']! - stats['ga']!;
+    for (final entry in table.entries) {
+      entry.value['gd'] = entry.value['gf']! - entry.value['ga']!;
+      entry.value['points'] =
+          entry.value['points']! + (pointAdjustments[entry.key] ?? 0);
     }
 
     return table;
@@ -2730,10 +3007,141 @@ class _FixturesPageState extends State<FixturesPage> {
               Expanded(child: Column(children: [_playerAvatar(away, radius: 27, accent: accent), const SizedBox(height: 6), Text(away?.gamerTag ?? store.playerName(m.awayId), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13))])),
             ]),
             const SizedBox(height: 10),
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.touch_app, size: 13, color: accent), const SizedBox(width: 5), Text(m.status == 'Scheduled' ? 'TAP TO SUBMIT RESULT' : 'TAP TO VIEW RESULT', style: TextStyle(color: accent, fontSize: 9, fontWeight: FontWeight.w900))]),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.touch_app, size: 13, color: accent),
+              const SizedBox(width: 5),
+              Text(m.status == 'Scheduled' ? 'TAP TO SUBMIT RESULT' : 'TAP TO VIEW RESULT', style: TextStyle(color: accent, fontSize: 9, fontWeight: FontWeight.w900)),
+            ]),
+            if (store.current != null &&
+                (store.current!.id == m.homeId || store.current!.id == m.awayId)) ...[
+              const SizedBox(height: 9),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: (home == null || away == null)
+                          ? null
+                          : () {
+                              final opponent =
+                                  store.current!.id == m.homeId ? away : home;
+                              if (opponent != null) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ChatPage(player: opponent),
+                                  ),
+                                );
+                              }
+                            },
+                      icon: const Icon(Icons.chat_bubble_outline, size: 16),
+                      label: const Text('CHAT'),
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: (home == null || away == null ||
+                              (store.current!.id == m.homeId
+                                  ? away.whatsappNumber
+                                  : home.whatsappNumber).trim().isEmpty)
+                          ? null
+                          : () async {
+                              final opponent =
+                                  store.current!.id == m.homeId ? away : home;
+                              if (opponent == null) return;
+                              final raw = opponent.whatsappNumber.trim();
+                              final digits = raw.replaceAll(RegExp(r'[^0-9+]'), '');
+                              var normalized = digits.startsWith('+')
+                                  ? digits.substring(1)
+                                  : digits;
+                              if (!normalized.startsWith('234') &&
+                                  normalized.startsWith('0') &&
+                                  opponent.countryCode.trim().isEmpty) {
+                                normalized = '234${normalized.substring(1)}';
+                              } else if (!normalized.startsWith('234') &&
+                                  normalized.startsWith('0') &&
+                                  opponent.countryCode.trim().isNotEmpty) {
+                                final cc = opponent.countryCode.replaceAll(RegExp(r'[^0-9]'), '');
+                                normalized = '$cc${normalized.substring(1)}';
+                              }
+                              final uri = Uri.parse('https://wa.me/$normalized');
+                              await launchUrl(uri, mode: LaunchMode.externalApplication);
+                            },
+                      icon: const Icon(Icons.phone, size: 16),
+                      label: const Text('WHATSAPP'),
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  IconButton(
+                    tooltip: 'Remind opponent',
+                    onPressed: (home == null || away == null)
+                        ? null
+                        : () async {
+                            final opponent =
+                                store.current!.id == m.homeId ? away : home;
+                            if (opponent == null) return;
+                            final message =
+                                'Reminder: we have a CHIBBYBALL match on Match Day ${m.round} on ${m.scheduledDate ?? 'the scheduled date'}.';
+                            final error = await store.sendMessage(opponent.id, message);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    error ?? 'Match reminder sent to ${opponent.gamerTag}.',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                    icon: const Icon(Icons.notifications_active_outlined, color: _yellow),
+                  ),
+                  const SizedBox(width: 2),
+                  IconButton(
+                    tooltip: 'Report match issue',
+                    onPressed: () => _reportMatch(m),
+                    icon: const Icon(Icons.flag_outlined, color: Color(0xFFFF4D7D)),
+                  ),
+                ],
+              ),
+            ],
           ]),
         ),
       ),
+    );
+  }
+
+  Future<void> _reportMatch(MatchItem match) async {
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('REPORT MATCH'),
+        content: TextField(
+          controller: controller,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: 'Reason',
+            hintText: 'Example: opponent did not show up.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('REPORT'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (reason == null || reason.trim().isEmpty) return;
+    final error = await Store.instance.reportMatch(match: match, reason: reason);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error ?? 'Report submitted to the admin.')),
     );
   }
 
@@ -3138,13 +3546,13 @@ class _TablePageState extends State<TablePage> {
 
   Color _rankColor(int rank) => rank == 1 ? _yellow : rank == 2 ? _cyan : rank == 3 ? _purple : _blue;
 
-  Widget _headerCell(String text, {double width = 31, Color color = _muted}) => SizedBox(
+  Widget _headerCell(String text, {double width = 30, Color color = _muted, TextAlign align = TextAlign.center}) => SizedBox(
     width: width,
-    child: Center(child: Text(text, style: TextStyle(color: color, fontSize: 8.5, fontWeight: FontWeight.w900, letterSpacing: .2))),
+    child: Text(text, textAlign: align, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: .2)),
   );
 
-  Widget _valueCell(String text, Color color) => SizedBox(
-    width: 31,
+  Widget _valueCell(String text, Color color, {double width = 30}) => SizedBox(
+    width: width,
     child: Center(child: Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w900))),
   );
 
@@ -3210,7 +3618,9 @@ class _TablePageState extends State<TablePage> {
               decoration: BoxDecoration(color: const Color(0xFF0D2139), borderRadius: BorderRadius.circular(12), border: Border.all(color: _cyan.withOpacity(.35))),
               child: Row(children: [
                 _headerCell('#', width: 27, color: _yellow),
-                _headerCell('PLAYER', width: 0),
+                const SizedBox(width: 5),
+                const SizedBox(width: 18),
+                _headerCell('PLAYER', width: 75, align: TextAlign.left),
                 _headerCell('P'), _headerCell('W'), _headerCell('D'), _headerCell('L'), _headerCell('GD'), _headerCell('PTS', color: _yellow),
               ]),
             ),
@@ -3240,7 +3650,15 @@ class _TablePageState extends State<TablePage> {
                         const SizedBox(width: 5),
                         _playerAvatar(player, radius: 18, accent: accent),
                         const SizedBox(width: 7),
-                        Expanded(child: Text(store.playerName(id), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900))),
+                        SizedBox(
+                          width: 75,
+                          child: Text(
+                            store.playerName(id),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
+                          ),
+                        ),
                         _valueCell('${row['played']}', accent),
                         _valueCell('${row['won']}', accent),
                         _valueCell('${row['drawn']}', accent),
@@ -3732,6 +4150,7 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
   final nameController = TextEditingController();
   final feeController = TextEditingController();
   bool isPaidLeague = false;
+  String fixtureMode = 'single_round';
   bool loading = false;
   String? selectedLeagueId;
   Set<String> memberIds = {};
@@ -3778,12 +4197,13 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
     if (name.isEmpty) return;
     setState(() => loading = true);
     final fee = double.tryParse(feeController.text.trim()) ?? 0;
-    final error = await store.createLeague(name, isPaid: isPaidLeague, entryFee: fee, currency: 'NGN');
+    final error = await store.createLeague(name, isPaid: isPaidLeague, entryFee: fee, currency: 'NGN', fixtureMode: fixtureMode);
     if (!mounted) return;
     if (error == null) {
       nameController.clear();
       feeController.clear();
       isPaidLeague = false;
+      fixtureMode = 'single_round';
       await _refresh();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('League created.')),
@@ -3905,6 +4325,33 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                       decoration: const InputDecoration(labelText: 'Entry fee (NGN)', hintText: 'e.g. 2000', prefixText: '₦ ', border: OutlineInputBorder()),
                     ),
                 ]),
+              ),
+            ),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('FIXTURE FORMAT', style: TextStyle(fontWeight: FontWeight.bold)),
+                    RadioListTile<String>(
+                      contentPadding: EdgeInsets.zero,
+                      value: 'single_round',
+                      groupValue: fixtureMode,
+                      title: const Text('Single Round'),
+                      subtitle: const Text('Each pair plays once.'),
+                      onChanged: loading ? null : (v) => setState(() => fixtureMode = v!),
+                    ),
+                    RadioListTile<String>(
+                      contentPadding: EdgeInsets.zero,
+                      value: 'home_away',
+                      groupValue: fixtureMode,
+                      title: const Text('Home & Away'),
+                      subtitle: const Text('Each pair plays twice with a return fixture.'),
+                      onChanged: loading ? null : (v) => setState(() => fixtureMode = v!),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -4048,103 +4495,88 @@ class AdminMatchSchedulePage extends StatefulWidget {
 class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
   final store = Store.instance;
   String? selectedLeagueId;
-  DateTime? selectedDate;
-  TimeOfDay startTime = const TimeOfDay(hour: 17, minute: 0);
-  TimeOfDay endTime = const TimeOfDay(hour: 23, minute: 59);
+  DateTime? startDate;
+  DateTime? endDate;
   bool loading = false;
+  final Map<int, DateTime?> roundDates = {};
 
   @override
   void initState() {
     super.initState();
     selectedLeagueId = store.activeLeagueId ??
         (store.leagues.isNotEmpty ? store.leagues.first.id : null);
+    _loadSelectedLeague();
   }
 
-  String _two(int value) => value.toString().padLeft(2, '0');
+  LeagueInfo? get selected =>
+      store.leagues.where((l) => l.id == selectedLeagueId).firstOrNull;
 
   String _dateForDb(DateTime date) =>
-      '${date.year}-${_two(date.month)}-${_two(date.day)}';
+      '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
-  String _timeForDb(TimeOfDay time) =>
-      '${_two(time.hour)}:${_two(time.minute)}:00';
+  String _dateLabel(DateTime? date) =>
+      date == null ? 'Not set' : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
 
-  String _displayTime(TimeOfDay time) {
-    final suffix = time.hour >= 12 ? 'PM' : 'AM';
-    final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
-    return '$hour:${_two(time.minute)} $suffix';
+  Future<void> _loadSelectedLeague() async {
+    final league = selected;
+    if (league == null) return;
+    startDate = league.startDate;
+    endDate = league.endDate;
+    try {
+      await store.selectLeague(league.id);
+    } catch (_) {}
+    roundDates
+      ..clear()
+      ..addEntries(
+        store.matches.map((m) => MapEntry(
+              m.round,
+              m.scheduledDate == null || m.scheduledDate!.isEmpty
+                  ? null
+                  : DateTime.tryParse(m.scheduledDate!),
+            )),
+      );
+    if (mounted) setState(() {});
   }
 
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
+  Future<DateTime?> _pickDate(DateTime? initial) async {
+    return showDatePicker(
       context: context,
-      initialDate: selectedDate ?? DateTime.now(),
+      initialDate: initial ?? startDate ?? DateTime.now(),
       firstDate: DateTime(2026),
       lastDate: DateTime(2100),
     );
-    if (picked != null) setState(() => selectedDate = picked);
   }
 
-  Future<void> _pickStartTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: startTime,
-    );
-    if (picked != null) setState(() => startTime = picked);
-  }
-
-  Future<void> _pickEndTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: endTime,
-    );
-    if (picked != null) setState(() => endTime = picked);
-  }
-
-  Future<void> _applySchedule() async {
+  Future<void> _saveLeagueDates() async {
     final leagueId = selectedLeagueId;
     if (leagueId == null) return;
-
-    if (startTime.hour * 60 + startTime.minute >=
-        endTime.hour * 60 + endTime.minute) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('End time must be later than start time.')),
-      );
-      return;
-    }
-
     setState(() => loading = true);
-    final error = await store.updateLeagueMatchSchedule(
+    final error = await store.updateLeagueDates(
       leagueId: leagueId,
-      scheduledDate: selectedDate == null ? null : _dateForDb(selectedDate!),
-      startTime: _timeForDb(startTime),
-      endTime: _timeForDb(endTime),
+      startDate: startDate,
+      endDate: endDate,
     );
-
     if (!mounted) return;
     setState(() => loading = false);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          error ?? 'Match schedule updated successfully for this league.',
-        ),
-      ),
+      SnackBar(content: Text(error ?? 'League start and end dates saved.')),
     );
   }
 
-  Future<void> _resetDefaults() async {
-    setState(() {
-      selectedDate = null;
-      startTime = const TimeOfDay(hour: 17, minute: 0);
-      endTime = const TimeOfDay(hour: 23, minute: 59);
-    });
-
+  Future<void> _saveRound(int round) async {
     final leagueId = selectedLeagueId;
     if (leagueId == null) return;
+    final matchesForRound =
+        store.matches.where((m) => m.round == round).toList();
+    if (matchesForRound.isEmpty) return;
 
     setState(() => loading = true);
-    final error = await store.updateLeagueMatchSchedule(
+    final error = await store.updateRoundSchedule(
       leagueId: leagueId,
-      scheduledDate: null,
+      round: round,
+      scheduledDate: roundDates[round] == null
+          ? null
+          : _dateForDb(roundDates[round]!),
       startTime: '17:00:00',
       endTime: '23:59:00',
     );
@@ -4152,120 +4584,156 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
     setState(() => loading = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          error ?? 'Schedule reset to the default 5:00 PM – 11:59 PM.',
-        ),
+        content: Text(error ?? 'Match Day $round date saved for all its fixtures.'),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final leagues = store.leagues;
-    final selected = leagues.where((l) => l.id == selectedLeagueId).firstOrNull;
+    final league = selected;
+    final rounds = store.matches.map((m) => m.round).toSet().toList()..sort();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Match Schedule')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Default match window: 5:00 PM – 11:59 PM.\n\n'
-                'The admin can change the date and time at any time. '
-                'The selected schedule is applied to every fixture in the selected league.',
+      body: RefreshIndicator(
+        onRefresh: _loadSelectedLeague,
+        child: ListView(
+          padding: const EdgeInsets.all(14),
+          children: [
+            const Text(
+              'LEAGUE DATES',
+              style: TextStyle(
+                color: _cyan,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
               ),
             ),
-          ),
-          const SizedBox(height: 14),
-          if (leagues.isEmpty)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('No leagues available.'),
-              ),
-            )
-          else ...[
+            const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               value: selectedLeagueId,
-              decoration: const InputDecoration(
-                labelText: 'SELECT LEAGUE',
-                border: OutlineInputBorder(),
-              ),
-              items: leagues
-                  .map(
-                    (league) => DropdownMenuItem<String>(
-                      value: league.id,
-                      child: Text(
-                        '${league.name} • ${league.status.toUpperCase()}',
-                      ),
-                    ),
-                  )
+              decoration: const InputDecoration(labelText: 'SELECT LEAGUE'),
+              items: store.leagues
+                  .map((l) => DropdownMenuItem(
+                        value: l.id,
+                        child: Text('${l.name} • ${l.status.toUpperCase()}'),
+                      ))
                   .toList(),
               onChanged: loading
                   ? null
-                  : (value) => setState(() => selectedLeagueId = value),
+                  : (value) async {
+                      if (value == null) return;
+                      setState(() => selectedLeagueId = value);
+                      await _loadSelectedLeague();
+                    },
             ),
-            const SizedBox(height: 14),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.calendar_month),
-                title: const Text('Match Date'),
-                subtitle: Text(
-                  selectedDate == null
-                      ? 'Not set — admin can choose a date'
-                      : _dateForDb(selectedDate!),
+            const SizedBox(height: 10),
+            if (league != null)
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: _neonBox(_blue, radius: 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      league.fixtureModeLabel,
+                      style: const TextStyle(
+                        color: _yellow,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Home & Away creates separate first-leg and return fixtures.',
+                      style: TextStyle(
+                        color: league.isHomeAway ? _cyan : _muted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: loading ? null : _pickDate,
+              ),
+            const SizedBox(height: 10),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.event),
+                title: const Text('START DATE'),
+                subtitle: Text(_dateLabel(startDate)),
+                onTap: loading
+                    ? null
+                    : () async {
+                        final d = await _pickDate(startDate);
+                        if (d != null) setState(() => startDate = d);
+                      },
               ),
             ),
             Card(
               child: ListTile(
-                leading: const Icon(Icons.login),
-                title: const Text('Start Time'),
-                subtitle: Text(_displayTime(startTime)),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: loading ? null : _pickStartTime,
+                leading: const Icon(Icons.event_available),
+                title: const Text('END DATE'),
+                subtitle: Text(_dateLabel(endDate)),
+                onTap: loading
+                    ? null
+                    : () async {
+                        final d = await _pickDate(endDate ?? startDate);
+                        if (d != null) setState(() => endDate = d);
+                      },
               ),
             ),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.logout),
-                title: const Text('Deadline / End Time'),
-                subtitle: Text(_displayTime(endTime)),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: loading ? null : _pickEndTime,
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (selected != null)
-              Text(
-                '${selected.name}: ${store.matches.where((m) => m.status != 'Confirmed').length} loaded matches',
-                style: const TextStyle(color: Colors.grey),
-              ),
-            const SizedBox(height: 14),
             FilledButton.icon(
-              onPressed: loading ? null : _applySchedule,
-              icon: loading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save),
-              label: const Text('APPLY SCHEDULE TO LEAGUE'),
+              onPressed: loading ? null : _saveLeagueDates,
+              icon: const Icon(Icons.save),
+              label: const Text('SAVE LEAGUE DATES'),
             ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: loading ? null : _resetDefaults,
-              icon: const Icon(Icons.restore),
-              label: const Text('RESET TO DEFAULT 5:00 PM – 11:59 PM'),
+            const SizedBox(height: 24),
+            const Text(
+              'MATCH DAY DATES',
+              style: TextStyle(
+                color: _cyan,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
             ),
+            const SizedBox(height: 4),
+            const Text(
+              'Every fixture in the same Match Day uses the same date. Each Match Day can have a different date.',
+              style: TextStyle(color: _muted, fontSize: 11),
+            ),
+            const SizedBox(height: 10),
+            if (rounds.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('Generate fixtures first.'),
+                ),
+              )
+            else
+              ...rounds.map(
+                (round) => Card(
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: _cyan.withOpacity(.12),
+                      child: Text(
+                        '$round',
+                        style: const TextStyle(color: _cyan),
+                      ),
+                    ),
+                    title: Text('MATCH DAY $round'),
+                    subtitle: Text(_dateLabel(roundDates[round])),
+                    trailing: const Icon(Icons.calendar_month),
+                    onTap: loading
+                        ? null
+                        : () async {
+                            final d = await _pickDate(roundDates[round]);
+                            if (d == null) return;
+                            setState(() => roundDates[round] = d);
+                            await _saveRound(round);
+                          },
+                  ),
+                ),
+              ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -4452,14 +4920,14 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
 
   Future<void> _load() async {
     setState(() => loading = true);
-    try { await store.refreshPlayers(); await store.refreshLeagues(); if (store.leagues.isNotEmpty) { selectedLeagueId ??= store.leagues.first.id; memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet(); } }
+    try { await store.refreshPlayers(); await store.refreshLeagues(); if (store.leagues.isNotEmpty) { selectedLeagueId ??= store.leagues.first.id; memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet(); await store.loadDisciplineForLeague(selectedLeagueId!); } }
     catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load player management: $e'))); }
     if (mounted) setState(() => loading = false);
   }
 
   Future<void> _selectLeague(String? id) async {
     if (id == null) return; setState(() { selectedLeagueId = id; loading = true; });
-    try { memberIds = (await store.leagueMemberIds(id)).toSet(); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load league members: $e'))); }
+    try { memberIds = (await store.leagueMemberIds(id)).toSet(); await store.loadDisciplineForLeague(id); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load league members: $e'))); }
     if (mounted) setState(() => loading = false);
   }
 
@@ -4478,6 +4946,101 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
     final error = await store.disregisterPlayerFromAllLeagues(player.id);
     if (error == null) { memberIds.remove(player.id); await store.refreshLeagues(); await store.loadMatchesFromSupabase(); }
     if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? '${player.gamerTag} disregistered from all leagues.'))); }
+  }
+
+  Future<void> _disciplineDialog(
+    Player player, {
+    required String action,
+  }) async {
+    final leagueId = selectedLeagueId;
+    if (leagueId == null) return;
+    final reasonController = TextEditingController();
+    final valueController = TextEditingController();
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(action.toUpperCase()),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (action == 'deduct' || action == 'fine')
+              TextField(
+                controller: valueController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: action == 'deduct' ? 'Points to deduct' : 'Fine amount (NGN)',
+                ),
+              ),
+            TextField(
+              controller: reasonController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                hintText: 'Example: Failed to show up for the scheduled match.',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, {
+              'value': valueController.text.trim(),
+              'reason': reasonController.text.trim(),
+            }),
+            child: const Text('APPLY'),
+          ),
+        ],
+      ),
+    );
+
+    reasonController.dispose();
+    valueController.dispose();
+    if (result == null) return;
+
+    setState(() => loading = true);
+    String? error;
+    switch (action) {
+      case 'suspend':
+        error = await store.suspendPlayer(
+          leagueId: leagueId,
+          playerId: player.id,
+          reason: result['reason'] ?? '',
+        );
+        break;
+      case 'unsuspend':
+        error = await store.unsuspendPlayer(
+          leagueId: leagueId,
+          playerId: player.id,
+          reason: result['reason'] ?? '',
+        );
+        break;
+      case 'deduct':
+        error = await store.deductPlayerPoints(
+          leagueId: leagueId,
+          playerId: player.id,
+          points: int.tryParse(result['value'] ?? '') ?? 0,
+          reason: result['reason'] ?? '',
+        );
+        break;
+      case 'fine':
+        error = await store.finePlayer(
+          leagueId: leagueId,
+          playerId: player.id,
+          amount: double.tryParse(result['value'] ?? '') ?? 0,
+          reason: result['reason'] ?? '',
+        );
+        break;
+    }
+    if (!mounted) return;
+    setState(() => loading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error ?? '${player.gamerTag}: $action applied.')),
+    );
   }
 
   @override void dispose() { searchController.dispose(); super.dispose(); }
@@ -4502,10 +5065,32 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
           final online = player.isOnline && (player.lastSeen == null || DateTime.now().toUtc().difference(player.lastSeen!.toUtc()).inMinutes < 3);
           return Container(margin: const EdgeInsets.only(bottom: 9), decoration: _neonBox(isMember ? _cyan : _blue, radius: 17), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8), child: Row(children: [
             Stack(children: [_playerAvatar(player, radius: 23, accent: isMember ? _cyan : _blue), Positioned(right: 0, bottom: 0, child: Container(width: 11, height: 11, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]),
-            const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)), Text(online ? 'Online' : 'Offline', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11)), const SizedBox(height: 2), Text(isMember ? 'Registered in selected league' : 'Not in selected league', style: const TextStyle(color: _muted, fontSize: 10))])),
+            const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)), Text(online ? 'Online' : 'Offline', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11)), const SizedBox(height: 2), Text(isMember ? 'Registered in selected league' : 'Not in selected league', style: const TextStyle(color: _muted, fontSize: 10)),
+             if (isMember && store.isSuspended(player.id))
+               const Padding(
+                 padding: EdgeInsets.only(top: 3),
+                 child: Text('SUSPENDED', style: TextStyle(color: Color(0xFFFF4D7D), fontSize: 10, fontWeight: FontWeight.w900)),
+               ),
+           ])),
             IconButton(tooltip: 'Message', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: player))), icon: const Icon(Icons.chat_bubble_outline, color: _purple)),
             if (selectedLeagueId != null) IconButton(tooltip: isMember ? 'Remove from league' : 'Add to league', onPressed: loading ? null : () => _toggleMember(player, !isMember), icon: Icon(isMember ? Icons.remove_circle_outline : Icons.add_circle_outline, color: isMember ? const Color(0xFFFF4D7D) : _cyan)),
-            PopupMenuButton<String>(onSelected: (value) { if (value == 'disregister') _disregister(player); }, itemBuilder: (_) => const [PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues'))]),
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'disregister') _disregister(player);
+                if (value == 'suspend') _disciplineDialog(player, action: 'suspend');
+                if (value == 'unsuspend') _disciplineDialog(player, action: 'unsuspend');
+                if (value == 'deduct') _disciplineDialog(player, action: 'deduct');
+                if (value == 'fine') _disciplineDialog(player, action: 'fine');
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'suspend', child: Text('Suspend player')),
+                PopupMenuItem(value: 'unsuspend', child: Text('Unsuspend player')),
+                PopupMenuItem(value: 'deduct', child: Text('Deduct points')),
+                PopupMenuItem(value: 'fine', child: Text('Fine player')),
+                PopupMenuDivider(),
+                PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues')),
+              ],
+            ),
           ])));
         }),
       ])),
@@ -4555,7 +5140,7 @@ class _AdminPageState extends State<AdminPage> {
         const SizedBox(height: 9),
         _neonAction(context, Icons.refresh, 'REFRESH PLAYERS', 'Reload players and league data', _blue, refresh),
         const SizedBox(height: 9),
-        _neonAction(context, Icons.auto_awesome, 'GENERATE FIXTURES', 'Create round-robin fixtures', _yellow, loading ? () {} : generateFixtures),
+        _neonAction(context, Icons.auto_awesome, 'GENERATE FIXTURES', 'Create single-round or Home & Away fixtures', _yellow, loading ? () {} : generateFixtures),
         const SizedBox(height: 18),
         Row(children: [Expanded(child: _neonSectionTitle('REGISTERED PLAYERS', accent: _cyan)), Text('${players.length}', style: const TextStyle(color: _yellow, fontSize: 18, fontWeight: FontWeight.w900))]),
         const SizedBox(height: 10),
