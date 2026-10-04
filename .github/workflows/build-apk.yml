@@ -116,12 +116,26 @@ jobs:
               'implementation("com.google.mlkit:text-recognition-korean:16.0.1")',
           ]
 
-          if "text-recognition-chinese" not in text:
+          # Flutter's generated Android project can use either Gradle Kotlin DSL
+          # or Groovy, and newer templates may not contain a dependencies block.
+          # Add only the missing ML Kit dependencies without assuming the block exists.
+          missing = [dep for dep in deps if dep not in text]
+
+          if missing:
               marker = "dependencies {"
-              if marker not in text:
-                  raise SystemExit("Dependencies block not found")
-              text = text.replace(marker, marker + "\n    " + "\n    ".join(deps), 1)
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      marker + "\n    " + "\n    ".join(missing),
+                      1,
+                  )
+              else:
+                  # A top-level dependencies block works for both Gradle Kotlin DSL
+                  # and Groovy, so do not fail just because the template has no block.
+                  text = text.rstrip() + "\n\ndependencies {\n    " + "\n    ".join(missing) + "\n}\n"
+
               target.write_text(text)
+
           print("ML Kit language dependencies configured.")
           PY
 
