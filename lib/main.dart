@@ -4285,17 +4285,9 @@ class _ProfilePageState extends State<ProfilePage> {
       const SizedBox(height: 16),
       _neonSectionTitle('ACCOUNT', accent: _yellow),
       const SizedBox(height: 10),
-      Container(
-        padding: const EdgeInsets.all(12),
-        decoration: _neonBox(_blue, radius: 18),
-        child: Column(
-          children: [
-            _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
-            _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
-            _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
-          ],
-        ),
-      ),
+      _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
+      _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
+      _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
       const SizedBox(height: 6),
       Row(children: [Expanded(child: _neonSectionTitle('PLAYER DETAILS', accent: _cyan)), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: _cyan))]),
       const SizedBox(height: 8),
