@@ -9,6 +9,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_config.dart';
@@ -492,6 +493,34 @@ class MatchItem {
         endTime: json['endTime']?.toString() ?? '23:59:00',
         status: json['status']?.toString() ?? 'Scheduled',
       );
+}
+
+class GlobalPlayerStat {
+  final Player player;
+  int leagues;
+  int played;
+  int won;
+  int drawn;
+  int lost;
+  int goals;
+  int conceded;
+  int cleanSheets;
+  int points;
+
+  GlobalPlayerStat({
+    required this.player,
+    this.leagues = 0,
+    this.played = 0,
+    this.won = 0,
+    this.drawn = 0,
+    this.lost = 0,
+    this.goals = 0,
+    this.conceded = 0,
+    this.cleanSheets = 0,
+    this.points = 0,
+  });
+
+  int get gd => goals - conceded;
 }
 
 // ============================================================
@@ -1647,6 +1676,92 @@ class Store {
 
     return table;
   }
+
+  /// Aggregates confirmed results across EVERY league. This is intentionally
+  /// separate from [matches], because [matches] contains only the selected
+  /// league for the normal fixtures/table screens.
+  Future<List<GlobalPlayerStat>> globalLeaderboard() async {
+    final result = <String, GlobalPlayerStat>{};
+
+    for (final player in players.where((p) => !p.admin)) {
+      result[player.id] = GlobalPlayerStat(player: player);
+    }
+
+    try {
+      final membershipRows = await supabase
+          .from('league_members')
+          .select('league_id, player_id');
+      final leagueSets = <String, Set<String>>{};
+      for (final item in (membershipRows as List)) {
+        final row = Map<String, dynamic>.from(item);
+        final playerId = row['player_id']?.toString();
+        final leagueId = row['league_id']?.toString();
+        if (playerId == null || leagueId == null) continue;
+        if (result.containsKey(playerId)) {
+          leagueSets.putIfAbsent(playerId, () => <String>{}).add(leagueId);
+        }
+      }
+      for (final entry in leagueSets.entries) {
+        result[entry.key]?.leagues = entry.value.length;
+      }
+
+      final rows = await supabase
+          .from('matches')
+          .select('league_id, home_player_id, away_player_id, home_score, away_score, status')
+          .eq('status', 'confirmed');
+
+      for (final item in (rows as List)) {
+        final row = Map<String, dynamic>.from(item);
+        final homeId = row['home_player_id']?.toString();
+        final awayId = row['away_player_id']?.toString();
+        final home = homeId == null ? null : result[homeId];
+        final away = awayId == null ? null : result[awayId];
+        if (home == null || away == null) continue;
+
+        final hs = (row['home_score'] as num?)?.toInt() ?? 0;
+        final as = (row['away_score'] as num?)?.toInt() ?? 0;
+        home.played++;
+        away.played++;
+        home.goals += hs;
+        home.conceded += as;
+        away.goals += as;
+        away.conceded += hs;
+        if (as == 0) home.cleanSheets++;
+        if (hs == 0) away.cleanSheets++;
+
+        if (hs > as) {
+          home.won++;
+          away.lost++;
+          home.points += 3;
+        } else if (hs < as) {
+          away.won++;
+          home.lost++;
+          away.points += 3;
+        } else {
+          home.drawn++;
+          away.drawn++;
+          home.points++;
+          away.points++;
+        }
+      }
+    } on PostgrestException catch (e) {
+      debugPrint('Global leaderboard load failed: ${e.message}');
+    } catch (e) {
+      debugPrint('Global leaderboard load failed: $e');
+    }
+
+    final list = result.values.toList();
+    list.sort((a, b) {
+      final points = b.points.compareTo(a.points);
+      if (points != 0) return points;
+      final gd = b.gd.compareTo(a.gd);
+      if (gd != 0) return gd;
+      final goals = b.goals.compareTo(a.goals);
+      if (goals != 0) return goals;
+      return a.player.gamerTag.toLowerCase().compareTo(b.player.gamerTag.toLowerCase());
+    });
+    return list;
+  }
 }
 
 // ============================================================
@@ -2534,6 +2649,8 @@ class DashboardPage extends StatelessWidget {
         _neonAction(context, Icons.person, 'PLAYER PROFILE', 'Edit details and profile photo', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.people_alt, 'PLAYERS & MESSAGES', 'See online players and chat', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
+        const SizedBox(height: 10),
+        _neonAction(context, Icons.public, 'GLOBAL LEADERBOARD', 'Combine points across every league', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GlobalLeaderboardPage()))),
         const SizedBox(height: 18),
         Container(
           padding: const EdgeInsets.all(16),
@@ -3021,6 +3138,16 @@ class _TablePageState extends State<TablePage> {
 
   Color _rankColor(int rank) => rank == 1 ? _yellow : rank == 2 ? _cyan : rank == 3 ? _purple : _blue;
 
+  Widget _headerCell(String text, {double width = 31, Color color = _muted}) => SizedBox(
+    width: width,
+    child: Center(child: Text(text, style: TextStyle(color: color, fontSize: 8.5, fontWeight: FontWeight.w900, letterSpacing: .2))),
+  );
+
+  Widget _valueCell(String text, Color color) => SizedBox(
+    width: 31,
+    child: Center(child: Text(text, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w900))),
+  );
+
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
@@ -3029,44 +3156,109 @@ class _TablePageState extends State<TablePage> {
       final x = table[a]!; final y = table[b]!;
       final p = y['points']!.compareTo(x['points']!); if (p != 0) return p;
       final gd = y['gd']!.compareTo(x['gd']!); if (gd != 0) return gd;
-      return y['gf']!.compareTo(x['gf']!);
+      final gf = y['gf']!.compareTo(x['gf']!); if (gf != 0) return gf;
+      return store.playerName(a).toLowerCase().compareTo(store.playerName(b).toLowerCase());
     });
     final selected = store.activeLeagueId == null ? null : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
 
-    Widget stat(String label, String value, Color color) => SizedBox(width: 34, child: Column(children: [Text(label, style: const TextStyle(color: Color(0xFF71829A), fontSize: 8, fontWeight: FontWeight.w900)), const SizedBox(height: 3), Text(value, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w900))]));
-
-    return ListView(padding: const EdgeInsets.fromLTRB(14, 12, 14, 28), children: [
-      Container(padding: const EdgeInsets.fromLTRB(18, 19, 18, 18), decoration: _neonBox(_blue, radius: 22), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('CHIBBYBALL COMPETITION', style: TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.4)), SizedBox(height: 7), Text('LEAGUE TABLE', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: .8)), SizedBox(height: 5), Text('RANK • COMPETE • WIN', style: TextStyle(color: _cyan, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: .8)), Text('PLAY • COMPETE • WIN', style: TextStyle(color: _yellow, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: .8))])),
-      const SizedBox(height: 12),
-      Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5), decoration: _neonBox(_cyan, radius: 18), child: DropdownButtonFormField<String>(value: selected?.id, decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text('${l.name} • ${l.status.toUpperCase()}'))).toList(), onChanged: loading ? null : _selectLeague)),
-      if (selected != null) Padding(padding: const EdgeInsets.fromLTRB(3, 15, 3, 9), child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 20, fontWeight: FontWeight.w900))),
+    return ListView(padding: const EdgeInsets.fromLTRB(12, 12, 12, 30), children: [
+      Container(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 17),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(colors: [Color(0xEE071C35), Color(0xE9040A14)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: _cyan.withOpacity(.75), width: 1.4),
+          boxShadow: const [BoxShadow(color: Color(0x3300D9FF), blurRadius: 25)],
+        ),
+        child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('CHIBBYBALL COMPETITION', style: TextStyle(color: _muted, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+          SizedBox(height: 6),
+          Text('LEAGUE TABLE', style: TextStyle(fontSize: 27, fontWeight: FontWeight.w900, letterSpacing: .8)),
+          SizedBox(height: 4),
+          Text('RANK • COMPETE • WIN', style: TextStyle(color: _cyan, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: .9)),
+        ]),
+      ),
+      const SizedBox(height: 11),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 4),
+        decoration: _neonBox(_cyan, radius: 17),
+        child: DropdownButtonFormField<String>(
+          value: selected?.id,
+          dropdownColor: const Color(0xFF081426),
+          decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none),
+          items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text('${l.name} • ${l.status.toUpperCase()}'))).toList(),
+          onChanged: loading ? null : _selectLeague,
+        ),
+      ),
+      if (selected != null) ...[
+        const SizedBox(height: 13),
+        Row(children: [
+          Expanded(child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: .7))),
+          if (selected.status == 'active') Container(padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5), decoration: BoxDecoration(color: _cyan.withOpacity(.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: _cyan.withOpacity(.7))), child: const Text('ACTIVE', style: TextStyle(color: _cyan, fontSize: 9, fontWeight: FontWeight.w900))),
+        ]),
+      ],
+      const SizedBox(height: 9),
       if (ordered.isEmpty)
         Container(padding: const EdgeInsets.all(20), decoration: _neonBox(_cyan, radius: 18), child: const Text('No players in this league yet.', style: TextStyle(color: _muted)))
-      else ...[
-        Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9), decoration: _neonBox(_blue, radius: 14), child: Row(children: [const SizedBox(width: 39), const Expanded(child: Text('PLAYER', style: TextStyle(color: _muted, fontSize: 9, fontWeight: FontWeight.w900))), stat('P','',_muted), stat('W','',_muted), stat('D','',_muted), stat('L','',_muted), stat('GD','',_muted), stat('PTS','',_yellow)])),
-        const SizedBox(height: 7),
-        for (int i = 0; i < ordered.length; i++) ...[
-          Builder(builder: (_) {
-            final id = ordered[i]; final row = table[id]!; final player = store.findPlayer(id); final rank = i + 1; final accent = _rankColor(rank);
-            return Container(
-              margin: const EdgeInsets.only(bottom: 7),
-              decoration: _neonBox(accent, radius: 16),
-              child: InkWell(borderRadius: BorderRadius.circular(16), onTap: () {
-                if (player != null) Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerStatsPageFor(player: player)));
-              }, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9), child: Row(children: [
-                Container(width: 36, height: 36, decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withOpacity(.12), border: Border.all(color: accent, width: 1.3)), child: Center(child: Text('$rank', style: TextStyle(color: accent, fontWeight: FontWeight.w900)))),
-                const SizedBox(width: 8),
-                _playerAvatar(player, radius: 18, accent: accent),
-                const SizedBox(width: 8),
-                Expanded(child: Text(store.playerName(id), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900))),
-                stat('P','${row['played']}',accent), stat('W','${row['won']}',accent), stat('D','${row['drawn']}',accent), stat('L','${row['lost']}',accent), stat('GD','${row['gd']}',accent), stat('PTS','${row['points']}',accent),
-              ]))),
-            );
-          }),
-        ],
-      ],
-      const SizedBox(height: 12),
-      const Text('Only CONFIRMED matches count toward the selected league table.', style: TextStyle(color: _muted, fontSize: 11)),
+      else
+        Container(
+          padding: const EdgeInsets.fromLTRB(8, 9, 8, 7),
+          decoration: _neonBox(_blue, radius: 19),
+          child: Column(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+              decoration: BoxDecoration(color: const Color(0xFF0D2139), borderRadius: BorderRadius.circular(12), border: Border.all(color: _cyan.withOpacity(.35))),
+              child: Row(children: [
+                _headerCell('#', width: 27, color: _yellow),
+                _headerCell('PLAYER', width: 0),
+                _headerCell('P'), _headerCell('W'), _headerCell('D'), _headerCell('L'), _headerCell('GD'), _headerCell('PTS', color: _yellow),
+              ]),
+            ),
+            const SizedBox(height: 6),
+            for (int i = 0; i < ordered.length; i++) ...[
+              Builder(builder: (_) {
+                final id = ordered[i];
+                final row = table[id]!;
+                final player = store.findPlayer(id);
+                final rank = i + 1;
+                final accent = _rankColor(rank);
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(colors: [accent.withOpacity(.11), const Color(0xE9071425)]),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: accent.withOpacity(rank <= 3 ? .85 : .38), width: rank <= 3 ? 1.2 : .8),
+                    boxShadow: [BoxShadow(color: accent.withOpacity(.08), blurRadius: 14)],
+                  ),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: player == null ? null : () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerStatsPageFor(player: player))),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+                      child: Row(children: [
+                        Container(width: 27, height: 27, decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withOpacity(.15), border: Border.all(color: accent, width: rank <= 3 ? 1.5 : 1)), child: Center(child: Text('$rank', style: TextStyle(color: accent, fontSize: 11, fontWeight: FontWeight.w900)))),
+                        const SizedBox(width: 5),
+                        _playerAvatar(player, radius: 18, accent: accent),
+                        const SizedBox(width: 7),
+                        Expanded(child: Text(store.playerName(id), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900))),
+                        _valueCell('${row['played']}', accent),
+                        _valueCell('${row['won']}', accent),
+                        _valueCell('${row['drawn']}', accent),
+                        _valueCell('${row['lost']}', accent),
+                        _valueCell('${row['gd']}', accent),
+                        _valueCell('${row['points']}', _yellow),
+                      ]),
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ]),
+        ),
+      const SizedBox(height: 10),
+      Container(padding: const EdgeInsets.all(12), decoration: _neonBox(_blue, radius: 15), child: const Row(children: [Icon(Icons.touch_app, color: _cyan, size: 17), SizedBox(width: 8), Expanded(child: Text('Tap any player to view confirmed match history and detailed stats.', style: TextStyle(color: _muted, fontSize: 11, height: 1.3)))])),
+      const SizedBox(height: 8),
+      const Text('Only CONFIRMED matches count toward the selected league table.', style: TextStyle(color: _muted, fontSize: 10)),
     ]);
   }
 }
@@ -3074,20 +3266,141 @@ class _TablePageState extends State<TablePage> {
 class PlayerStatsPageFor extends StatelessWidget {
   final Player player;
   const PlayerStatsPageFor({super.key, required this.player});
+
   @override
   Widget build(BuildContext context) {
     final store = Store.instance;
     final stats = store.statsForPlayer(player.id);
     final history = store.confirmedMatchesForPlayer(player.id);
-    return Scaffold(appBar: AppBar(title: Text(player.gamerTag)), body: ListView(padding: const EdgeInsets.all(16), children: [
-      Center(child: _playerAvatar(player, radius: 42, accent: _cyan)), const SizedBox(height: 8), Center(child: Text(player.gamerTag, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900))), const SizedBox(height: 18),
-      Wrap(spacing: 8, runSpacing: 8, children: ['played','won','drawn','lost','gf','ga','gd','points'].map((k) => Container(width: 95, padding: const EdgeInsets.all(12), decoration: _neonBox(k == 'points' ? _yellow : _cyan, radius: 14), child: Column(children: [Text('${stats[k]}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)), const SizedBox(height: 3), Text(k.toUpperCase(), style: const TextStyle(fontSize: 9, color: _muted, fontWeight: FontWeight.w900))]))).toList()),
-      const SizedBox(height: 20),
-      _neonSectionTitle('CONFIRMED MATCH HISTORY', accent: _yellow), const SizedBox(height: 10),
-      if (history.isEmpty) Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_blue, radius: 16), child: const Text('No confirmed matches yet.', style: TextStyle(color: _muted))) else ...history.map((m) => Container(margin: const EdgeInsets.only(bottom: 8), decoration: _neonBox(_blue, radius: 14), child: ListTile(title: Text('${store.playerName(m.homeId)} vs ${store.playerName(m.awayId)}'), subtitle: Text('Matchday ${m.round}'), trailing: Text('${m.homeScore} - ${m.awayScore}', style: const TextStyle(color: _yellow, fontWeight: FontWeight.w900))))),
-    ]));
+    final online = player.isOnline && (player.lastSeen == null || DateTime.now().toUtc().difference(player.lastSeen!.toUtc()).inMinutes < 3);
+    return Scaffold(
+      appBar: AppBar(title: Text('${player.gamerTag} • STATS')),
+      body: ListView(padding: const EdgeInsets.fromLTRB(13, 13, 13, 30), children: [
+        Container(padding: const EdgeInsets.fromLTRB(16, 18, 16, 16), decoration: _neonBox(_cyan, radius: 22), child: Row(children: [
+          _playerAvatar(player, radius: 42, accent: _cyan), const SizedBox(width: 13),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(player.gamerTag, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)), const SizedBox(height: 5), Text(player.name.isEmpty ? 'CHIBBYBALL PLAYER' : player.name, style: const TextStyle(color: _muted, fontSize: 11)), const SizedBox(height: 8), Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), border: Border.all(color: online ? const Color(0xFF20E070) : _muted)), child: Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 8, fontWeight: FontWeight.w900))) ])),
+        ])),
+        const SizedBox(height: 14),
+        _neonSectionTitle('PLAYER STATISTICS', accent: _yellow), const SizedBox(height: 9),
+        GridView.count(crossAxisCount: 4, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 7, crossAxisSpacing: 7, childAspectRatio: .95, children: [
+          _miniStat('P', stats['played']!, _cyan), _miniStat('W', stats['won']!, _yellow), _miniStat('D', stats['drawn']!, _purple), _miniStat('L', stats['lost']!, const Color(0xFFFF4D7D)),
+          _miniStat('GF', stats['gf']!, _cyan), _miniStat('GA', stats['ga']!, _blue), _miniStat('GD', stats['gd']!, _purple), _miniStat('PTS', stats['points']!, _yellow),
+        ]),
+        const SizedBox(height: 17),
+        _neonSectionTitle('CONFIRMED MATCH HISTORY', accent: _cyan), const SizedBox(height: 9),
+        if (history.isEmpty) Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_blue, radius: 16), child: const Text('No confirmed matches yet.', style: TextStyle(color: _muted)))
+        else ...history.map((m) => Container(margin: const EdgeInsets.only(bottom: 8), decoration: _neonBox(_blue, radius: 15), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 11, vertical: 1), leading: const Icon(Icons.sports_soccer, color: _cyan), title: Text('${store.playerName(m.homeId)}  VS  ${store.playerName(m.awayId)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900)), subtitle: Text('MATCHDAY ${m.round} • ${m.status.toUpperCase()}', style: const TextStyle(color: _muted, fontSize: 9)), trailing: Text('${m.homeScore} - ${m.awayScore}', style: const TextStyle(color: _yellow, fontWeight: FontWeight.w900, fontSize: 14))))),
+      ]),
+    );
+  }
+
+  static Widget _miniStat(String label, int value, Color accent) => Container(padding: const EdgeInsets.all(8), decoration: _neonBox(accent, radius: 13), child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Text('$value', style: TextStyle(color: accent, fontSize: 18, fontWeight: FontWeight.w900)), const SizedBox(height: 3), Text(label, style: const TextStyle(color: _muted, fontSize: 8, fontWeight: FontWeight.w900))]));
+}
+
+// ============================================================
+// GLOBAL LEADERBOARD + TOP PERFORMERS
+// ============================================================
+
+class GlobalLeaderboardPage extends StatefulWidget {
+  const GlobalLeaderboardPage({super.key});
+  @override State<GlobalLeaderboardPage> createState() => _GlobalLeaderboardPageState();
+}
+
+class _GlobalLeaderboardPageState extends State<GlobalLeaderboardPage> {
+  late Future<List<GlobalPlayerStat>> future;
+
+  @override
+  void initState() {
+    super.initState();
+    future = Store.instance.globalLeaderboard();
+  }
+
+  void refresh() => setState(() => future = Store.instance.globalLeaderboard());
+
+  Color rankColor(int rank) => rank == 1 ? _yellow : rank == 2 ? _cyan : rank == 3 ? _purple : _blue;
+
+  Widget performerCard(String title, String value, GlobalPlayerStat? stat, IconData icon, Color accent) {
+    return Expanded(child: Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 11),
+      decoration: _neonBox(accent, radius: 17),
+      child: Column(children: [
+        Icon(icon, color: accent, size: 24),
+        const SizedBox(height: 7),
+        Text(value, style: TextStyle(color: accent, fontSize: 22, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 2),
+        Text(title, textAlign: TextAlign.center, style: const TextStyle(color: _muted, fontSize: 8.5, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 4),
+        Text(stat?.player.gamerTag ?? '—', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900)),
+      ]),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Global Leaderboard'), actions: [IconButton(onPressed: refresh, icon: const Icon(Icons.refresh))]),
+      body: FutureBuilder<List<GlobalPlayerStat>>(
+        future: future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: _cyan));
+          final stats = snapshot.data ?? <GlobalPlayerStat>[];
+          if (stats.isEmpty) return const Center(child: Text('No players or confirmed results yet.'));
+
+          final goals = [...stats]..sort((a,b) => b.goals.compareTo(a.goals));
+          final clean = [...stats]..sort((a,b) => b.cleanSheets.compareTo(a.cleanSheets));
+          final wins = [...stats]..sort((a,b) => b.won.compareTo(a.won));
+
+          return RefreshIndicator(
+            onRefresh: () async { refresh(); await future; },
+            child: ListView(padding: const EdgeInsets.fromLTRB(12, 12, 12, 30), children: [
+              Container(padding: const EdgeInsets.fromLTRB(16, 18, 16, 17), decoration: _neonBox(_blue, radius: 22), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('ALL LEAGUES • ALL PLAYERS', style: TextStyle(color: _muted, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+                SizedBox(height: 6),
+                Text('GLOBAL LEADERBOARD', style: TextStyle(fontSize: 25, fontWeight: FontWeight.w900)),
+                SizedBox(height: 5),
+                Text('POINTS FROM EVERY LEAGUE ARE COMBINED', style: TextStyle(color: _cyan, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: .7)),
+              ])),
+              const SizedBox(height: 13),
+              _neonSectionTitle('TOP PERFORMERS', accent: _yellow),
+              const SizedBox(height: 9),
+              Row(children: [
+                performerCard('MOST GOALS', '${goals.first.goals}', goals.first, Icons.sports_soccer, _yellow),
+                performerCard('CLEAN SHEETS', '${clean.first.cleanSheets}', clean.first, Icons.shield, _cyan),
+                performerCard('MOST WINS', '${wins.first.won}', wins.first, Icons.emoji_events, _purple),
+              ]),
+              const SizedBox(height: 16),
+              _neonSectionTitle('WORLD RANKING', accent: _cyan),
+              const SizedBox(height: 8),
+              Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 8), decoration: _neonBox(_blue, radius: 17), child: Column(children: [
+                Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8), decoration: BoxDecoration(color: const Color(0xFF0D2139), borderRadius: BorderRadius.circular(11)), child: const Row(children: [
+                  SizedBox(width: 30, child: Center(child: Text('#', style: TextStyle(color: _yellow, fontSize: 8, fontWeight: FontWeight.w900)))),
+                  SizedBox(width: 39, child: Center(child: Text('PLAYER', style: TextStyle(color: _muted, fontSize: 8, fontWeight: FontWeight.w900)))),
+                  Expanded(child: Text('LEAGUES', style: TextStyle(color: _muted, fontSize: 8, fontWeight: FontWeight.w900))),
+                  SizedBox(width: 45, child: Center(child: Text('PTS', style: TextStyle(color: _yellow, fontSize: 8, fontWeight: FontWeight.w900)))),
+                ])),
+                const SizedBox(height: 6),
+                for (int i=0;i<stats.length;i++) Builder(builder: (_) {
+                  final s = stats[i]; final accent = rankColor(i+1);
+                  return Container(margin: const EdgeInsets.only(bottom: 6), decoration: BoxDecoration(color: const Color(0xDD081426), borderRadius: BorderRadius.circular(14), border: Border.all(color: accent.withOpacity(i<3 ? .8 : .35))), child: InkWell(borderRadius: BorderRadius.circular(14), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerStatsPageFor(player: s.player))), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8), child: Row(children: [
+                    Container(width: 30, height: 30, decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withOpacity(.13), border: Border.all(color: accent)), child: Center(child: Text('${i+1}', style: TextStyle(color: accent, fontSize: 10, fontWeight: FontWeight.w900)))),
+                    const SizedBox(width: 8), _playerAvatar(s.player, radius: 19, accent: accent), const SizedBox(width: 8),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(s.player.gamerTag, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900)), Text('${s.played} matches • ${s.gd >= 0 ? '+' : ''}${s.gd} GD', style: const TextStyle(color: _muted, fontSize: 9))])),
+                    SizedBox(width: 48, child: Column(children: [Text('${s.leagues}', style: const TextStyle(color: _cyan, fontSize: 12, fontWeight: FontWeight.w900)), const Text('LEAGUES', style: TextStyle(color: _muted, fontSize: 7))])),
+                    SizedBox(width: 45, child: Text('${s.points}', textAlign: TextAlign.center, style: const TextStyle(color: _yellow, fontSize: 15, fontWeight: FontWeight.w900))),
+                  ]))));
+                }),
+              ])),
+              const SizedBox(height: 9),
+              const Text('Global points are calculated from CONFIRMED matches across every league.', style: TextStyle(color: _muted, fontSize: 10)),
+            ]),
+          );
+        },
+      ),
+    );
   }
 }
+
 
 // ============================================================
 // PROFILE
@@ -3228,7 +3541,21 @@ class _ProfilePageState extends State<ProfilePage> {
       Container(decoration: _neonBox(_purple, radius: 18), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 4), leading: Stack(children: [const Icon(Icons.chat_bubble_outline, color: _purple, size: 29), Positioned(right: -2, bottom: -2, child: Container(width: 9, height: 9, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]), title: const Text('PLAYERS & MESSAGES', style: TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'You are online • chat with other players' : 'Chat with other players and see their status'), trailing: const Icon(Icons.chevron_right, color: _purple), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())))),
       const SizedBox(height: 10),
       _neonAction(context, Icons.bar_chart, 'MY STATS & HISTORY', 'Confirmed results and league statistics', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerStatsPage()))),
-      const SizedBox(height: 10),
+      const SizedBox(height: 14),
+      _neonSectionTitle('ADMIN SUPPORT', accent: _purple),
+      const SizedBox(height: 9),
+      _neonAction(context, Icons.support_agent, 'CONTACT ADMIN IN APP', 'Private chat directly with an administrator', _purple, () async {
+        final admin = Store.instance.players.where((p) => p.admin).firstOrNull;
+        if (admin == null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No administrator is available right now.'))); return; }
+        Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: admin)));
+      }),
+      const SizedBox(height: 9),
+      _neonAction(context, Icons.chat, 'WHATSAPP SUPPORT', 'Chat with CHIBBYBALL support on WhatsApp', const Color(0xFF20E070), () async {
+        final uri = Uri.parse('https://wa.me/2348038453858');
+        final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        if (!ok && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open WhatsApp.')));
+      }),
+      const SizedBox(height: 12),
       OutlinedButton.icon(onPressed: logout, icon: const Icon(Icons.logout), label: const Text('LOG OUT')),
     ]);
   }
