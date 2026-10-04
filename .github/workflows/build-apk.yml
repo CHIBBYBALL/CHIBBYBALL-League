@@ -1,12 +1,15 @@
-name: Build CHIBBYBALL APK + Prepare iOS
+name: Build CHIBBYBALL APK
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
-  build-android:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,10 +23,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate Android and iOS projects
-        run: flutter create --platforms=android,ios .
+      - name: Generate Android project
+        run: flutter create --platforms=android .
 
-      - name: Add Firebase Android configuration
+      - name: Add Firebase configuration
         run: |
           mkdir -p android/app
           cp google-services.json android/app/google-services.json
@@ -82,12 +85,12 @@ jobs:
           print("Google Services plugin configured.")
           PY
 
-      - name: Verify Firebase Android configuration
+      - name: Verify Firebase configuration
         run: |
           test -f android/app/google-services.json
           grep -q '"project_id": "chibbyball-league"' google-services.json
           grep -q '"package_name": "com.example.chibbyball_league"' google-services.json
-          echo "Firebase Android configuration verified."
+          echo "Firebase configuration verified."
 
       - name: Add Android permissions
         run: |
@@ -152,23 +155,31 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Verify iOS project was generated
-        run: |
-          test -d ios
-          test -f ios/Runner.xcodeproj/project.pbxproj
-          echo "iOS project generated successfully."
-
-      - name: Upload prepared iOS project
-        uses: actions/upload-artifact@v4
-        with:
-          name: CHIBBYBALL-iOS-Project
-          path: ios/
-
-      - name: Build Android APK
+      - name: Build APK
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Rename APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk CHIBBYBALL.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: CHIBBYBALL-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: CHIBBYBALL.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: chibbyball-latest
+          name: CHIBBYBALL Latest
+          body: |
+            # CHIBBYBALL League
+
+            Latest Android version of the CHIBBYBALL League app.
+
+            Download the APK below and install it on your Android device.
+          files: CHIBBYBALL.apk
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
