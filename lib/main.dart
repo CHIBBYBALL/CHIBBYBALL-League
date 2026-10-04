@@ -4239,29 +4239,16 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  late final TextEditingController phoneController;
-  late final TextEditingController countryController;
-  late final TextEditingController countryCodeController;
-  late final TextEditingController whatsappController;
-  bool saving = false;
   bool uploadingAvatar = false;
-  bool editing = false;
 
   @override
   void initState() {
     super.initState();
     final p = Store.instance.current;
-    phoneController = TextEditingController(text: p?.phoneNumber ?? '');
-    countryController = TextEditingController(text: p?.country ?? '');
-    countryCodeController = TextEditingController(text: p?.countryCode ?? '');
-    whatsappController = TextEditingController(text: p?.whatsappNumber ?? '');
-    editing = !_hasSavedDetails(p);
   }
 
-  bool _hasSavedDetails(Player? p) => p != null && (p.phoneNumber.trim().isNotEmpty || p.country.trim().isNotEmpty || p.countryCode.trim().isNotEmpty || p.whatsappNumber.trim().isNotEmpty);
-
   @override
-  void dispose() { phoneController.dispose(); countryController.dispose(); countryCodeController.dispose(); whatsappController.dispose(); super.dispose(); }
+  void dispose() { super.dispose(); }
 
   Future<void> changeAvatar() async {
     if (uploadingAvatar) return;
@@ -4275,20 +4262,6 @@ class _ProfilePageState extends State<ProfilePage> {
     if (error == null) setState(() {});
   }
 
-  Future<void> saveProfile() async {
-    setState(() => saving = true);
-    final error = await Store.instance.updateMyProfile(phoneNumber: phoneController.text, country: countryController.text, countryCode: countryCodeController.text, whatsappNumber: whatsappController.text);
-    if (!mounted) return;
-    setState(() { saving = false; if (error == null) editing = false; });
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Profile details saved successfully.')));
-  }
-
-  void startEditing() {
-    final p = Store.instance.current;
-    phoneController.text = p?.phoneNumber ?? ''; countryController.text = p?.country ?? ''; countryCodeController.text = p?.countryCode ?? ''; whatsappController.text = p?.whatsappNumber ?? '';
-    setState(() => editing = true);
-  }
-
   Future<void> logout() async {
     await Store.instance.setPresence(false);
     await Store.instance.logout();
@@ -4296,7 +4269,7 @@ class _ProfilePageState extends State<ProfilePage> {
     Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
   }
 
-  Widget _info(IconData icon, String title, String value, Color accent) => Container(margin: const EdgeInsets.only(bottom: 10), decoration: _neonBox(accent, radius: 16), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 3), leading: Icon(icon, color: accent, size: 25), title: Text(title, style: const TextStyle(color: _muted, fontSize: 13, fontWeight: FontWeight.w700)), subtitle: Text(value.trim().isEmpty ? 'Not provided' : value.trim(), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))));
+
 
   @override
   Widget build(BuildContext context) {
@@ -4347,25 +4320,6 @@ class _ProfilePageState extends State<ProfilePage> {
         ]),
       ),
       const SizedBox(height: 16),
-      Row(children: [Expanded(child: _neonSectionTitle('PLAYER DETAILS', accent: _cyan)), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: _cyan))]),
-      const SizedBox(height: 8),
-      _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
-      _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
-      _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
-      const SizedBox(height: 4),
-      if (!editing) ...[
-        _info(Icons.phone, 'Phone Number', p?.phoneNumber ?? '', _cyan),
-        _info(Icons.public, 'Country', p?.country ?? '', _cyan),
-        _info(Icons.language, 'Country Code', p?.countryCode ?? '', _cyan),
-        _info(Icons.chat, 'WhatsApp Number', p?.whatsappNumber ?? '', const Color(0xFF20E070)),
-      ],
-      if (editing) ...[
-        TextField(controller: phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone Number', prefixIcon: Icon(Icons.phone))), const SizedBox(height: 10),
-        TextField(controller: countryController, decoration: const InputDecoration(labelText: 'Country', prefixIcon: Icon(Icons.public))), const SizedBox(height: 10),
-        TextField(controller: countryCodeController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Country Code (e.g. +234)', prefixIcon: Icon(Icons.language))), const SizedBox(height: 10),
-        TextField(controller: whatsappController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'WhatsApp Number', prefixIcon: Icon(Icons.chat))), const SizedBox(height: 12),
-        Row(children: [Expanded(child: FilledButton.icon(onPressed: saving ? null : saveProfile, icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save), label: Text(saving ? 'SAVING...' : 'SAVE PROFILE'))), const SizedBox(width: 8), if (_hasSavedDetails(p)) IconButton(onPressed: saving ? null : () => setState(() => editing = false), icon: const Icon(Icons.close, color: _muted))]),
-      ],
       const SizedBox(height: 8),
       Container(decoration: _neonBox(_purple, radius: 18), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 4), leading: Stack(children: [const Icon(Icons.chat_bubble_outline, color: _purple, size: 29), Positioned(right: -2, bottom: -2, child: Container(width: 9, height: 9, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]), title: const Text('PLAYERS & MESSAGES', style: TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'You are online • chat with other players' : 'Chat with other players and see their status'), trailing: const Icon(Icons.chevron_right, color: _purple), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())))),
       const SizedBox(height: 10),
