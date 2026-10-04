@@ -715,13 +715,30 @@ class Store {
     if (clean.isEmpty) return 'League name is required.';
     if (Store.instance.current?.admin != true) return 'Admin access required.';
     if (isPaid && entryFee <= 0) return 'Enter a valid entry fee for a paid league.';
+    if (fixtureMode != 'single_round' && fixtureMode != 'home_away') {
+      return 'Invalid fixture format.';
+    }
     if (!isPaid) entryFee = 0;
     try {
-      await supabase.from('leagues').insert({'name': clean, 'status': 'open', 'is_paid': isPaid, 'entry_fee': entryFee, 'currency': currency, 'fixture_mode': fixtureMode});
+      // Use the admin RPC so league creation is not blocked by the leagues
+      // table RLS policy. The RPC performs its own admin check server-side.
+      await supabase.rpc(
+        'admin_create_league',
+        params: {
+          'p_name': clean,
+          'p_is_paid': isPaid,
+          'p_entry_fee': entryFee,
+          'p_currency': currency,
+          'p_fixture_mode': fixtureMode,
+        },
+      );
       await refreshLeagues();
       return null;
-    } on PostgrestException catch (e) { return 'Could not create league: ${e.message}'; }
-      catch (e) { return 'Could not create league: $e'; }
+    } on PostgrestException catch (e) {
+      return 'Could not create league: ${e.message}';
+    } catch (e) {
+      return 'Could not create league: $e';
+    }
   }
 
   Future<List<LeagueJoinRequest>> fetchLeagueJoinRequests({String? leagueId, bool pendingOnly = false}) async {
@@ -4266,10 +4283,19 @@ class _ProfilePageState extends State<ProfilePage> {
         Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: (online ? const Color(0xFF20E070) : const Color(0xFF667085)).withOpacity(.12), borderRadius: BorderRadius.circular(30), border: Border.all(color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), const SizedBox(width: 7), Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11, fontWeight: FontWeight.w900))])),
       ])),
       const SizedBox(height: 16),
-      _neonSectionTitle('ACCOUNT', accent: _yellow), const SizedBox(height: 10),
-      _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
-      _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
-      _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
+      _neonSectionTitle('ACCOUNT', accent: _yellow),
+      const SizedBox(height: 10),
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: _neonBox(_blue, radius: 18),
+        child: Column(
+          children: [
+            _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
+            _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
+            _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
+          ],
+        ),
+      ),
       const SizedBox(height: 6),
       Row(children: [Expanded(child: _neonSectionTitle('PLAYER DETAILS', accent: _cyan)), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: _cyan))]),
       const SizedBox(height: 8),
@@ -4866,27 +4892,30 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'League name',
-                      hintText: 'e.g. CHIBBYBALL Season 1',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  height: 56,
-                  child: FilledButton(
-                    onPressed: loading ? null : _createLeague,
-                    child: const Text('CREATE'),
-                  ),
-                ),
-              ],
+            TextField(
+              controller: nameController,
+              textInputAction: TextInputAction.done,
+              onSubmitted: loading ? null : (_) => _createLeague(),
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                labelText: 'League name',
+                hintText: 'e.g. CHIBBYBALL Season 1',
+                prefixIcon: Icon(Icons.emoji_events_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton.icon(
+                onPressed: loading ? null : _createLeague,
+                icon: loading
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.add_circle_outline),
+                label: Text(loading ? 'CREATING...' : 'CREATE LEAGUE'),
+              ),
             ),
             const SizedBox(height: 12),
             Card(
