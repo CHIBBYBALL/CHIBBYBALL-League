@@ -724,6 +724,68 @@ class Store {
       catch (e) { return 'Could not create league: $e'; }
   }
 
+  Future<List<LeagueJoinRequest>> fetchLeagueJoinRequests({String? leagueId, bool pendingOnly = false}) async {
+    if (current?.admin != true) return [];
+    var query = supabase
+        .from('league_join_requests')
+        .select('id, league_id, player_id, status, requested_at, reviewed_at, reviewed_by, leagues(name), profiles!league_join_requests_player_id_fkey(full_name, gamer_tag, avatar_url)');
+    if (leagueId != null && leagueId.isNotEmpty) {
+      query = query.eq('league_id', leagueId);
+    }
+    if (pendingOnly) {
+      query = query.eq('status', 'pending');
+    }
+    final data = await query.order('requested_at', ascending: false);
+    return (data as List)
+        .map((e) => LeagueJoinRequest.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<String?> requestToJoinLeague(String leagueId) async {
+    final player = current;
+    if (player == null) return 'Please sign in first.';
+    if (player.admin) return 'Admins do not need to request league membership.';
+    try {
+      final existingMember = await supabase
+          .from('league_members')
+          .select('player_id')
+          .eq('league_id', leagueId)
+          .eq('player_id', player.id)
+          .maybeSingle();
+      if (existingMember != null) return 'You are already a member of this league.';
+
+      await supabase.rpc('request_to_join_league', params: {
+        'p_league_id': leagueId,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
+  Future<String?> reviewLeagueJoinRequest({
+    required String requestId,
+    required String decision,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    if (decision != 'approved' && decision != 'rejected') {
+      return 'Invalid request decision.';
+    }
+    try {
+      await supabase.rpc('admin_review_league_join_request', params: {
+        'p_request_id': requestId,
+        'p_decision': decision,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   Future<String?> setLeagueStatus(String leagueId, String status) async {
     if (Store.instance.current?.admin != true) return 'Admin access required.';
     try {
@@ -790,6 +852,29 @@ class Store {
       return 'Could not disregister player: ${e.message}';
     } catch (e) {
       return 'Could not disregister player: $e';
+    }
+  }
+
+  /// Permanently deletes a player account. The Supabase RPC performs the
+  /// privileged auth/profile cleanup so the client never needs service-role keys.
+  Future<String?> deletePlayerAccount(String playerId) async {
+    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    if (playerId == Store.instance.current?.id) {
+      return 'You cannot delete the currently signed-in admin account.';
+    }
+    try {
+      await supabase.rpc(
+        'admin_delete_player',
+        params: {'p_player_id': playerId},
+      );
+      players.removeWhere((p) => p.id == playerId);
+      if (current?.id == playerId) current = null;
+      await save();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not delete player: ${e.message}';
+    } catch (e) {
+      return 'Could not delete player: $e';
     }
   }
 
@@ -1185,7 +1270,7 @@ class Store {
 
       final profile = await supabase
           .from('profiles')
-          .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, last_seen, is_online')
+          .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, avatar_url, last_seen, is_online')
           .eq('id', user.id)
           .maybeSingle();
 
@@ -1202,6 +1287,7 @@ class Store {
         country: profile['country']?.toString() ?? '',
         countryCode: profile['country_code']?.toString() ?? '',
         whatsappNumber: profile['whatsapp_number']?.toString() ?? '',
+        avatarUrl: profile['avatar_url']?.toString() ?? '',
         lastSeen: profile['last_seen'] == null
             ? null
             : DateTime.tryParse(profile['last_seen'].toString()),
@@ -2939,6 +3025,8 @@ class DashboardPage extends StatelessWidget {
         const SizedBox(height: 10),
         _neonAction(context, Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
         const SizedBox(height: 10),
+        _neonAction(context, Icons.group_add, 'JOIN A LEAGUE', 'Request to join a league and wait for admin approval', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueJoinPage()))),
+        const SizedBox(height: 10),
         _neonAction(context, Icons.person, 'PLAYER PROFILE', 'Edit details and profile photo', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.people_alt, 'PLAYERS & MESSAGES', 'See online players and chat', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
@@ -4379,6 +4467,258 @@ class PlayerStatsPage extends StatelessWidget {
 }
 
 // ============================================================
+// LEAGUE JOIN REQUESTS
+// ============================================================
+
+class LeagueJoinRequest {
+  final String id;
+  final String leagueId;
+  final String playerId;
+  final String status;
+  final DateTime? requestedAt;
+  final DateTime? reviewedAt;
+  final String? reviewedBy;
+  final String leagueName;
+  final String playerName;
+  final String gamerTag;
+  final String avatarUrl;
+
+  const LeagueJoinRequest({
+    required this.id,
+    required this.leagueId,
+    required this.playerId,
+    required this.status,
+    required this.requestedAt,
+    required this.reviewedAt,
+    required this.reviewedBy,
+    required this.leagueName,
+    required this.playerName,
+    required this.gamerTag,
+    required this.avatarUrl,
+  });
+
+  factory LeagueJoinRequest.fromJson(Map<String, dynamic> json) {
+    final league = json['leagues'];
+    final profile = json['profiles'];
+    return LeagueJoinRequest(
+      id: json['id'].toString(),
+      leagueId: json['league_id'].toString(),
+      playerId: json['player_id'].toString(),
+      status: json['status']?.toString() ?? 'pending',
+      requestedAt: json['requested_at'] == null ? null : DateTime.tryParse(json['requested_at'].toString()),
+      reviewedAt: json['reviewed_at'] == null ? null : DateTime.tryParse(json['reviewed_at'].toString()),
+      reviewedBy: json['reviewed_by']?.toString(),
+      leagueName: league is Map ? (league['name']?.toString() ?? 'League') : 'League',
+      playerName: profile is Map ? (profile['full_name']?.toString() ?? '') : '',
+      gamerTag: profile is Map ? (profile['gamer_tag']?.toString() ?? '') : '',
+      avatarUrl: profile is Map ? (profile['avatar_url']?.toString() ?? '') : '',
+    );
+  }
+}
+
+class LeagueJoinPage extends StatefulWidget {
+  const LeagueJoinPage({super.key});
+  @override State<LeagueJoinPage> createState() => _LeagueJoinPageState();
+}
+
+class _LeagueJoinPageState extends State<LeagueJoinPage> {
+  bool loading = false;
+  Set<String> memberIds = {};
+  Map<String, String> requestStatuses = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    try {
+      final store = Store.instance;
+      await store.refreshLeagues();
+      final player = store.current;
+      if (player != null) {
+        final rows = await supabase
+            .from('league_join_requests')
+            .select('league_id, status')
+            .eq('player_id', player.id);
+        requestStatuses = {
+          for (final row in (rows as List))
+            row['league_id'].toString(): row['status'].toString(),
+        };
+        final all = <String>{};
+        for (final league in store.leagues) {
+          try {
+            final ids = await store.leagueMemberIds(league.id);
+            if (ids.contains(player.id)) all.add(league.id);
+          } catch (_) {}
+        }
+        memberIds = all;
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load leagues: $e')));
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _request(LeagueInfo league) async {
+    setState(() => loading = true);
+    final error = await Store.instance.requestToJoinLeague(league.id);
+    if (!mounted) return;
+    await _load();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error ?? 'Join request sent. Wait for admin confirmation.')),
+    );
+  }
+
+  String _statusFor(LeagueInfo league) {
+    if (memberIds.contains(league.id)) return 'MEMBER';
+    final status = requestStatuses[league.id];
+    if (status == 'pending') return 'REQUESTED';
+    if (status == 'approved') return 'APPROVED';
+    if (status == 'rejected') return 'REJECTED';
+    return 'AVAILABLE';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final leagues = Store.instance.leagues.where((l) => l.status != 'completed').toList();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Join a League')),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: leagues.isEmpty
+            ? ListView(children: const [SizedBox(height: 180), Center(child: Text('No leagues are available right now.'))])
+            : ListView.builder(
+                padding: const EdgeInsets.all(14),
+                itemCount: leagues.length,
+                itemBuilder: (context, index) {
+                  final league = leagues[index];
+                  final status = _statusFor(league);
+                  final canRequest = status == 'AVAILABLE' || status == 'REJECTED';
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    decoration: _neonBox(status == 'MEMBER' ? const Color(0xFF20E070) : _cyan, radius: 18),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Row(children: [
+                          Expanded(child: Text(league.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
+                          Text(status, style: TextStyle(color: status == 'MEMBER' ? const Color(0xFF20E070) : _yellow, fontSize: 10, fontWeight: FontWeight.w900)),
+                        ]),
+                        const SizedBox(height: 6),
+                        Text(league.status.toUpperCase(), style: const TextStyle(color: _muted, fontSize: 11)),
+                        const SizedBox(height: 4),
+                        Text(league.feeLabel, style: const TextStyle(color: _cyan, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 12),
+                        if (canRequest)
+                          SizedBox(width: double.infinity, child: FilledButton.icon(
+                            onPressed: loading ? null : () => _request(league),
+                            icon: const Icon(Icons.person_add),
+                            label: Text(status == 'REJECTED' ? 'REQUEST AGAIN' : 'REQUEST TO JOIN'),
+                          ))
+                        else if (status == 'REQUESTED')
+                          const Text('Waiting for admin approval.', style: TextStyle(color: _yellow, fontWeight: FontWeight.w700))
+                        else if (status == 'MEMBER')
+                          const Text('You are already in this league.', style: TextStyle(color: Color(0xFF20E070), fontWeight: FontWeight.w700))
+                        else if (status == 'APPROVED')
+                          const Text('Your request was approved.', style: TextStyle(color: Color(0xFF20E070), fontWeight: FontWeight.w700)),
+                      ]),
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class LeagueJoinRequestsPage extends StatefulWidget {
+  const LeagueJoinRequestsPage({super.key});
+  @override State<LeagueJoinRequestsPage> createState() => _LeagueJoinRequestsPageState();
+}
+
+class _LeagueJoinRequestsPageState extends State<LeagueJoinRequestsPage> {
+  bool loading = false;
+  List<LeagueJoinRequest> requests = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    try {
+      requests = await Store.instance.fetchLeagueJoinRequests(pendingOnly: true);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load requests: $e')));
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _review(LeagueJoinRequest request, String decision) async {
+    setState(() => loading = true);
+    final error = await Store.instance.reviewLeagueJoinRequest(requestId: request.id, decision: decision);
+    if (!mounted) return;
+    if (error != null) {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    await _load();
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(decision == 'approved' ? '${request.gamerTag} approved.' : '${request.gamerTag} rejected.')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('League Join Requests')),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: requests.isEmpty
+            ? ListView(children: const [SizedBox(height: 180), Center(child: Text('No pending join requests.'))])
+            : ListView.builder(
+                padding: const EdgeInsets.all(14),
+                itemCount: requests.length,
+                itemBuilder: (context, index) {
+                  final r = requests[index];
+                  final player = Store.instance.findPlayer(r.playerId);
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    decoration: _neonBox(_purple, radius: 18),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Row(children: [
+                          _playerAvatar(player, radius: 24, accent: _cyan),
+                          const SizedBox(width: 10),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(r.gamerTag.isEmpty ? r.playerName : r.gamerTag, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                            Text(r.playerName, style: const TextStyle(color: _muted, fontSize: 11)),
+                          ])),
+                        ]),
+                        const SizedBox(height: 10),
+                        Text('Wants to join: ${r.leagueName}', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 10),
+                        Row(children: [
+                          Expanded(child: FilledButton.icon(onPressed: loading ? null : () => _review(r, 'approved'), icon: const Icon(Icons.check), label: const Text('APPROVE'))),
+                          const SizedBox(width: 8),
+                          Expanded(child: OutlinedButton.icon(onPressed: loading ? null : () => _review(r, 'rejected'), icon: const Icon(Icons.close), label: const Text('REJECT'))),
+                        ]),
+                      ]),
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+// ============================================================
 // LEAGUE MANAGEMENT
 // ============================================================
 
@@ -5196,6 +5536,46 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
     if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? '${player.gamerTag} disregistered from all leagues.'))); }
   }
 
+  Future<void> _deletePlayer(Player player) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('DELETE PLAYER ACCOUNT?'),
+        content: Text(
+          '${player.gamerTag} will be permanently deleted from CHIBBYBALL. ' +
+          'Their account, profile, league memberships and related player records will be removed. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFF4D7D)),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('DELETE PERMANENTLY'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => loading = true);
+    final error = await store.deletePlayerAccount(player.id);
+    if (error == null) {
+      memberIds.remove(player.id);
+      await store.refreshPlayers();
+      await store.refreshLeagues();
+      await store.loadMatchesFromSupabase();
+    }
+    if (mounted) {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error ?? '${player.gamerTag} was permanently deleted.')),
+      );
+    }
+  }
+
   Future<void> _disciplineDialog(
     Player player, {
     required String action,
@@ -5325,6 +5705,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
             PopupMenuButton<String>(
               onSelected: (value) {
                 if (value == 'disregister') _disregister(player);
+                if (value == 'delete') _deletePlayer(player);
                 if (value == 'suspend') _disciplineDialog(player, action: 'suspend');
                 if (value == 'unsuspend') _disciplineDialog(player, action: 'unsuspend');
                 if (value == 'deduct') _disciplineDialog(player, action: 'deduct');
@@ -5337,6 +5718,8 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                 PopupMenuItem(value: 'fine', child: Text('Fine player')),
                 PopupMenuDivider(),
                 PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues')),
+                PopupMenuDivider(),
+                PopupMenuItem(value: 'delete', child: Text('DELETE PLAYER ACCOUNT')),
               ],
             ),
           ])));
@@ -5379,6 +5762,10 @@ class _AdminPageState extends State<AdminPage> {
         ]),
         const SizedBox(height: 16),
         _neonAction(context, Icons.emoji_events, 'MANAGE LEAGUES', 'Create and activate multiple leagues', _yellow, () => open(const LeagueManagementPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.add_circle_outline, 'CREATE LEAGUE', 'Create a new league', _yellow, () => open(const LeagueManagementPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.group_add, 'JOIN REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueJoinRequestsPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.calendar_month, 'MATCH SCHEDULE', 'Set date and time windows', _cyan, () => open(const AdminMatchSchedulePage())),
         const SizedBox(height: 9),
