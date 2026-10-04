@@ -3038,7 +3038,9 @@ class DashboardPage extends StatelessWidget {
           _neonStat(context, Icons.hourglass_top, '$pending', 'PENDING', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage(statusFilter: 'Awaiting Confirmation')))),
         ]),
         const SizedBox(height: 18),
-        _neonAction(context, Icons.calendar_month, 'YOUR FIXTURES', 'View matches and submit results', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
+        _neonAction(context, Icons.calendar_month, 'YOUR FIXTURES', 'View your matches and submit results', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
+        const SizedBox(height: 10),
+        _neonAction(context, Icons.calendar_view_week, 'COMPLETE LEAGUE FIXTURES', 'See every Match Day and every fixture in your league', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage(showAllLeagueFixtures: true)))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
         const SizedBox(height: 10),
@@ -3071,7 +3073,12 @@ class DashboardPage extends StatelessWidget {
 
 class FixturesPage extends StatefulWidget {
   final String? statusFilter;
-  const FixturesPage({super.key, this.statusFilter});
+  final bool showAllLeagueFixtures;
+  const FixturesPage({
+    super.key,
+    this.statusFilter,
+    this.showAllLeagueFixtures = false,
+  });
   @override State<FixturesPage> createState() => _FixturesPageState();
 }
 
@@ -3084,7 +3091,17 @@ class _FixturesPageState extends State<FixturesPage> {
     final error = await Store.instance.selectLeague(id);
     if (!mounted) return;
     setState(() => loading = false);
-    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    if (widget.showAllLeagueFixtures &&
+        Store.instance.current?.admin != true &&
+        !Store.instance.activeLeagueMemberIds.contains(Store.instance.current?.id)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You must be registered in this league to view its complete fixtures.')),
+      );
+    }
   }
 
   String _dateLabel(MatchItem m) {
@@ -3113,7 +3130,19 @@ class _FixturesPageState extends State<FixturesPage> {
       decoration: _neonBox(accent, radius: 20),
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ResultPage(match: m))).then((_) { if (mounted) setState(() {}); }),
+        onTap: () {
+          final currentId = store.current?.id;
+          final isParticipant = currentId == m.homeId || currentId == m.awayId;
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ResultPage(
+                match: m,
+                readOnly: widget.showAllLeagueFixtures && !isParticipant,
+              ),
+            ),
+          ).then((_) { if (mounted) setState(() {}); });
+        },
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
           child: Column(children: [
@@ -3272,8 +3301,17 @@ class _FixturesPageState extends State<FixturesPage> {
     final selected = store.activeLeagueId == null ? null : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
     var visible = List<MatchItem>.from(store.matches);
     final player = store.current;
-    if (player != null) visible = visible.where((m) => m.homeId == player.id || m.awayId == player.id).toList();
-    if (widget.statusFilter != null) visible = visible.where((m) => m.status == widget.statusFilter).toList();
+    final isLeagueMember = player != null &&
+        (player.admin || store.activeLeagueMemberIds.contains(player.id));
+
+    if (!widget.showAllLeagueFixtures && player != null) {
+      visible = visible.where((m) => m.homeId == player.id || m.awayId == player.id).toList();
+    } else if (widget.showAllLeagueFixtures && !isLeagueMember) {
+      visible = <MatchItem>[];
+    }
+    if (widget.statusFilter != null) {
+      visible = visible.where((m) => m.status == widget.statusFilter).toList();
+    }
     final rounds = visible.map((m) => m.round).toSet().toList()..sort();
 
     return ListView(padding: const EdgeInsets.fromLTRB(14, 12, 14, 30), children: [
@@ -3294,9 +3332,27 @@ class _FixturesPageState extends State<FixturesPage> {
         decoration: _neonBox(_blue, radius: 18),
         child: DropdownButtonFormField<String>(value: selected?.id, decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text('${l.name} • ${l.status.toUpperCase()}'))).toList(), onChanged: loading ? null : _selectLeague),
       ),
-      if (selected != null) Padding(padding: const EdgeInsets.fromLTRB(3, 16, 3, 10), child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: .7))),
+      if (selected != null) Padding(
+        padding: const EdgeInsets.fromLTRB(3, 16, 3, 6),
+        child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: .7)),
+      ),
+      if (widget.showAllLeagueFixtures)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(3, 0, 3, 10),
+          child: Text(
+            'COMPLETE LEAGUE FIXTURES • ALL MATCH DAYS',
+            style: const TextStyle(color: _cyan, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: .7),
+          ),
+        ),
       if (widget.statusFilter != null) Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(widget.statusFilter!.toUpperCase(), style: const TextStyle(color: _purple, fontWeight: FontWeight.w900))),
-      if (visible.isEmpty) ...[
+      if (widget.showAllLeagueFixtures && selected != null && !isLeagueMember) ...[
+        const SizedBox(height: 45),
+        const Center(child: Icon(Icons.lock_outline, size: 52, color: _yellow)),
+        const SizedBox(height: 10),
+        const Center(child: Text('JOIN THIS LEAGUE TO VIEW ALL FIXTURES', textAlign: TextAlign.center, style: TextStyle(color: _yellow, fontSize: 15, fontWeight: FontWeight.w900))),
+        const SizedBox(height: 7),
+        const Center(child: Text('Only registered league players can see the complete league fixture list.', textAlign: TextAlign.center, style: TextStyle(color: _muted, fontSize: 12))),
+      ] else if (visible.isEmpty) ...[
         const SizedBox(height: 55),
         const Center(child: Icon(Icons.sports_soccer, size: 60, color: _cyan)),
         const SizedBox(height: 10),
@@ -3336,8 +3392,13 @@ extension MatchScheduleDisplay on MatchItem {
 
 class ResultPage extends StatefulWidget {
   final MatchItem match;
+  final bool readOnly;
 
-  const ResultPage({super.key, required this.match});
+  const ResultPage({
+    super.key,
+    required this.match,
+    this.readOnly = false,
+  });
 
   @override
   State<ResultPage> createState() => _ResultPageState();
@@ -3552,7 +3613,7 @@ class _ResultPageState extends State<ResultPage> {
     final match = widget.match;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Submit Result')),
+      appBar: AppBar(title: Text(widget.readOnly ? 'Match Details' : 'Submit Result')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
@@ -3589,55 +3650,55 @@ class _ResultPageState extends State<ResultPage> {
             path: match.awayProof,
           ),
 
-          const Divider(height: 32),
-          const Text(
-            'SUBMIT / UPDATE YOUR RESULT',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: homeController,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: '${store.playerName(match.homeId)} score',
-              border: const OutlineInputBorder(),
+          if (widget.readOnly) ...[
+            const Divider(height: 32),
+            const Text('LEAGUE FIXTURE', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            const Text(
+              'You can view this fixture because you are registered in this league. Only the two players in the fixture can submit or update its result.',
+              style: TextStyle(color: _muted, height: 1.45),
             ),
-          ),
-          const SizedBox(height: 15),
-          TextField(
-            controller: awayController,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: '${store.playerName(match.awayId)} score',
-              border: const OutlineInputBorder(),
+          ] else ...[
+            const Divider(height: 32),
+            const Text(
+              'SUBMIT / UPDATE YOUR RESULT',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-          ),
-          const SizedBox(height: 20),
-          OutlinedButton.icon(
-            onPressed: loading ? null : chooseProof,
-            icon: const Icon(Icons.photo_library),
-            label: Text(
-              proof == null
-                  ? 'Choose Screenshot Proof'
-                  : 'Screenshot Selected',
-            ),
-          ),
-          if (proof != null) ...[
-            const SizedBox(height: 15),
-            SizedBox(
-              height: 200,
-              child: Image.file(
-                proof!,
-                fit: BoxFit.contain,
+            const SizedBox(height: 14),
+            TextField(
+              controller: homeController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: '${store.playerName(match.homeId)} score',
+                border: const OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 15),
+            TextField(
+              controller: awayController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: '${store.playerName(match.awayId)} score',
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 20),
+            OutlinedButton.icon(
+              onPressed: loading ? null : chooseProof,
+              icon: const Icon(Icons.photo_library),
+              label: Text(proof == null ? 'Choose Screenshot Proof' : 'Screenshot Selected'),
+            ),
+            if (proof != null) ...[
+              const SizedBox(height: 15),
+              SizedBox(height: 200, child: Image.file(proof!, fit: BoxFit.contain)),
+            ],
+            const SizedBox(height: 22),
+            FilledButton.icon(
+              onPressed: loading ? null : submit,
+              icon: const Icon(Icons.send),
+              label: const Text('SUBMIT RESULT'),
+            ),
           ],
-          const SizedBox(height: 22),
-          FilledButton.icon(
-            onPressed: loading ? null : submit,
-            icon: const Icon(Icons.send),
-            label: const Text('SUBMIT RESULT'),
-          ),
         ],
       ),
     );
@@ -4242,7 +4303,9 @@ class _ProfilePageState extends State<ProfilePage> {
     final p = Store.instance.current;
     final online = p?.isOnline == true && (p?.lastSeen == null || DateTime.now().toUtc().difference(p!.lastSeen!.toUtc()).inMinutes < 3);
     return ListView(padding: const EdgeInsets.fromLTRB(16, 14, 16, 30), children: [
-      Container(padding: const EdgeInsets.fromLTRB(18, 20, 18, 18), decoration: _neonBox(_blue, radius: 24), child: Column(children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+        child: Column(children: [
         Stack(
           clipBehavior: Clip.none,
           children: [
@@ -4281,16 +4344,15 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
         const SizedBox(height: 12), Text(p?.gamerTag ?? 'PLAYER', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900)), Text(p?.name ?? '', style: const TextStyle(color: _muted)), const SizedBox(height: 8),
         Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: (online ? const Color(0xFF20E070) : const Color(0xFF667085)).withOpacity(.12), borderRadius: BorderRadius.circular(30), border: Border.all(color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), const SizedBox(width: 7), Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11, fontWeight: FontWeight.w900))])),
-      ])),
+        ]),
+      ),
       const SizedBox(height: 16),
-      _neonSectionTitle('ACCOUNT', accent: _yellow),
-      const SizedBox(height: 10),
+      Row(children: [Expanded(child: _neonSectionTitle('PLAYER DETAILS', accent: _cyan)), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: _cyan))]),
+      const SizedBox(height: 8),
       _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
       _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
       _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
-      const SizedBox(height: 6),
-      Row(children: [Expanded(child: _neonSectionTitle('PLAYER DETAILS', accent: _cyan)), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: _cyan))]),
-      const SizedBox(height: 8),
+      const SizedBox(height: 4),
       if (!editing) ...[
         _info(Icons.phone, 'Phone Number', p?.phoneNumber ?? '', _cyan),
         _info(Icons.public, 'Country', p?.country ?? '', _cyan),
