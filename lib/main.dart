@@ -5060,7 +5060,7 @@ class _LeagueRequestPageState extends State<LeagueRequestPage> {
           Text(batch == null ? 'No creator batch is assigned to your account.' : 'Your batch: ${batch!}', style: const TextStyle(color: _muted)),
           const SizedBox(height: 5),
           Text(eligible ? 'You are eligible to request a league.' : 'Your batch is not currently allowed to create leagues.', style: TextStyle(color: eligible ? _cyan : const Color(0xFFFF4D7D), fontWeight: FontWeight.w800)),
-        ]),
+        ])),
         const SizedBox(height: 14),
         if (pendingStatus != null) Card(child: ListTile(leading: const Icon(Icons.hourglass_top, color: _yellow), title: const Text('REQUEST STATUS'), subtitle: Text(pendingStatus!.toUpperCase()))),
         if (!eligible) const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('Ask an administrator to assign your account to an approved creator batch.')))
