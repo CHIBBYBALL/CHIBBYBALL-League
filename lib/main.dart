@@ -5098,17 +5098,141 @@ class LeagueRequestsAdminPage extends StatefulWidget {
 class _LeagueRequestsAdminPageState extends State<LeagueRequestsAdminPage> {
   bool loading = true;
   List<Map<String, dynamic>> requests = [];
-  @override void initState() { super.initState(); _load(); }
-  Future<void> _load() async { try { requests = await Store.instance.fetchLeagueRequests(); } catch (_) {} if (mounted) setState(() => loading = false); }
-  Future<void> _review(Map<String,dynamic> request, String decision) async {
-    final noteController = TextEditingController();
-    final note = await showDialog<String>(context: context, builder: (_) => AlertDialog(title: Text(decision == 'approved' ? 'Approve League' : 'Reject League'), content: TextField(controller: noteController, maxLines: 3, decoration: const InputDecoration(labelText: 'Admin note (optional)')), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(context, noteController.text), child: Text(decision == 'approved' ? 'APPROVE' : 'REJECT'))]));
-    if (note == null) return;
-    setState(() => loading = true);
-    final error = await Store.instance.reviewLeagueRequest(requestId: request['id'].toString(), decision: decision, note: note);
-    if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Request $decision.'))); await _load(); }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
-  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('League Requests')), body: loading ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(onRefresh: _load, child: requests.isEmpty ? const Center(child: Text('No league requests.')) : ListView.builder(padding: const EdgeInsets.all(14), itemCount: requests.length, itemBuilder: (_,i) { final r=requests[i]; final status=r['status']?.toString() ?? 'pending'; final requester=Store.instance.playerName(r['requested_by']?.toString() ?? ''); return Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(r['league_name']?.toString() ?? '', style: const TextStyle(fontSize:18,fontWeight:FontWeight.w900)), const SizedBox(height:6), Text('Requested by: $requester'), Text('Batch: ${r['batch_name']}'), if ((r['description']?.toString() ?? '').isNotEmpty) Padding(padding: const EdgeInsets.only(top:5), child: Text(r['description'].toString(), style: const TextStyle(color:_muted))), const SizedBox(height:8), Text('Status: ${status.toUpperCase()}', style: const TextStyle(fontWeight:FontWeight.w800)), if (status == 'pending') Row(children:[Expanded(child:OutlinedButton.icon(onPressed:()=>_review(r,'rejected'), icon:const Icon(Icons.close), label:const Text('REJECT'))), const SizedBox(width:8), Expanded(child:FilledButton.icon(onPressed:()=>_review(r,'approved'), icon:const Icon(Icons.check), label:const Text('APPROVE')))])]))); }));
+
+  Future<void> _load() async {
+    try {
+      requests = await Store.instance.fetchLeagueRequests();
+    } catch (_) {}
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _review(Map<String, dynamic> request, String decision) async {
+    final noteController = TextEditingController();
+    final note = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(decision == 'approved' ? 'Approve League' : 'Reject League'),
+        content: TextField(
+          controller: noteController,
+          maxLines: 3,
+          decoration: const InputDecoration(labelText: 'Admin note (optional)'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, noteController.text),
+            child: Text(decision == 'approved' ? 'APPROVE' : 'REJECT'),
+          ),
+        ],
+      ),
+    );
+
+    noteController.dispose();
+    if (note == null) return;
+
+    setState(() => loading = true);
+    final error = await Store.instance.reviewLeagueRequest(
+      requestId: request['id'].toString(),
+      decision: decision,
+      note: note,
+    );
+
+    if (mounted) {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error ?? 'Request $decision.')),
+      );
+      await _load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('League Requests')),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: requests.isEmpty
+                  ? const Center(child: Text('No league requests.'))
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(14),
+                      itemCount: requests.length,
+                      itemBuilder: (_, i) {
+                        final r = requests[i];
+                        final status = r['status']?.toString() ?? 'pending';
+                        final requester = Store.instance.playerName(
+                          r['requested_by']?.toString() ?? '',
+                        );
+
+                        return Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  r['league_name']?.toString() ?? '',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text('Requested by: $requester'),
+                                Text('Batch: ${r['batch_name']}'),
+                                if ((r['description']?.toString() ?? '').isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 5),
+                                    child: Text(
+                                      r['description'].toString(),
+                                      style: const TextStyle(color: _muted),
+                                    ),
+                                  ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Status: ${status.toUpperCase()}',
+                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                if (status == 'pending')
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: () => _review(r, 'rejected'),
+                                          icon: const Icon(Icons.close),
+                                          label: const Text('REJECT'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: FilledButton.icon(
+                                          onPressed: () => _review(r, 'approved'),
+                                          icon: const Icon(Icons.check),
+                                          label: const Text('APPROVE'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+    );
+  }
 }
 
 // ============================================================
