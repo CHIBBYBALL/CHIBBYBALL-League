@@ -438,6 +438,9 @@ class LeagueInfo {
   final DateTime? startDate;
   final DateTime? endDate;
   final String fixtureMode;
+  final bool matchDayDateControlsEnabled;
+  final bool sequentialMatchDayLockEnabled;
+  final bool gracePeriodEnabled;
 
   const LeagueInfo({
     required this.id,
@@ -450,6 +453,9 @@ class LeagueInfo {
     this.startDate,
     this.endDate,
     this.fixtureMode = 'single_round',
+    this.matchDayDateControlsEnabled = true,
+    this.sequentialMatchDayLockEnabled = true,
+    this.gracePeriodEnabled = true,
   });
 
   String get feeLabel =>
@@ -587,9 +593,11 @@ class Store {
   final Map<String, int> pointAdjustments = {};
   final Map<String, double> fineTotals = {};
   final Map<String, bool> suspendedPlayers = {};
+  bool matchDayDateControlsEnabled = true;
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
+    matchDayDateControlsEnabled = prefs.getBool('match_day_date_controls_enabled') ?? true;
 
     final savedPlayers = prefs.getString('local_players');
     final savedMatches = prefs.getString('local_matches');
@@ -631,7 +639,7 @@ class Store {
   Future<void> refreshLeagues() async {
     final data = await supabase
         .from('leagues')
-        .select('id, name, status, is_paid, entry_fee, currency, created_at, start_date, end_date, fixture_mode')
+        .select('id, name, status, is_paid, entry_fee, currency, created_at, start_date, end_date, fixture_mode, match_day_date_controls_enabled, sequential_match_day_lock_enabled, grace_period_enabled')
         .order('created_at', ascending: false);
 
     leagues
@@ -655,6 +663,9 @@ class Store {
               ? null
               : DateTime.tryParse(row['end_date'].toString()),
           fixtureMode: row['fixture_mode']?.toString() ?? 'single_round',
+          matchDayDateControlsEnabled: row['match_day_date_controls_enabled'] != false,
+          sequentialMatchDayLockEnabled: row['sequential_match_day_lock_enabled'] != false,
+          gracePeriodEnabled: row['grace_period_enabled'] != false,
         );
       }));
 
@@ -715,92 +726,13 @@ class Store {
     if (clean.isEmpty) return 'League name is required.';
     if (Store.instance.current?.admin != true) return 'Admin access required.';
     if (isPaid && entryFee <= 0) return 'Enter a valid entry fee for a paid league.';
-    if (fixtureMode != 'single_round' && fixtureMode != 'home_away') {
-      return 'Invalid fixture format.';
-    }
     if (!isPaid) entryFee = 0;
     try {
-      // Use the admin RPC so league creation is not blocked by the leagues
-      // table RLS policy. The RPC performs its own admin check server-side.
-      await supabase.rpc(
-        'admin_create_league',
-        params: {
-          'p_name': clean,
-          'p_is_paid': isPaid,
-          'p_entry_fee': entryFee,
-          'p_currency': currency,
-          'p_fixture_mode': fixtureMode,
-        },
-      );
+      await supabase.from('leagues').insert({'name': clean, 'status': 'open', 'is_paid': isPaid, 'entry_fee': entryFee, 'currency': currency, 'fixture_mode': fixtureMode});
       await refreshLeagues();
       return null;
-    } on PostgrestException catch (e) {
-      return 'Could not create league: ${e.message}';
-    } catch (e) {
-      return 'Could not create league: $e';
-    }
-  }
-
-  Future<List<LeagueJoinRequest>> fetchLeagueJoinRequests({String? leagueId, bool pendingOnly = false}) async {
-    if (current?.admin != true) return [];
-    var query = supabase
-        .from('league_join_requests')
-        .select('id, league_id, player_id, status, requested_at, reviewed_at, reviewed_by, leagues(name), profiles!league_join_requests_player_id_fkey(full_name, gamer_tag, avatar_url)');
-    if (leagueId != null && leagueId.isNotEmpty) {
-      query = query.eq('league_id', leagueId);
-    }
-    if (pendingOnly) {
-      query = query.eq('status', 'pending');
-    }
-    final data = await query.order('requested_at', ascending: false);
-    return (data as List)
-        .map((e) => LeagueJoinRequest.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
-  }
-
-  Future<String?> requestToJoinLeague(String leagueId) async {
-    final player = current;
-    if (player == null) return 'Please sign in first.';
-    if (player.admin) return 'Admins do not need to request league membership.';
-    try {
-      final existingMember = await supabase
-          .from('league_members')
-          .select('player_id')
-          .eq('league_id', leagueId)
-          .eq('player_id', player.id)
-          .maybeSingle();
-      if (existingMember != null) return 'You are already a member of this league.';
-
-      await supabase.rpc('request_to_join_league', params: {
-        'p_league_id': leagueId,
-      });
-      return null;
-    } on PostgrestException catch (e) {
-      return e.message;
-    } catch (e) {
-      return e.toString();
-    }
-  }
-
-  Future<String?> reviewLeagueJoinRequest({
-    required String requestId,
-    required String decision,
-  }) async {
-    if (current?.admin != true) return 'Admin access required.';
-    if (decision != 'approved' && decision != 'rejected') {
-      return 'Invalid request decision.';
-    }
-    try {
-      await supabase.rpc('admin_review_league_join_request', params: {
-        'p_request_id': requestId,
-        'p_decision': decision,
-      });
-      return null;
-    } on PostgrestException catch (e) {
-      return e.message;
-    } catch (e) {
-      return e.toString();
-    }
+    } on PostgrestException catch (e) { return 'Could not create league: ${e.message}'; }
+      catch (e) { return 'Could not create league: $e'; }
   }
 
   Future<String?> setLeagueStatus(String leagueId, String status) async {
@@ -872,29 +804,6 @@ class Store {
     }
   }
 
-  /// Permanently deletes a player account. The Supabase RPC performs the
-  /// privileged auth/profile cleanup so the client never needs service-role keys.
-  Future<String?> deletePlayerAccount(String playerId) async {
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
-    if (playerId == Store.instance.current?.id) {
-      return 'You cannot delete the currently signed-in admin account.';
-    }
-    try {
-      await supabase.rpc(
-        'admin_delete_player',
-        params: {'p_player_id': playerId},
-      );
-      players.removeWhere((p) => p.id == playerId);
-      if (current?.id == playerId) current = null;
-      await save();
-      return null;
-    } on PostgrestException catch (e) {
-      return 'Could not delete player: ${e.message}';
-    } catch (e) {
-      return 'Could not delete player: $e';
-    }
-  }
-
   Future<void> loadMatchesFromSupabase() async {
     final leagueId = await _activeLeagueId();
     if (leagueId == null) {
@@ -940,8 +849,8 @@ class Store {
           homeScore: (row['home_score'] as num?)?.toInt(),
           awayScore: (row['away_score'] as num?)?.toInt(),
           scheduledDate: row['scheduled_date']?.toString(),
-          startTime: row['match_start_time']?.toString() ?? '17:00:00',
-          endTime: row['match_end_time']?.toString() ?? '23:59:00',
+          startTime: row['match_start_time']?.toString() ?? '00:00:00',
+          endTime: row['match_end_time']?.toString() ?? '23:59:59',
           status: _dbStatusToLocal(row['status']?.toString()),
         );
 
@@ -1040,6 +949,18 @@ class Store {
       return 'Could not send message: ${e.message}';
     } catch (e) {
       return 'Could not send message: $e';
+    }
+  }
+
+  Future<String?> setMatchDayDateControlsEnabled(bool enabled) async {
+    if (current?.admin != true) return 'Admin access required.';
+    matchDayDateControlsEnabled = enabled;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('match_day_date_controls_enabled', enabled);
+      return null;
+    } catch (e) {
+      return 'Could not save Match Day date-control setting: $e';
     }
   }
 
@@ -1205,7 +1126,7 @@ class Store {
         try {
           final row = await supabase
               .from('profiles')
-              .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, avatar_url, last_seen, is_online')
+              .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, last_seen, is_online')
               .eq('id', user.id)
               .maybeSingle();
 
@@ -1231,7 +1152,6 @@ class Store {
         country: profile['country']?.toString() ?? '',
         countryCode: profile['country_code']?.toString() ?? '',
         whatsappNumber: profile['whatsapp_number']?.toString() ?? '',
-        avatarUrl: profile['avatar_url']?.toString() ?? '',
         lastSeen: profile['last_seen'] == null
             ? null
             : DateTime.tryParse(profile['last_seen'].toString()),
@@ -1287,7 +1207,7 @@ class Store {
 
       final profile = await supabase
           .from('profiles')
-          .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, avatar_url, last_seen, is_online')
+          .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, last_seen, is_online')
           .eq('id', user.id)
           .maybeSingle();
 
@@ -1304,7 +1224,6 @@ class Store {
         country: profile['country']?.toString() ?? '',
         countryCode: profile['country_code']?.toString() ?? '',
         whatsappNumber: profile['whatsapp_number']?.toString() ?? '',
-        avatarUrl: profile['avatar_url']?.toString() ?? '',
         lastSeen: profile['last_seen'] == null
             ? null
             : DateTime.tryParse(profile['last_seen'].toString()),
@@ -1418,8 +1337,7 @@ class Store {
         ),
       );
 
-      final publicUrl =
-          '${supabase.storage.from('avatars').getPublicUrl(path)}?v=${DateTime.now().millisecondsSinceEpoch}';
+      final publicUrl = supabase.storage.from('avatars').getPublicUrl(path);
       await supabase
           .from('profiles')
           .update({'avatar_url': publicUrl})
@@ -1536,8 +1454,8 @@ class Store {
           'home_player_id': homeId,
           'away_player_id': awayId,
           'status': 'scheduled',
-          'match_start_time': '17:00:00',
-          'match_end_time': '23:59:00',
+          'match_start_time': '00:00:00',
+          'match_end_time': '23:59:59',
         });
       }
       rotation.insert(1, rotation.removeLast());
@@ -1552,8 +1470,8 @@ class Store {
           'home_player_id': row['away_player_id'],
           'away_player_id': row['home_player_id'],
           'status': 'scheduled',
-          'match_start_time': '17:00:00',
-          'match_end_time': '23:59:00',
+          'match_start_time': '00:00:00',
+          'match_end_time': '23:59:59',
         });
       }
     }
@@ -1581,8 +1499,6 @@ class Store {
     }
 
     try {
-      // Save the same date/time to every fixture in the league.
-      // The direct update remains the fallback for existing databases.
       await supabase.from('matches').update({
         'scheduled_date': scheduledDate,
         'match_start_time': startTime,
@@ -1732,6 +1648,194 @@ class Store {
         fineAmount: amount,
       );
 
+  // ============================================================
+  // MATCH DAY ACCESS CONTROL
+  // ============================================================
+
+  DateTime? _matchDayDate(MatchItem match) {
+    final raw = match.scheduledDate?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  bool isMatchDayCompleted(int round, String playerId) {
+    final dayMatches = matches.where((m) =>
+        m.round == round && (m.homeId == playerId || m.awayId == playerId));
+    if (dayMatches.isEmpty) return true;
+    return dayMatches.every((m) => m.status == 'Confirmed');
+  }
+
+  bool previousMatchDaysCompleted(int round, String playerId) {
+    if (round <= 1) return true;
+    for (int day = 1; day < round; day++) {
+      if (!isMatchDayCompleted(day, playerId)) return false;
+    }
+    return true;
+  }
+
+  String matchDayState(MatchItem match, {String? playerId}) {
+    final player = playerId ?? current?.id;
+    if (player == null) return 'locked';
+    if (match.status == 'Confirmed') return 'completed';
+
+    final league = leagues.where((l) => l.id == activeLeagueId).firstOrNull;
+    final sequentialEnabled = league?.sequentialMatchDayLockEnabled ?? true;
+    final dateControlsEnabled = league?.matchDayDateControlsEnabled ?? matchDayDateControlsEnabled;
+    // A player cannot jump ahead while an earlier Match Day is incomplete.
+    if (sequentialEnabled && !previousMatchDaysCompleted(match.round, player)) return 'locked';
+    if (!dateControlsEnabled) return 'open';
+
+    final date = _matchDayDate(match);
+    if (date == null) return 'locked';
+
+    final now = DateTime.now();
+    final openAt = DateTime(date.year, date.month, date.day);
+    final closeAt = openAt.add(const Duration(days: 1));
+    final graceEnabled = league?.gracePeriodEnabled ?? true;
+    final graceEnd = closeAt.add(const Duration(hours: 5));
+
+    if (now.isBefore(openAt)) return 'locked';
+    if (now.isBefore(closeAt)) return 'open';
+    if (graceEnabled && now.isBefore(graceEnd)) return 'grace';
+    return 'expired';
+  }
+
+  bool canSubmitMatch(MatchItem match, {String? playerId}) {
+    final player = playerId ?? current?.id;
+    if (player == null) return false;
+    if (player != match.homeId && player != match.awayId) return false;
+    if (match.status == 'Confirmed') return false;
+    final state = matchDayState(match, playerId: player);
+    return state == 'open' || state == 'grace';
+  }
+
+  String matchDayAccessMessage(MatchItem match, {String? playerId}) {
+    final player = playerId ?? current?.id;
+    if (player == null) return 'Please log in again.';
+    if (match.status == 'Confirmed') return 'This match has already been confirmed.';
+    final league = leagues.where((l) => l.id == activeLeagueId).firstOrNull;
+    final sequentialEnabled = league?.sequentialMatchDayLockEnabled ?? true;
+    final dateControlsEnabled = league?.matchDayDateControlsEnabled ?? matchDayDateControlsEnabled;
+    if (sequentialEnabled && !previousMatchDaysCompleted(match.round, player)) {
+      final previous = <int>[];
+      for (int day = 1; day < match.round; day++) {
+        if (!isMatchDayCompleted(day, player)) previous.add(day);
+      }
+      return 'Match Day ${previous.isNotEmpty ? previous.first : match.round - 1} is not completed. Complete it before Match Day ${match.round} can be opened.';
+    }
+    if (!dateControlsEnabled) return 'Date controls are OFF for this league. This fixture is open for submission.';
+    final date = _matchDayDate(match);
+    if (date == null) return 'This Match Day has not been scheduled yet.';
+    final now = DateTime.now();
+    final openAt = DateTime(date.year, date.month, date.day);
+    final closeAt = openAt.add(const Duration(days: 1));
+    final graceEnd = closeAt.add(const Duration(hours: 5));
+    if (now.isBefore(openAt)) return 'Match Day ${match.round} opens on ${match.scheduledDate}.';
+    if (now.isBefore(closeAt)) return 'Match Day ${match.round} is open. You have until 11:59 PM to complete it.';
+    if (now.isBefore(graceEnd)) return 'WARNING: Match Day ${match.round} has expired. You are in the 5-hour grace period. Complete it before the grace period ends or a penalty may apply.';
+    return 'Match Day ${match.round} has expired. Complete it and contact admin about the penalty before continuing.';
+  }
+
+  // ============================================================
+  // LEAGUE CREATOR REQUESTS
+  // ============================================================
+
+  Future<Map<String, dynamic>?> myLeagueCreatorPermission() async {
+    final me = current;
+    if (me == null) return null;
+    try {
+      final result = await supabase.rpc('get_my_league_creator_permission');
+      if (result == null) return null;
+      return Map<String, dynamic>.from(result as Map);
+    } catch (e) {
+      debugPrint('Creator permission lookup failed: $e');
+      return null;
+    }
+  }
+
+  Future<String?> submitLeagueRequest({
+    required String leagueName,
+    required String batchName,
+    String description = '',
+    bool isPaid = false,
+    double entryFee = 0,
+    String currency = 'NGN',
+    String fixtureMode = 'single_round',
+  }) async {
+    final cleanName = leagueName.trim();
+    final cleanBatch = batchName.trim();
+    if (current == null) return 'Please log in again.';
+    if (cleanName.isEmpty) return 'League name is required.';
+    if (cleanBatch.isEmpty) return 'Batch is required.';
+    if (isPaid && entryFee <= 0) return 'Enter a valid entry fee.';
+    try {
+      await supabase.rpc('submit_league_request', params: {
+        'p_league_name': cleanName,
+        'p_batch_name': cleanBatch,
+        'p_description': description.trim(),
+        'p_is_paid': isPaid,
+        'p_entry_fee': isPaid ? entryFee : 0,
+        'p_currency': currency,
+        'p_fixture_mode': fixtureMode,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not submit league request: $e';
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchLeagueRequests() async {
+    if (current?.admin != true) return [];
+    final data = await supabase
+        .from('league_requests')
+        .select('id, requested_by, league_name, batch_name, description, is_paid, entry_fee, currency, fixture_mode, status, admin_note, created_at, reviewed_at')
+        .order('created_at', ascending: false);
+    return (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+
+  Future<String?> reviewLeagueRequest({
+    required String requestId,
+    required String decision,
+    String note = '',
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.rpc('admin_review_league_request', params: {
+        'p_request_id': requestId,
+        'p_decision': decision,
+        'p_note': note.trim(),
+      });
+      await refreshLeagues();
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not review league request: $e';
+    }
+  }
+
+  Future<String?> setPlayerCreatorBatch({
+    required String playerId,
+    required String batchName,
+    required bool canCreate,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.rpc('admin_set_player_creator_batch', params: {
+        'p_player_id': playerId,
+        'p_batch_name': batchName.trim(),
+        'p_can_create': canCreate,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not update creator batch access: $e';
+    }
+  }
+
   Future<String?> reportMatch({
     required MatchItem match,
     required String reason,
@@ -1778,6 +1882,29 @@ class Store {
       return 'Could not save league dates: ${e.message}';
     } catch (e) {
       return 'Could not save league dates: $e';
+    }
+  }
+
+  Future<String?> updateMatchDayControls({
+    required String leagueId,
+    bool? sequentialLockEnabled,
+    bool? graceEnabled,
+    bool? dateControlsEnabled,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    final payload = <String, dynamic>{};
+    if (sequentialLockEnabled != null) payload['sequential_match_day_lock_enabled'] = sequentialLockEnabled;
+    if (graceEnabled != null) payload['grace_period_enabled'] = graceEnabled;
+    if (dateControlsEnabled != null) payload['match_day_date_controls_enabled'] = dateControlsEnabled;
+    if (payload.isEmpty) return null;
+    try {
+      await supabase.from('leagues').update(payload).eq('id', leagueId);
+      await refreshLeagues();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not update Match Day controls: ${e.message}';
+    } catch (e) {
+      return 'Could not update Match Day controls: $e';
     }
   }
 
@@ -1918,6 +2045,9 @@ class Store {
   }) async {
     if (player.id != match.homeId && player.id != match.awayId) {
       return 'You are not a player in this match.';
+    }
+    if (!canSubmitMatch(match, playerId: player.id)) {
+      return matchDayAccessMessage(match, playerId: player.id);
     }
     if (activeLeagueId != null) {
       await loadDisciplineForLeague(activeLeagueId!);
@@ -3038,19 +3168,17 @@ class DashboardPage extends StatelessWidget {
           _neonStat(context, Icons.hourglass_top, '$pending', 'PENDING', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage(statusFilter: 'Awaiting Confirmation')))),
         ]),
         const SizedBox(height: 18),
-        _neonAction(context, Icons.calendar_month, 'YOUR FIXTURES', 'View your matches and submit results', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.calendar_view_week, 'COMPLETE LEAGUE FIXTURES', 'See every Match Day and every fixture in your league', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage(showAllLeagueFixtures: true)))),
+        _neonAction(context, Icons.calendar_month, 'YOUR FIXTURES', 'View matches and submit results', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.group_add, 'JOIN A LEAGUE', 'Request to join a league and wait for admin approval', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueJoinPage()))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.person, 'PLAYER PROFILE', 'Edit details and profile photo', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.people_alt, 'PLAYERS & MESSAGES', 'See online players and chat', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.public, 'GLOBAL LEADERBOARD', 'Combine points across every league', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GlobalLeaderboardPage()))),
+        const SizedBox(height: 10),
+        _neonAction(context, Icons.add_business, 'REQUEST A LEAGUE', 'Eligible batch players can request a league for admin approval', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueRequestPage()))),
         const SizedBox(height: 18),
         Container(
           padding: const EdgeInsets.all(16),
@@ -3073,12 +3201,7 @@ class DashboardPage extends StatelessWidget {
 
 class FixturesPage extends StatefulWidget {
   final String? statusFilter;
-  final bool showAllLeagueFixtures;
-  const FixturesPage({
-    super.key,
-    this.statusFilter,
-    this.showAllLeagueFixtures = false,
-  });
+  const FixturesPage({super.key, this.statusFilter});
   @override State<FixturesPage> createState() => _FixturesPageState();
 }
 
@@ -3091,17 +3214,7 @@ class _FixturesPageState extends State<FixturesPage> {
     final error = await Store.instance.selectLeague(id);
     if (!mounted) return;
     setState(() => loading = false);
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-      return;
-    }
-    if (widget.showAllLeagueFixtures &&
-        Store.instance.current?.admin != true &&
-        !Store.instance.activeLeagueMemberIds.contains(Store.instance.current?.id)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('You must be registered in this league to view its complete fixtures.')),
-      );
-    }
+    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
   }
 
   String _dateLabel(MatchItem m) {
@@ -3130,18 +3243,22 @@ class _FixturesPageState extends State<FixturesPage> {
       decoration: _neonBox(accent, radius: 20),
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        onTap: () {
-          final currentId = store.current?.id;
-          final isParticipant = currentId == m.homeId || currentId == m.awayId;
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => ResultPage(
-                match: m,
-                readOnly: widget.showAllLeagueFixtures && !isParticipant,
+        onTap: () async {
+          final playerId = store.current?.id;
+          final canOpen = playerId != null && store.canSubmitMatch(m, playerId: playerId);
+          if (canOpen || m.status == 'Confirmed' || m.status == 'Awaiting Confirmation' || m.status == 'Disputed') {
+            await Navigator.push(context, MaterialPageRoute(builder: (_) => ResultPage(match: m)));
+            if (mounted) setState(() {});
+          } else if (playerId != null) {
+            showDialog<void>(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: Text('MATCH DAY ${m.round}'),
+                content: Text(store.matchDayAccessMessage(m, playerId: playerId)),
+                actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
               ),
-            ),
-          ).then((_) { if (mounted) setState(() {}); });
+            );
+          }
         },
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
@@ -3157,10 +3274,22 @@ class _FixturesPageState extends State<FixturesPage> {
               Expanded(child: Column(children: [_playerAvatar(away, radius: 27, accent: accent), const SizedBox(height: 6), Text(away?.gamerTag ?? store.playerName(m.awayId), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13))])),
             ]),
             const SizedBox(height: 10),
+            if (store.current != null && (store.current!.id == m.homeId || store.current!.id == m.awayId)) ...[
+              Builder(builder: (_) {
+                final state = store.matchDayState(m, playerId: store.current!.id);
+                final stateText = state == 'open' ? 'OPEN • SUBMIT RESULT' :
+                    state == 'grace' ? '⚠ GRACE PERIOD • COMPLETE NOW' :
+                    state == 'locked' ? '🔒 LOCKED • COMPLETE PREVIOUS DAY' :
+                    state == 'expired' ? '⚠ EXPIRED • CONTACT ADMIN' : 'COMPLETED';
+                final stateColor = state == 'open' ? _cyan : state == 'grace' ? _yellow : state == 'completed' ? _yellow : const Color(0xFFFF4D7D);
+                return Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10), decoration: BoxDecoration(color: stateColor.withOpacity(.08), borderRadius: BorderRadius.circular(12), border: Border.all(color: stateColor.withOpacity(.35))), child: Text(stateText, textAlign: TextAlign.center, style: TextStyle(color: stateColor, fontSize: 10, fontWeight: FontWeight.w900)));
+              }),
+              const SizedBox(height: 8),
+            ],
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               Icon(Icons.touch_app, size: 13, color: accent),
               const SizedBox(width: 5),
-              Text(m.status == 'Scheduled' ? 'TAP TO SUBMIT RESULT' : 'TAP TO VIEW RESULT', style: TextStyle(color: accent, fontSize: 9, fontWeight: FontWeight.w900)),
+              Text(m.status == 'Scheduled' ? 'TAP TO SUBMIT / VIEW ACCESS' : 'TAP TO VIEW RESULT', style: TextStyle(color: accent, fontSize: 9, fontWeight: FontWeight.w900)),
             ]),
             if (store.current != null &&
                 (store.current!.id == m.homeId || store.current!.id == m.awayId)) ...[
@@ -3301,17 +3430,8 @@ class _FixturesPageState extends State<FixturesPage> {
     final selected = store.activeLeagueId == null ? null : store.leagues.where((l) => l.id == store.activeLeagueId).firstOrNull;
     var visible = List<MatchItem>.from(store.matches);
     final player = store.current;
-    final isLeagueMember = player != null &&
-        (player.admin || store.activeLeagueMemberIds.contains(player.id));
-
-    if (!widget.showAllLeagueFixtures && player != null) {
-      visible = visible.where((m) => m.homeId == player.id || m.awayId == player.id).toList();
-    } else if (widget.showAllLeagueFixtures && !isLeagueMember) {
-      visible = <MatchItem>[];
-    }
-    if (widget.statusFilter != null) {
-      visible = visible.where((m) => m.status == widget.statusFilter).toList();
-    }
+    if (player != null) visible = visible.where((m) => m.homeId == player.id || m.awayId == player.id).toList();
+    if (widget.statusFilter != null) visible = visible.where((m) => m.status == widget.statusFilter).toList();
     final rounds = visible.map((m) => m.round).toSet().toList()..sort();
 
     return ListView(padding: const EdgeInsets.fromLTRB(14, 12, 14, 30), children: [
@@ -3332,27 +3452,9 @@ class _FixturesPageState extends State<FixturesPage> {
         decoration: _neonBox(_blue, radius: 18),
         child: DropdownButtonFormField<String>(value: selected?.id, decoration: const InputDecoration(labelText: 'SELECT LEAGUE', border: InputBorder.none), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text('${l.name} • ${l.status.toUpperCase()}'))).toList(), onChanged: loading ? null : _selectLeague),
       ),
-      if (selected != null) Padding(
-        padding: const EdgeInsets.fromLTRB(3, 16, 3, 6),
-        child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: .7)),
-      ),
-      if (widget.showAllLeagueFixtures)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(3, 0, 3, 10),
-          child: Text(
-            'COMPLETE LEAGUE FIXTURES • ALL MATCH DAYS',
-            style: const TextStyle(color: _cyan, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: .7),
-          ),
-        ),
+      if (selected != null) Padding(padding: const EdgeInsets.fromLTRB(3, 16, 3, 10), child: Text(selected.name.toUpperCase(), style: const TextStyle(color: _yellow, fontSize: 21, fontWeight: FontWeight.w900, letterSpacing: .7))),
       if (widget.statusFilter != null) Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(widget.statusFilter!.toUpperCase(), style: const TextStyle(color: _purple, fontWeight: FontWeight.w900))),
-      if (widget.showAllLeagueFixtures && selected != null && !isLeagueMember) ...[
-        const SizedBox(height: 45),
-        const Center(child: Icon(Icons.lock_outline, size: 52, color: _yellow)),
-        const SizedBox(height: 10),
-        const Center(child: Text('JOIN THIS LEAGUE TO VIEW ALL FIXTURES', textAlign: TextAlign.center, style: TextStyle(color: _yellow, fontSize: 15, fontWeight: FontWeight.w900))),
-        const SizedBox(height: 7),
-        const Center(child: Text('Only registered league players can see the complete league fixture list.', textAlign: TextAlign.center, style: TextStyle(color: _muted, fontSize: 12))),
-      ] else if (visible.isEmpty) ...[
+      if (visible.isEmpty) ...[
         const SizedBox(height: 55),
         const Center(child: Icon(Icons.sports_soccer, size: 60, color: _cyan)),
         const SizedBox(height: 10),
@@ -3382,6 +3484,7 @@ extension MatchScheduleDisplay on MatchItem {
       return '$displayHour:${minute.toString().padLeft(2, '0')} $suffix';
     }
     final date = scheduledDate == null || scheduledDate!.isEmpty ? 'Date set by admin' : scheduledDate!;
+    if (startTime == '00:00:00' && (endTime == '23:59:59' || endTime == '23:59:00')) return '$date • ALL DAY + 5H GRACE';
     return '$date • ${formatTime(startTime)} – ${formatTime(endTime)}';
   }
 }
@@ -3392,13 +3495,8 @@ extension MatchScheduleDisplay on MatchItem {
 
 class ResultPage extends StatefulWidget {
   final MatchItem match;
-  final bool readOnly;
 
-  const ResultPage({
-    super.key,
-    required this.match,
-    this.readOnly = false,
-  });
+  const ResultPage({super.key, required this.match});
 
   @override
   State<ResultPage> createState() => _ResultPageState();
@@ -3437,6 +3535,10 @@ class _ResultPageState extends State<ResultPage> {
     final player = Store.instance.current;
 
     if (player == null) return;
+    if (!Store.instance.canSubmitMatch(widget.match, playerId: player.id)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(Store.instance.matchDayAccessMessage(widget.match, playerId: player.id))));
+      return;
+    }
 
     final homeScore = int.tryParse(homeController.text.trim());
     final awayScore = int.tryParse(awayController.text.trim());
@@ -3613,7 +3715,7 @@ class _ResultPageState extends State<ResultPage> {
     final match = widget.match;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.readOnly ? 'Match Details' : 'Submit Result')),
+      appBar: AppBar(title: const Text('Submit Result')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
@@ -3650,55 +3752,57 @@ class _ResultPageState extends State<ResultPage> {
             path: match.awayProof,
           ),
 
-          if (widget.readOnly) ...[
-            const Divider(height: 32),
-            const Text('LEAGUE FIXTURE', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            const Text(
-              'You can view this fixture because you are registered in this league. Only the two players in the fixture can submit or update its result.',
-              style: TextStyle(color: _muted, height: 1.45),
+          const Divider(height: 32),
+          const Text(
+            'SUBMIT / UPDATE YOUR RESULT',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            enabled: Store.instance.current != null && Store.instance.canSubmitMatch(widget.match, playerId: Store.instance.current!.id),
+            controller: homeController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: '${store.playerName(match.homeId)} score',
+              border: const OutlineInputBorder(),
             ),
-          ] else ...[
-            const Divider(height: 32),
-            const Text(
-              'SUBMIT / UPDATE YOUR RESULT',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 15),
+          TextField(
+            enabled: Store.instance.current != null && Store.instance.canSubmitMatch(widget.match, playerId: Store.instance.current!.id),
+            controller: awayController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: '${store.playerName(match.awayId)} score',
+              border: const OutlineInputBorder(),
             ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: homeController,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: '${store.playerName(match.homeId)} score',
-                border: const OutlineInputBorder(),
-              ),
+          ),
+          const SizedBox(height: 20),
+          OutlinedButton.icon(
+            onPressed: (loading || Store.instance.current == null || !Store.instance.canSubmitMatch(widget.match, playerId: Store.instance.current!.id)) ? null : chooseProof,
+            icon: const Icon(Icons.photo_library),
+            label: Text(
+              proof == null
+                  ? 'Choose Screenshot Proof'
+                  : 'Screenshot Selected',
             ),
+          ),
+          if (proof != null) ...[
             const SizedBox(height: 15),
-            TextField(
-              controller: awayController,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: '${store.playerName(match.awayId)} score',
-                border: const OutlineInputBorder(),
+            SizedBox(
+              height: 200,
+              child: Image.file(
+                proof!,
+                fit: BoxFit.contain,
               ),
-            ),
-            const SizedBox(height: 20),
-            OutlinedButton.icon(
-              onPressed: loading ? null : chooseProof,
-              icon: const Icon(Icons.photo_library),
-              label: Text(proof == null ? 'Choose Screenshot Proof' : 'Screenshot Selected'),
-            ),
-            if (proof != null) ...[
-              const SizedBox(height: 15),
-              SizedBox(height: 200, child: Image.file(proof!, fit: BoxFit.contain)),
-            ],
-            const SizedBox(height: 22),
-            FilledButton.icon(
-              onPressed: loading ? null : submit,
-              icon: const Icon(Icons.send),
-              label: const Text('SUBMIT RESULT'),
             ),
           ],
+          const SizedBox(height: 22),
+          FilledButton.icon(
+            onPressed: (loading || Store.instance.current == null || !Store.instance.canSubmitMatch(widget.match, playerId: Store.instance.current!.id)) ? null : submit,
+            icon: const Icon(Icons.send),
+            label: const Text('SUBMIT RESULT'),
+          ),
         ],
       ),
     );
@@ -4239,16 +4343,29 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
+  late final TextEditingController phoneController;
+  late final TextEditingController countryController;
+  late final TextEditingController countryCodeController;
+  late final TextEditingController whatsappController;
+  bool saving = false;
   bool uploadingAvatar = false;
+  bool editing = false;
 
   @override
   void initState() {
     super.initState();
     final p = Store.instance.current;
+    phoneController = TextEditingController(text: p?.phoneNumber ?? '');
+    countryController = TextEditingController(text: p?.country ?? '');
+    countryCodeController = TextEditingController(text: p?.countryCode ?? '');
+    whatsappController = TextEditingController(text: p?.whatsappNumber ?? '');
+    editing = !_hasSavedDetails(p);
   }
 
+  bool _hasSavedDetails(Player? p) => p != null && (p.phoneNumber.trim().isNotEmpty || p.country.trim().isNotEmpty || p.countryCode.trim().isNotEmpty || p.whatsappNumber.trim().isNotEmpty);
+
   @override
-  void dispose() { super.dispose(); }
+  void dispose() { phoneController.dispose(); countryController.dispose(); countryCodeController.dispose(); whatsappController.dispose(); super.dispose(); }
 
   Future<void> changeAvatar() async {
     if (uploadingAvatar) return;
@@ -4262,6 +4379,20 @@ class _ProfilePageState extends State<ProfilePage> {
     if (error == null) setState(() {});
   }
 
+  Future<void> saveProfile() async {
+    setState(() => saving = true);
+    final error = await Store.instance.updateMyProfile(phoneNumber: phoneController.text, country: countryController.text, countryCode: countryCodeController.text, whatsappNumber: whatsappController.text);
+    if (!mounted) return;
+    setState(() { saving = false; if (error == null) editing = false; });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Profile details saved successfully.')));
+  }
+
+  void startEditing() {
+    final p = Store.instance.current;
+    phoneController.text = p?.phoneNumber ?? ''; countryController.text = p?.country ?? ''; countryCodeController.text = p?.countryCode ?? ''; whatsappController.text = p?.whatsappNumber ?? '';
+    setState(() => editing = true);
+  }
+
   Future<void> logout() async {
     await Store.instance.setPresence(false);
     await Store.instance.logout();
@@ -4269,16 +4400,14 @@ class _ProfilePageState extends State<ProfilePage> {
     Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
   }
 
-
+  Widget _info(IconData icon, String title, String value, Color accent) => Container(margin: const EdgeInsets.only(bottom: 10), decoration: _neonBox(accent, radius: 16), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 3), leading: Icon(icon, color: accent, size: 25), title: Text(title, style: const TextStyle(color: _muted, fontSize: 13, fontWeight: FontWeight.w700)), subtitle: Text(value.trim().isEmpty ? 'Not provided' : value.trim(), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700))));
 
   @override
   Widget build(BuildContext context) {
     final p = Store.instance.current;
     final online = p?.isOnline == true && (p?.lastSeen == null || DateTime.now().toUtc().difference(p!.lastSeen!.toUtc()).inMinutes < 3);
     return ListView(padding: const EdgeInsets.fromLTRB(16, 14, 16, 30), children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
-        child: Column(children: [
+      Container(padding: const EdgeInsets.fromLTRB(18, 20, 18, 18), decoration: _neonBox(_blue, radius: 24), child: Column(children: [
         Stack(
           clipBehavior: Clip.none,
           children: [
@@ -4317,9 +4446,28 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
         const SizedBox(height: 12), Text(p?.gamerTag ?? 'PLAYER', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900)), Text(p?.name ?? '', style: const TextStyle(color: _muted)), const SizedBox(height: 8),
         Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: (online ? const Color(0xFF20E070) : const Color(0xFF667085)).withOpacity(.12), borderRadius: BorderRadius.circular(30), border: Border.all(color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), const SizedBox(width: 7), Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11, fontWeight: FontWeight.w900))])),
-        ]),
-      ),
+      ])),
       const SizedBox(height: 16),
+      _neonSectionTitle('ACCOUNT', accent: _yellow), const SizedBox(height: 10),
+      _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
+      _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
+      _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
+      const SizedBox(height: 6),
+      Row(children: [Expanded(child: _neonSectionTitle('PLAYER DETAILS', accent: _cyan)), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: _cyan))]),
+      const SizedBox(height: 8),
+      if (!editing) ...[
+        _info(Icons.phone, 'Phone Number', p?.phoneNumber ?? '', _cyan),
+        _info(Icons.public, 'Country', p?.country ?? '', _cyan),
+        _info(Icons.language, 'Country Code', p?.countryCode ?? '', _cyan),
+        _info(Icons.chat, 'WhatsApp Number', p?.whatsappNumber ?? '', const Color(0xFF20E070)),
+      ],
+      if (editing) ...[
+        TextField(controller: phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Phone Number', prefixIcon: Icon(Icons.phone))), const SizedBox(height: 10),
+        TextField(controller: countryController, decoration: const InputDecoration(labelText: 'Country', prefixIcon: Icon(Icons.public))), const SizedBox(height: 10),
+        TextField(controller: countryCodeController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Country Code (e.g. +234)', prefixIcon: Icon(Icons.language))), const SizedBox(height: 10),
+        TextField(controller: whatsappController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'WhatsApp Number', prefixIcon: Icon(Icons.chat))), const SizedBox(height: 12),
+        Row(children: [Expanded(child: FilledButton.icon(onPressed: saving ? null : saveProfile, icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save), label: Text(saving ? 'SAVING...' : 'SAVE PROFILE'))), const SizedBox(width: 8), if (_hasSavedDetails(p)) IconButton(onPressed: saving ? null : () => setState(() => editing = false), icon: const Icon(Icons.close, color: _muted))]),
+      ],
       const SizedBox(height: 8),
       Container(decoration: _neonBox(_purple, radius: 18), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 4), leading: Stack(children: [const Icon(Icons.chat_bubble_outline, color: _purple, size: 29), Positioned(right: -2, bottom: -2, child: Container(width: 9, height: 9, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]), title: const Text('PLAYERS & MESSAGES', style: TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'You are online • chat with other players' : 'Chat with other players and see their status'), trailing: const Icon(Icons.chevron_right, color: _purple), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())))),
       const SizedBox(height: 10),
@@ -4501,258 +4649,6 @@ class PlayerStatsPage extends StatelessWidget {
 }
 
 // ============================================================
-// LEAGUE JOIN REQUESTS
-// ============================================================
-
-class LeagueJoinRequest {
-  final String id;
-  final String leagueId;
-  final String playerId;
-  final String status;
-  final DateTime? requestedAt;
-  final DateTime? reviewedAt;
-  final String? reviewedBy;
-  final String leagueName;
-  final String playerName;
-  final String gamerTag;
-  final String avatarUrl;
-
-  const LeagueJoinRequest({
-    required this.id,
-    required this.leagueId,
-    required this.playerId,
-    required this.status,
-    required this.requestedAt,
-    required this.reviewedAt,
-    required this.reviewedBy,
-    required this.leagueName,
-    required this.playerName,
-    required this.gamerTag,
-    required this.avatarUrl,
-  });
-
-  factory LeagueJoinRequest.fromJson(Map<String, dynamic> json) {
-    final league = json['leagues'];
-    final profile = json['profiles'];
-    return LeagueJoinRequest(
-      id: json['id'].toString(),
-      leagueId: json['league_id'].toString(),
-      playerId: json['player_id'].toString(),
-      status: json['status']?.toString() ?? 'pending',
-      requestedAt: json['requested_at'] == null ? null : DateTime.tryParse(json['requested_at'].toString()),
-      reviewedAt: json['reviewed_at'] == null ? null : DateTime.tryParse(json['reviewed_at'].toString()),
-      reviewedBy: json['reviewed_by']?.toString(),
-      leagueName: league is Map ? (league['name']?.toString() ?? 'League') : 'League',
-      playerName: profile is Map ? (profile['full_name']?.toString() ?? '') : '',
-      gamerTag: profile is Map ? (profile['gamer_tag']?.toString() ?? '') : '',
-      avatarUrl: profile is Map ? (profile['avatar_url']?.toString() ?? '') : '',
-    );
-  }
-}
-
-class LeagueJoinPage extends StatefulWidget {
-  const LeagueJoinPage({super.key});
-  @override State<LeagueJoinPage> createState() => _LeagueJoinPageState();
-}
-
-class _LeagueJoinPageState extends State<LeagueJoinPage> {
-  bool loading = false;
-  Set<String> memberIds = {};
-  Map<String, String> requestStatuses = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => loading = true);
-    try {
-      final store = Store.instance;
-      await store.refreshLeagues();
-      final player = store.current;
-      if (player != null) {
-        final rows = await supabase
-            .from('league_join_requests')
-            .select('league_id, status')
-            .eq('player_id', player.id);
-        requestStatuses = {
-          for (final row in (rows as List))
-            row['league_id'].toString(): row['status'].toString(),
-        };
-        final all = <String>{};
-        for (final league in store.leagues) {
-          try {
-            final ids = await store.leagueMemberIds(league.id);
-            if (ids.contains(player.id)) all.add(league.id);
-          } catch (_) {}
-        }
-        memberIds = all;
-      }
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load leagues: $e')));
-    }
-    if (mounted) setState(() => loading = false);
-  }
-
-  Future<void> _request(LeagueInfo league) async {
-    setState(() => loading = true);
-    final error = await Store.instance.requestToJoinLeague(league.id);
-    if (!mounted) return;
-    await _load();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error ?? 'Join request sent. Wait for admin confirmation.')),
-    );
-  }
-
-  String _statusFor(LeagueInfo league) {
-    if (memberIds.contains(league.id)) return 'MEMBER';
-    final status = requestStatuses[league.id];
-    if (status == 'pending') return 'REQUESTED';
-    if (status == 'approved') return 'APPROVED';
-    if (status == 'rejected') return 'REJECTED';
-    return 'AVAILABLE';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final leagues = Store.instance.leagues.where((l) => l.status != 'completed').toList();
-    return Scaffold(
-      appBar: AppBar(title: const Text('Join a League')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: leagues.isEmpty
-            ? ListView(children: const [SizedBox(height: 180), Center(child: Text('No leagues are available right now.'))])
-            : ListView.builder(
-                padding: const EdgeInsets.all(14),
-                itemCount: leagues.length,
-                itemBuilder: (context, index) {
-                  final league = leagues[index];
-                  final status = _statusFor(league);
-                  final canRequest = status == 'AVAILABLE' || status == 'REJECTED';
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    decoration: _neonBox(status == 'MEMBER' ? const Color(0xFF20E070) : _cyan, radius: 18),
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Row(children: [
-                          Expanded(child: Text(league.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
-                          Text(status, style: TextStyle(color: status == 'MEMBER' ? const Color(0xFF20E070) : _yellow, fontSize: 10, fontWeight: FontWeight.w900)),
-                        ]),
-                        const SizedBox(height: 6),
-                        Text(league.status.toUpperCase(), style: const TextStyle(color: _muted, fontSize: 11)),
-                        const SizedBox(height: 4),
-                        Text(league.feeLabel, style: const TextStyle(color: _cyan, fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 12),
-                        if (canRequest)
-                          SizedBox(width: double.infinity, child: FilledButton.icon(
-                            onPressed: loading ? null : () => _request(league),
-                            icon: const Icon(Icons.person_add),
-                            label: Text(status == 'REJECTED' ? 'REQUEST AGAIN' : 'REQUEST TO JOIN'),
-                          ))
-                        else if (status == 'REQUESTED')
-                          const Text('Waiting for admin approval.', style: TextStyle(color: _yellow, fontWeight: FontWeight.w700))
-                        else if (status == 'MEMBER')
-                          const Text('You are already in this league.', style: TextStyle(color: Color(0xFF20E070), fontWeight: FontWeight.w700))
-                        else if (status == 'APPROVED')
-                          const Text('Your request was approved.', style: TextStyle(color: Color(0xFF20E070), fontWeight: FontWeight.w700)),
-                      ]),
-                    ),
-                  );
-                },
-              ),
-      ),
-    );
-  }
-}
-
-class LeagueJoinRequestsPage extends StatefulWidget {
-  const LeagueJoinRequestsPage({super.key});
-  @override State<LeagueJoinRequestsPage> createState() => _LeagueJoinRequestsPageState();
-}
-
-class _LeagueJoinRequestsPageState extends State<LeagueJoinRequestsPage> {
-  bool loading = false;
-  List<LeagueJoinRequest> requests = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => loading = true);
-    try {
-      requests = await Store.instance.fetchLeagueJoinRequests(pendingOnly: true);
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load requests: $e')));
-    }
-    if (mounted) setState(() => loading = false);
-  }
-
-  Future<void> _review(LeagueJoinRequest request, String decision) async {
-    setState(() => loading = true);
-    final error = await Store.instance.reviewLeagueJoinRequest(requestId: request.id, decision: decision);
-    if (!mounted) return;
-    if (error != null) {
-      setState(() => loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-      return;
-    }
-    await _load();
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(decision == 'approved' ? '${request.gamerTag} approved.' : '${request.gamerTag} rejected.')));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('League Join Requests')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: requests.isEmpty
-            ? ListView(children: const [SizedBox(height: 180), Center(child: Text('No pending join requests.'))])
-            : ListView.builder(
-                padding: const EdgeInsets.all(14),
-                itemCount: requests.length,
-                itemBuilder: (context, index) {
-                  final r = requests[index];
-                  final player = Store.instance.findPlayer(r.playerId);
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    decoration: _neonBox(_purple, radius: 18),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Row(children: [
-                          _playerAvatar(player, radius: 24, accent: _cyan),
-                          const SizedBox(width: 10),
-                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(r.gamerTag.isEmpty ? r.playerName : r.gamerTag, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                            Text(r.playerName, style: const TextStyle(color: _muted, fontSize: 11)),
-                          ])),
-                        ]),
-                        const SizedBox(height: 10),
-                        Text('Wants to join: ${r.leagueName}', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 10),
-                        Row(children: [
-                          Expanded(child: FilledButton.icon(onPressed: loading ? null : () => _review(r, 'approved'), icon: const Icon(Icons.check), label: const Text('APPROVE'))),
-                          const SizedBox(width: 8),
-                          Expanded(child: OutlinedButton.icon(onPressed: loading ? null : () => _review(r, 'rejected'), icon: const Icon(Icons.close), label: const Text('REJECT'))),
-                        ]),
-                      ]),
-                    ),
-                  );
-                },
-              ),
-      ),
-    );
-  }
-}
-
-// ============================================================
 // LEAGUE MANAGEMENT
 // ============================================================
 
@@ -4900,30 +4796,27 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
-            TextField(
-              controller: nameController,
-              textInputAction: TextInputAction.done,
-              onSubmitted: loading ? null : (_) => _createLeague(),
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                labelText: 'League name',
-                hintText: 'e.g. CHIBBYBALL Season 1',
-                prefixIcon: Icon(Icons.emoji_events_outlined),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: FilledButton.icon(
-                onPressed: loading ? null : _createLeague,
-                icon: loading
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.add_circle_outline),
-                label: Text(loading ? 'CREATING...' : 'CREATE LEAGUE'),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'League name',
+                      hintText: 'e.g. CHIBBYBALL Season 1',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  height: 56,
+                  child: FilledButton(
+                    onPressed: loading ? null : _createLeague,
+                    child: const Text('CREATE'),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             Card(
@@ -5102,6 +4995,142 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
 
 
 // ============================================================
+// PLAYER LEAGUE REQUEST
+// ============================================================
+
+class LeagueRequestPage extends StatefulWidget {
+  const LeagueRequestPage({super.key});
+  @override State<LeagueRequestPage> createState() => _LeagueRequestPageState();
+}
+
+class _LeagueRequestPageState extends State<LeagueRequestPage> {
+  final nameController = TextEditingController();
+  final descriptionController = TextEditingController();
+  final feeController = TextEditingController();
+  bool loading = true;
+  bool submitting = false;
+  bool isPaid = false;
+  String fixtureMode = 'single_round';
+  String? batch;
+  bool eligible = false;
+  String? pendingStatus;
+
+  @override
+  void initState() { super.initState(); _load(); }
+  @override
+  void dispose() { nameController.dispose(); descriptionController.dispose(); feeController.dispose(); super.dispose(); }
+
+  Future<void> _load() async {
+    try {
+      final permission = await Store.instance.myLeagueCreatorPermission();
+      if (permission != null) {
+        batch = permission['batch_name']?.toString();
+        eligible = permission['can_create'] == true;
+        pendingStatus = permission['pending_status']?.toString();
+      }
+    } catch (_) {}
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _submit() async {
+    if (!eligible || batch == null) return;
+    setState(() => submitting = true);
+    final error = await Store.instance.submitLeagueRequest(
+      leagueName: nameController.text,
+      batchName: batch!,
+      description: descriptionController.text,
+      isPaid: isPaid,
+      entryFee: double.tryParse(feeController.text.trim()) ?? 0,
+      fixtureMode: fixtureMode,
+    );
+    if (!mounted) return;
+    setState(() => submitting = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'League request sent to admin for approval.')));
+    if (error == null) { nameController.clear(); descriptionController.clear(); feeController.clear(); await _load(); }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Request a League')),
+      body: loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(16), children: [
+        Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_purple, radius: 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('LEAGUE CREATOR ACCESS', style: TextStyle(color: _purple, fontWeight: FontWeight.w900, fontSize: 17)),
+          const SizedBox(height: 7),
+          Text(batch == null ? 'No creator batch is assigned to your account.' : 'Your batch: ${batch!}', style: const TextStyle(color: _muted)),
+          const SizedBox(height: 5),
+          Text(eligible ? 'You are eligible to request a league.' : 'Your batch is not currently allowed to create leagues.', style: TextStyle(color: eligible ? _cyan : const Color(0xFFFF4D7D), fontWeight: FontWeight.w800)),
+        ]),
+        const SizedBox(height: 14),
+        if (pendingStatus != null) Card(child: ListTile(leading: const Icon(Icons.hourglass_top, color: _yellow), title: const Text('REQUEST STATUS'), subtitle: Text(pendingStatus!.toUpperCase()))),
+        if (!eligible) const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('Ask an administrator to assign your account to an approved creator batch.')))
+        else ...[
+          TextField(controller: nameController, enabled: !submitting, decoration: const InputDecoration(labelText: 'League name', hintText: 'e.g. CHIBBYBALL Batch 2 League')),
+          const SizedBox(height: 12),
+          TextField(controller: descriptionController, enabled: !submitting, maxLines: 3, decoration: const InputDecoration(labelText: 'Description (optional)')),
+          const SizedBox(height: 12),
+          Card(child: Padding(padding: const EdgeInsets.all(10), child: Column(children: [
+            SwitchListTile(contentPadding: EdgeInsets.zero, title: Text(isPaid ? 'Paid League' : 'Free League'), value: isPaid, onChanged: submitting ? null : (v) => setState(() => isPaid = v)),
+            if (isPaid) TextField(controller: feeController, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Entry fee (NGN)')),
+          ]))),
+          Card(child: Column(children: [
+            const ListTile(title: Text('FIXTURE FORMAT')),
+            RadioListTile<String>(value: 'single_round', groupValue: fixtureMode, title: const Text('Single Round'), onChanged: submitting ? null : (v) => setState(() => fixtureMode = v!)),
+            RadioListTile<String>(value: 'home_away', groupValue: fixtureMode, title: const Text('Home & Away'), onChanged: submitting ? null : (v) => setState(() => fixtureMode = v!)),
+          ])),
+          const SizedBox(height: 14),
+          FilledButton.icon(onPressed: submitting ? null : _submit, icon: submitting ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send), label: const Text('SUBMIT FOR ADMIN APPROVAL')),
+        ],
+      ]),
+    );
+  }
+}
+
+// ============================================================
+// ADMIN LEAGUE REQUESTS
+// ============================================================
+
+class LeagueRequestsAdminPage extends StatefulWidget {
+  const LeagueRequestsAdminPage({super.key});
+  @override State<LeagueRequestsAdminPage> createState() => _LeagueRequestsAdminPageState();
+}
+
+class _LeagueRequestsAdminPageState extends State<LeagueRequestsAdminPage> {
+  bool loading = true;
+  List<Map<String, dynamic>> requests = [];
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async { try { requests = await Store.instance.fetchLeagueRequests(); } catch (_) {} if (mounted) setState(() => loading = false); }
+  Future<void> _review(Map<String,dynamic> request, String decision) async {
+    final noteController = TextEditingController();
+    final note = await showDialog<String>(context: context, builder: (_) => AlertDialog(title: Text(decision == 'approved' ? 'Approve League' : 'Reject League'), content: TextField(controller: noteController, maxLines: 3, decoration: const InputDecoration(labelText: 'Admin note (optional)')), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(context, noteController.text), child: Text(decision == 'approved' ? 'APPROVE' : 'REJECT'))]));
+    if (note == null) return;
+    setState(() => loading = true);
+    final error = await Store.instance.reviewLeagueRequest(requestId: request['id'].toString(), decision: decision, note: note);
+    if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Request $decision.'))); await _load(); }
+  }
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('League Requests')), body: loading ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(onRefresh: _load, child: requests.isEmpty ? const Center(child: Text('No league requests.')) : ListView.builder(padding: const EdgeInsets.all(14), itemCount: requests.length, itemBuilder: (_,i) { final r=requests[i]; final status=r['status']?.toString() ?? 'pending'; final requester=Store.instance.playerName(r['requested_by']?.toString() ?? ''); return Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(r['league_name']?.toString() ?? '', style: const TextStyle(fontSize:18,fontWeight:FontWeight.w900)), const SizedBox(height:6), Text('Requested by: $requester'), Text('Batch: ${r['batch_name']}'), if ((r['description']?.toString() ?? '').isNotEmpty) Padding(padding: const EdgeInsets.only(top:5), child: Text(r['description'].toString(), style: const TextStyle(color:_muted))), const SizedBox(height:8), Text('Status: ${status.toUpperCase()}', style: const TextStyle(fontWeight:FontWeight.w800)), if (status == 'pending') Row(children:[Expanded(child:OutlinedButton.icon(onPressed:()=>_review(r,'rejected'), icon:const Icon(Icons.close), label:const Text('REJECT'))), const SizedBox(width:8), Expanded(child:FilledButton.icon(onPressed:()=>_review(r,'approved'), icon:const Icon(Icons.check), label:const Text('APPROVE')))])]))); }));
+}
+
+// ============================================================
+// ADMIN CREATOR BATCH ACCESS
+// ============================================================
+
+class CreatorBatchAdminPage extends StatefulWidget {
+  const CreatorBatchAdminPage({super.key});
+  @override State<CreatorBatchAdminPage> createState() => _CreatorBatchAdminPageState();
+}
+
+class _CreatorBatchAdminPageState extends State<CreatorBatchAdminPage> {
+  String? selectedPlayerId;
+  final batchController = TextEditingController();
+  bool canCreate = true;
+  bool loading = false;
+  @override void dispose(){ batchController.dispose(); super.dispose(); }
+  Future<void> _save() async { if(selectedPlayerId==null || batchController.text.trim().isEmpty)return; setState(()=>loading=true); final e=await Store.instance.setPlayerCreatorBatch(playerId:selectedPlayerId!,batchName:batchController.text,canCreate:canCreate); if(mounted){setState(()=>loading=false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(e??'Creator batch access saved.')));} }
+  @override Widget build(BuildContext context){ final players=Store.instance.players.where((p)=>!p.admin).toList(); return Scaffold(appBar:AppBar(title:const Text('Creator Batch Access')),body:ListView(padding:const EdgeInsets.all(16),children:[DropdownButtonFormField<String>(value:selectedPlayerId,decoration:const InputDecoration(labelText:'PLAYER'),items:players.map((p)=>DropdownMenuItem(value:p.id,child:Text(p.gamerTag))).toList(),onChanged:loading?(v){}:(v)=>setState(()=>selectedPlayerId=v)),const SizedBox(height:12),TextField(controller:batchController,decoration:const InputDecoration(labelText:'Batch name',hintText:'e.g. Batch 1')),SwitchListTile(title:const Text('Allow this batch/player to request leagues'),value:canCreate,onChanged:loading?null:(v)=>setState(()=>canCreate=v)),const SizedBox(height:12),FilledButton.icon(onPressed:loading?null:_save,icon:const Icon(Icons.save),label:const Text('SAVE ACCESS')),const SizedBox(height:20),const Text('Use this screen to assign a player to an approved batch. The player still needs admin approval for every league request.',style:TextStyle(color:_muted))])); }
+}
+
+// ============================================================
 // ADMIN MATCH SCHEDULE
 // ============================================================
 
@@ -5197,8 +5226,8 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
       scheduledDate: roundDates[round] == null
           ? null
           : _dateForDb(roundDates[round]!),
-      startTime: '17:00:00',
-      endTime: '23:59:00',
+      startTime: '00:00:00',
+      endTime: '23:59:59',
     );
     if (!mounted) return;
     setState(() => loading = false);
@@ -5318,6 +5347,57 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
             const Text(
               'Every fixture in the same Match Day uses the same date. Each Match Day can have a different date.',
               style: TextStyle(color: _muted, fontSize: 11),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              decoration: _neonBox(_yellow, radius: 18),
+              child: Column(children: [
+                SwitchListTile(
+                  value: Store.instance.matchDayDateControlsEnabled,
+                  activeThumbColor: _yellow,
+                  title: const Text('ENABLE DATE CONTROLS', style: TextStyle(fontWeight: FontWeight.w900)),
+                  subtitle: const Text('OFF = fixtures stay open regardless of Match Day dates.'),
+                  onChanged: loading ? null : (value) async {
+                    setState(() => loading = true);
+                    final error = await Store.instance.setMatchDayDateControlsEnabled(value);
+                    if (!mounted) return;
+                    setState(() => loading = false);
+                    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                  },
+                ),
+                SwitchListTile(
+                  value: (Store.instance.leagues.where((l) => l.id == Store.instance.activeLeagueId).firstOrNull?.sequentialMatchDayLockEnabled) ?? true,
+                  activeThumbColor: _cyan,
+                  title: const Text('ENFORCE MATCH DAY ORDER', style: TextStyle(fontWeight: FontWeight.w900)),
+                  subtitle: const Text('OFF = players can submit later Match Days without completing earlier ones.'),
+                  onChanged: loading ? null : (value) async {
+                    final leagueId = Store.instance.activeLeagueId;
+                    if (leagueId == null) return;
+                    setState(() => loading = true);
+                    final error = await Store.instance.updateMatchDayControls(leagueId: leagueId, sequentialLockEnabled: value);
+                    if (!mounted) return;
+                    await Store.instance.refreshLeagues();
+                    setState(() => loading = false);
+                    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                  },
+                ),
+                SwitchListTile(
+                  value: (Store.instance.leagues.where((l) => l.id == Store.instance.activeLeagueId).firstOrNull?.gracePeriodEnabled) ?? true,
+                  activeThumbColor: _purple,
+                  title: const Text('ENABLE 5-HOUR GRACE PERIOD', style: TextStyle(fontWeight: FontWeight.w900)),
+                  subtitle: const Text('OFF = the grace period is removed; expiry happens at 11:59 PM.'),
+                  onChanged: loading ? null : (value) async {
+                    final leagueId = Store.instance.activeLeagueId;
+                    if (leagueId == null) return;
+                    setState(() => loading = true);
+                    final error = await Store.instance.updateMatchDayControls(leagueId: leagueId, graceEnabled: value);
+                    if (!mounted) return;
+                    await Store.instance.refreshLeagues();
+                    setState(() => loading = false);
+                    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                  },
+                ),
+              ]),
             ),
             const SizedBox(height: 10),
             if (rounds.isEmpty)
@@ -5573,46 +5653,6 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
     if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? '${player.gamerTag} disregistered from all leagues.'))); }
   }
 
-  Future<void> _deletePlayer(Player player) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('DELETE PLAYER ACCOUNT?'),
-        content: Text(
-          '${player.gamerTag} will be permanently deleted from CHIBBYBALL. ' +
-          'Their account, profile, league memberships and related player records will be removed. This cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('CANCEL'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFF4D7D)),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('DELETE PERMANENTLY'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-
-    setState(() => loading = true);
-    final error = await store.deletePlayerAccount(player.id);
-    if (error == null) {
-      memberIds.remove(player.id);
-      await store.refreshPlayers();
-      await store.refreshLeagues();
-      await store.loadMatchesFromSupabase();
-    }
-    if (mounted) {
-      setState(() => loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error ?? '${player.gamerTag} was permanently deleted.')),
-      );
-    }
-  }
-
   Future<void> _disciplineDialog(
     Player player, {
     required String action,
@@ -5742,7 +5782,6 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
             PopupMenuButton<String>(
               onSelected: (value) {
                 if (value == 'disregister') _disregister(player);
-                if (value == 'delete') _deletePlayer(player);
                 if (value == 'suspend') _disciplineDialog(player, action: 'suspend');
                 if (value == 'unsuspend') _disciplineDialog(player, action: 'unsuspend');
                 if (value == 'deduct') _disciplineDialog(player, action: 'deduct');
@@ -5755,8 +5794,6 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                 PopupMenuItem(value: 'fine', child: Text('Fine player')),
                 PopupMenuDivider(),
                 PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues')),
-                PopupMenuDivider(),
-                PopupMenuItem(value: 'delete', child: Text('DELETE PLAYER ACCOUNT')),
               ],
             ),
           ])));
@@ -5800,9 +5837,9 @@ class _AdminPageState extends State<AdminPage> {
         const SizedBox(height: 16),
         _neonAction(context, Icons.emoji_events, 'MANAGE LEAGUES', 'Create and activate multiple leagues', _yellow, () => open(const LeagueManagementPage())),
         const SizedBox(height: 9),
-        _neonAction(context, Icons.add_circle_outline, 'CREATE LEAGUE', 'Create a new league', _yellow, () => open(const LeagueManagementPage())),
+        _neonAction(context, Icons.fact_check_outlined, 'LEAGUE REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueRequestsAdminPage())),
         const SizedBox(height: 9),
-        _neonAction(context, Icons.group_add, 'JOIN REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueJoinRequestsPage())),
+        _neonAction(context, Icons.groups_2_outlined, 'CREATOR BATCH ACCESS', 'Choose which players/batches can request leagues', _cyan, () => open(const CreatorBatchAdminPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.calendar_month, 'MATCH SCHEDULE', 'Set date and time windows', _cyan, () => open(const AdminMatchSchedulePage())),
         const SizedBox(height: 9),
