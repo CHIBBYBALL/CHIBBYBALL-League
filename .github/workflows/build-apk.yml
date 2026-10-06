@@ -1,4 +1,4 @@
-name: Build CHIBBYBALL APK
+name: Build CHIBBY League Creator AAB
 
 on:
   workflow_dispatch:
@@ -231,31 +231,34 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build Android App Bundle
+        run: flutter build appbundle --release
 
-      - name: Rename APK
+      - name: Rename AAB
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk CHIBBYBALL.apk
+          cp \
+            build/app/outputs/bundle/release/app-release.aab \
+            "CHIBBY-League-Creator.aab"
 
-      - name: Upload APK artifact
+      - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CHIBBYBALL-APK
-          path: CHIBBYBALL.apk
+          name: CHIBBY-League-Creator-AAB
+          path: CHIBBY-League-Creator.aab
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: chibbyball-latest
-          name: CHIBBYBALL Latest
+          tag_name: chibbyball-aab-latest
+          name: CHIBBY League Creator AAB
           body: |
             # CHIBBY League Creator
 
-            Latest Android version of the CHIBBY League Creator app.
+            Android App Bundle for Google Play.
 
-            Download the APK below and install it on your Android device.
-          files: CHIBBYBALL.apk
+            App name:
+            CHIBBY League Creator
+          files: CHIBBY-League-Creator.aab
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
