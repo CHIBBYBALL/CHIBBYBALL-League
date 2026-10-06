@@ -1175,14 +1175,25 @@ class Store {
   Future<String?> requestToJoinLeague(String leagueId) async {
     final me = current;
     if (me == null) return 'Please log in again.';
+    if (me.admin) return 'Admins do not need to request league membership.';
     if (!me.profileComplete) return 'Complete your profile and WhatsApp details before joining a league.';
     try {
-      await supabase.rpc('request_to_join_creator_league', params: {'p_league_id': leagueId});
+      await supabase.rpc('request_to_join_league', params: {'p_league_id': leagueId});
       return null;
     } on PostgrestException catch (e) {
       return e.message;
     } catch (e) {
       return 'Could not request league membership: $e';
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchMyJoinRequestStatuses() async {
+    if (current == null) return [];
+    try {
+      final data = await supabase.rpc('list_my_league_join_requests');
+      return (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (_) {
+      return [];
     }
   }
 
@@ -1193,6 +1204,21 @@ class Store {
       return (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
     } catch (_) {
       return [];
+    }
+  }
+
+  Future<String?> adminReviewLeagueJoinRequest({required String requestId, required String decision}) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.rpc('admin_review_league_join_request', params: {
+        'p_request_id': requestId,
+        'p_decision': decision,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not review join request: $e';
     }
   }
 
@@ -3380,6 +3406,8 @@ class DashboardPage extends StatelessWidget {
         const SizedBox(height: 10),
         _neonAction(context, Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
         const SizedBox(height: 10),
+         _neonAction(context, Icons.group_add, 'JOIN A LEAGUE', 'See admin and creator leagues and request to join', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const JoinLeaguePage()))),
+         const SizedBox(height: 10),
         _neonAction(context, Icons.verified, 'CREATOR HUB', 'Find league creators and join their leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.emoji_events, 'CHIBBYBALL CHAMPIONS LEAGUE', 'See qualified players and the current championship season', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChampionsLeaguePage()))),
@@ -6042,7 +6070,9 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
       builder: (_) => AlertDialog(
         title: const Text('DELETE PLAYER ACCOUNT?'),
         content: Text(
-          'This will permanently delete ${player.gamerTag} and remove the account from CHIBBYBALL. This cannot be undone.\n\nUse DISREGISTER instead if you only want to remove the player from leagues.',
+          'This will permanently delete ${player.gamerTag} and remove the account from CHIBBYBALL. This cannot be undone.
+
+Use DISREGISTER instead if you only want to remove the player from leagues.',
         ),
         actions: [
           TextButton(
@@ -6228,6 +6258,131 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
 }
 
 // ============================================================
+// JOIN A LEAGUE
+// ============================================================
+
+class JoinLeaguePage extends StatefulWidget {
+  const JoinLeaguePage({super.key});
+  @override State<JoinLeaguePage> createState() => _JoinLeaguePageState();
+}
+
+class _JoinLeaguePageState extends State<JoinLeaguePage> {
+  bool loading = true;
+  final Set<String> memberIds = {};
+  final Map<String, String> requestStatuses = {};
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    if (mounted) setState(() => loading = true);
+    try {
+      final me = Store.instance.current;
+      memberIds.clear();
+      if (me != null) {
+        for (final league in Store.instance.leagues) {
+          try {
+            final ids = await Store.instance.leagueMemberIds(league.id);
+            if (ids.contains(me.id)) memberIds.add(league.id);
+          } catch (_) {}
+        }
+      }
+      requestStatuses.clear();
+      final requests = await Store.instance.fetchMyJoinRequestStatuses();
+      for (final r in requests) {
+        final leagueId = r['league_id']?.toString();
+        final status = r['status']?.toString();
+        if (leagueId != null && status != null) requestStatuses[leagueId] = status;
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _request(LeagueInfo league) async {
+    final me = Store.instance.current;
+    if (me == null) return;
+    if (!me.profileComplete) {
+      final go = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
+        title: const Text('PROFILE REQUIRED'),
+        content: const Text('Complete your phone, country, country code and WhatsApp details before joining a league.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('COMPLETE PROFILE')),
+        ],
+      ));
+      if (go == true && mounted) {
+        await Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()));
+        await _load();
+      }
+      return;
+    }
+    setState(() => loading = true);
+    final error = await Store.instance.requestToJoinLeague(league.id);
+    if (!mounted) return;
+    await _load();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Join request sent. Wait for approval.')));
+  }
+
+  String _statusFor(LeagueInfo league) {
+    if (memberIds.contains(league.id)) return 'MEMBER';
+    final status = requestStatuses[league.id];
+    if (status == 'pending') return 'REQUESTED';
+    if (status == 'approved') return 'APPROVED';
+    if (status == 'rejected') return 'REJECTED';
+    return 'AVAILABLE';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final leagues = Store.instance.leagues.where((l) => l.status != 'completed').toList();
+    return Scaffold(
+      appBar: AppBar(title: const Text('JOIN A LEAGUE')),
+      body: loading ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(
+        onRefresh: _load,
+        child: leagues.isEmpty
+            ? ListView(children: const [SizedBox(height: 180), Center(child: Text('No leagues are available right now.'))])
+            : ListView.builder(
+                padding: const EdgeInsets.all(14),
+                itemCount: leagues.length,
+                itemBuilder: (context, index) {
+                  final league = leagues[index];
+                  final status = _statusFor(league);
+                  final canRequest = status == 'AVAILABLE' || status == 'REJECTED';
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    decoration: _neonBox(status == 'MEMBER' ? const Color(0xFF20E070) : _cyan, radius: 18),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Row(children: [
+                          Expanded(child: Text(league.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
+                          Text(status, style: TextStyle(color: status == 'MEMBER' ? const Color(0xFF20E070) : _yellow, fontSize: 10, fontWeight: FontWeight.w900)),
+                        ]),
+                        const SizedBox(height: 6),
+                        Text(league.status.toUpperCase(), style: const TextStyle(color: _muted, fontSize: 11)),
+                        const SizedBox(height: 4),
+                        Text(league.feeLabel, style: const TextStyle(color: _cyan, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 12),
+                        if (canRequest) SizedBox(width: double.infinity, child: FilledButton.icon(
+                          onPressed: () => _request(league), icon: const Icon(Icons.person_add),
+                          label: Text(status == 'REJECTED' ? 'REQUEST AGAIN' : 'REQUEST TO JOIN'),
+                        )) else if (status == 'REQUESTED')
+                          const Text('Waiting for approval.', style: TextStyle(color: _yellow, fontWeight: FontWeight.w700))
+                        else if (status == 'MEMBER')
+                          const Text('You are already in this league.', style: TextStyle(color: Color(0xFF20E070), fontWeight: FontWeight.w700))
+                        else if (status == 'APPROVED')
+                          const Text('Your request was approved.', style: TextStyle(color: Color(0xFF20E070), fontWeight: FontWeight.w700)),
+                      ]),
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
 // CREATOR HUB
 // ============================================================
 
@@ -6463,6 +6618,71 @@ class _ChampionsLeaguePageState extends State<ChampionsLeaguePage> {
 }
 
 // ============================================================
+// ADMIN LEAGUE JOIN REQUESTS
+// ============================================================
+
+class LeagueJoinRequestsAdminPage extends StatefulWidget {
+  const LeagueJoinRequestsAdminPage({super.key});
+  @override State<LeagueJoinRequestsAdminPage> createState() => _LeagueJoinRequestsAdminPageState();
+}
+
+class _LeagueJoinRequestsAdminPageState extends State<LeagueJoinRequestsAdminPage> {
+  bool loading = true;
+  List<LeagueJoinRequest> requests = [];
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    if (mounted) setState(() => loading = true);
+    try {
+      requests = await Store.instance.fetchLeagueJoinRequests(pendingOnly: true);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load join requests: $e')));
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _review(LeagueJoinRequest request, String decision) async {
+    setState(() => loading = true);
+    final error = await Store.instance.adminReviewLeagueJoinRequest(requestId: request.id, decision: decision);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Request $decision.')));
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('PLAYER JOIN REQUESTS'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: requests.isEmpty
+                  ? ListView(children: const [SizedBox(height: 180), Center(child: Text('No pending player join requests.'))])
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(14),
+                      itemCount: requests.length,
+                      itemBuilder: (_, i) {
+                        final r = requests[i];
+                        return Card(
+                          child: ListTile(
+                            title: Text(r.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)),
+                            subtitle: Text(r.leagueName),
+                            trailing: Wrap(children: [
+                              IconButton(onPressed: () => _review(r, 'rejected'), icon: const Icon(Icons.close, color: Color(0xFFFF4D7D))),
+                              IconButton(onPressed: () => _review(r, 'approved'), icon: const Icon(Icons.check, color: _cyan)),
+                            ]),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+    );
+  }
+}
+
 // ADMIN
 // ============================================================
 
@@ -6497,6 +6717,8 @@ class _AdminPageState extends State<AdminPage> {
         _neonAction(context, Icons.emoji_events, 'MANAGE LEAGUES', 'Create and activate multiple leagues', _yellow, () => open(const LeagueManagementPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.fact_check_outlined, 'LEAGUE REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueRequestsAdminPage())),
+         _neonAction(context, Icons.person_add_alt_1, 'PLAYER JOIN REQUESTS', 'Approve or reject requests to join admin and creator leagues', _cyan, () => open(const LeagueJoinRequestsAdminPage())),
+         const SizedBox(height: 9),
         const SizedBox(height: 9),
         _neonAction(context, Icons.groups_2_outlined, 'LEGACY BATCH ACCESS', 'Legacy batch settings; Creator Badge is now required to create leagues', _cyan, () => open(const CreatorBatchAdminPage())),
         const SizedBox(height: 9),
