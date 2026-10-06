@@ -26,6 +26,36 @@ jobs:
       - name: Generate Android project
         run: flutter create --platforms=android .
 
+      - name: Set CHIBBY League Creator app name
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+
+          if not manifest.exists():
+              raise SystemExit("AndroidManifest.xml not found")
+
+          text = manifest.read_text()
+
+          new_label = 'android:label="CHIBBY League Creator"'
+
+          if 'android:label="' in text:
+              text = re.sub(
+                  r'android:label="[^"]*"',
+                  new_label,
+                  text,
+                  count=1
+              )
+          else:
+              raise SystemExit("Application label not found")
+
+          manifest.write_text(text)
+
+          print("App name set to: CHIBBY League Creator")
+          PY
+
       - name: Apply CHIBBYBALL launcher icon
         run: |
           sudo apt-get update
@@ -220,9 +250,9 @@ jobs:
           tag_name: chibbyball-latest
           name: CHIBBYBALL Latest
           body: |
-            # CHIBBYBALL League
+            # CHIBBY League Creator
 
-            Latest Android version of the CHIBBYBALL League app.
+            Latest Android version of the CHIBBY League Creator app.
 
             Download the APK below and install it on your Android device.
           files: CHIBBYBALL.apk
