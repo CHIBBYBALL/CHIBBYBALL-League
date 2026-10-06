@@ -28,11 +28,11 @@ jobs:
 
       - name: Restore upload keystore
         run: |
-          mkdir -p android
+          mkdir -p android/app
 
-          echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 --decode > android/upload-keystore.jks
+          echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
 
-          test -s android/upload-keystore.jks
+          test -s android/app/upload-keystore.jks
 
           echo "Upload keystore restored successfully."
 
@@ -73,8 +73,6 @@ jobs:
 
           text = pubspec.read_text()
 
-          asset_line = "    - assets/adi-registration.properties"
-
           if "assets/adi-registration.properties" in text:
               print("Play verification asset already listed.")
               raise SystemExit(0)
@@ -103,34 +101,13 @@ jobs:
                   assets_index = i
                   break
 
+          asset_line = "    - assets/adi-registration.properties"
+
           if assets_index is not None:
-              insert_at = assets_index + 1
-
-              while (
-                  insert_at < len(lines)
-                  and (
-                      lines[insert_at].startswith(" ")
-                      or lines[insert_at].strip() == ""
-                  )
-              ):
-                  insert_at += 1
-
-              lines.insert(insert_at, asset_line)
-
+              lines.insert(assets_index + 1, asset_line)
           else:
-              insert_at = flutter_index + 1
-
-              while (
-                  insert_at < len(lines)
-                  and (
-                      lines[insert_at].startswith(" ")
-                      or lines[insert_at].strip() == ""
-                  )
-              ):
-                  insert_at += 1
-
-              lines.insert(insert_at, "  assets:")
-              lines.insert(insert_at + 1, asset_line)
+              lines.insert(flutter_index + 1, "  assets:")
+              lines.insert(flutter_index + 2, asset_line)
 
           pubspec.write_text("\n".join(lines) + "\n")
 
@@ -141,7 +118,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           kts = Path("android/app/build.gradle.kts")
           groovy = Path("android/app/build.gradle")
@@ -151,16 +127,12 @@ jobs:
               text = path.read_text()
 
               if "keystoreProperties" not in text:
-                  import_block = """import java.util.Properties
+                  imports = """import java.util.Properties
           import java.io.FileInputStream
 
           """
 
-                  text = import_block + text
-
-                  marker = "android {"
-
-                  signing_properties = """val keystoreProperties = Properties()
+                  properties = """val keystoreProperties = Properties()
           val keystorePropertiesFile = rootProject.file("key.properties")
 
           if (keystorePropertiesFile.exists()) {
@@ -169,19 +141,20 @@ jobs:
 
           """
 
+                  text = imports + text
                   text = text.replace(
-                      marker,
-                      signing_properties + marker,
+                      "android {",
+                      properties + "android {",
                       1
                   )
 
-              if 'create("release")' not in text:
-                  signing_config = """        signingConfigs {
+              if "signingConfigs {" not in text:
+                  signing = """    signingConfigs {
               create("release") {
-                  keyAlias = keystoreProperties.getProperty("keyAlias")
-                  keyPassword = keystoreProperties.getProperty("keyPassword")
-                  storeFile = keystoreProperties.getProperty("storeFile")?.let { file(it) }
-                  storePassword = keystoreProperties.getProperty("storePassword")
+                  keyAlias = keystoreProperties["keyAlias"] as String
+                  keyPassword = keystoreProperties["keyPassword"] as String
+                  storeFile = keystoreProperties["storeFile"]?.let { file(it) }
+                  storePassword = keystoreProperties["storePassword"] as String
               }
           }
 
@@ -189,58 +162,30 @@ jobs:
 
                   text = text.replace(
                       "    buildTypes {",
-                      signing_config + "    buildTypes {",
+                      signing + "    buildTypes {",
                       1
                   )
 
-              release_pattern = r'buildTypes\s*\{\s*release\s*\{(.*?)\n\s*\}'
-
-              match = re.search(
-                  release_pattern,
-                  text,
-                  re.DOTALL
+              text = text.replace(
+                  'signingConfig = signingConfigs.getByName("debug")',
+                  'signingConfig = signingConfigs.getByName("release")'
               )
-
-              if match:
-                  release_block = match.group(1)
-
-                  release_block = re.sub(
-                      r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("debug"\)',
-                      "",
-                      release_block
-                  )
-
-                  if 'signingConfigs.getByName("release")' not in release_block:
-                      release_block += '\n        signingConfig = signingConfigs.getByName("release")'
-
-                  replacement = (
-                      "buildTypes {\n"
-                      "        release {"
-                      + release_block
-                      + "\n    }"
-                  )
-
-                  text = text[:match.start()] + replacement + text[match.end():]
 
               path.write_text(text)
 
-              print(f"Release signing configured in {path}.")
+              print("Kotlin Gradle release signing configured.")
 
           elif groovy.exists():
               path = groovy
               text = path.read_text()
 
               if "keystoreProperties" not in text:
-                  import_block = """import java.util.Properties
+                  imports = """import java.util.Properties
           import java.io.FileInputStream
 
           """
 
-                  text = import_block + text
-
-                  marker = "android {"
-
-                  signing_properties = """def keystoreProperties = new Properties()
+                  properties = """def keystoreProperties = new Properties()
           def keystorePropertiesFile = rootProject.file('key.properties')
 
           if (keystorePropertiesFile.exists()) {
@@ -249,14 +194,15 @@ jobs:
 
           """
 
+                  text = imports + text
                   text = text.replace(
-                      marker,
-                      signing_properties + marker,
+                      "android {",
+                      properties + "android {",
                       1
                   )
 
               if "signingConfigs {" not in text:
-                  signing_config = """    signingConfigs {
+                  signing = """    signingConfigs {
               release {
                   keyAlias keystoreProperties['keyAlias']
                   keyPassword keystoreProperties['keyPassword']
@@ -269,42 +215,18 @@ jobs:
 
                   text = text.replace(
                       "    buildTypes {",
-                      signing_config + "    buildTypes {",
+                      signing + "    buildTypes {",
                       1
                   )
 
-              release_pattern = r'buildTypes\s*\{\s*release\s*\{(.*?)\n\s*\}'
-
-              match = re.search(
-                  release_pattern,
-                  text,
-                  re.DOTALL
+              text = text.replace(
+                  "signingConfig signingConfigs.debug",
+                  "signingConfig signingConfigs.release"
               )
-
-              if match:
-                  release_block = match.group(1)
-
-                  release_block = re.sub(
-                      r'\s*signingConfig\s*=?\s*signingConfigs\.debug',
-                      "",
-                      release_block
-                  )
-
-                  if "signingConfigs.release" not in release_block:
-                      release_block += "\n        signingConfig signingConfigs.release"
-
-                  replacement = (
-                      "buildTypes {\n"
-                      "        release {"
-                      + release_block
-                      + "\n    }"
-                  )
-
-                  text = text[:match.start()] + replacement + text[match.end():]
 
               path.write_text(text)
 
-              print(f"Release signing configured in {path}.")
+              print("Groovy Gradle release signing configured.")
 
           else:
               raise SystemExit("No Android app Gradle file found.")
@@ -515,7 +437,7 @@ jobs:
 
       - name: Verify signing setup
         run: |
-          test -f android/upload-keystore.jks
+          test -f android/app/upload-keystore.jks
           test -f android/key.properties
           test -f assets/adi-registration.properties
 
