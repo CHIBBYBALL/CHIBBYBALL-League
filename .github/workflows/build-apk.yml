@@ -1,4 +1,4 @@
-name: Build CHIBBY League Creator AAB
+name: Build CHIBBY League Creator
 
 on:
   workflow_dispatch:
@@ -25,6 +25,290 @@ jobs:
 
       - name: Generate Android project
         run: flutter create --platforms=android .
+
+      - name: Restore upload keystore
+        run: |
+          mkdir -p android
+
+          echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 --decode > android/upload-keystore.jks
+
+          test -s android/upload-keystore.jks
+
+          echo "Upload keystore restored successfully."
+
+      - name: Create Android signing properties
+        run: |
+          cat > android/key.properties <<EOF
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=upload-keystore.jks
+          EOF
+
+          test -s android/key.properties
+
+          echo "Android signing properties created."
+
+      - name: Add Play package verification file
+        env:
+          PLAY_ADI_REGISTRATION: ${{ secrets.PLAY_ADI_REGISTRATION }}
+        run: |
+          mkdir -p assets
+
+          printf '%s\n' "$PLAY_ADI_REGISTRATION" > assets/adi-registration.properties
+
+          test -s assets/adi-registration.properties
+
+          echo "Play verification file created."
+
+      - name: Add verification file to Flutter assets
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          pubspec = Path("pubspec.yaml")
+
+          if not pubspec.exists():
+              raise SystemExit("pubspec.yaml not found")
+
+          text = pubspec.read_text()
+
+          asset_line = "    - assets/adi-registration.properties"
+
+          if "assets/adi-registration.properties" in text:
+              print("Play verification asset already listed.")
+              raise SystemExit(0)
+
+          lines = text.splitlines()
+
+          flutter_index = None
+
+          for i, line in enumerate(lines):
+              if line.strip() == "flutter:" and not line.startswith(" "):
+                  flutter_index = i
+                  break
+
+          if flutter_index is None:
+              raise SystemExit("flutter: section not found in pubspec.yaml")
+
+          assets_index = None
+
+          for i in range(flutter_index + 1, len(lines)):
+              stripped = lines[i].strip()
+
+              if stripped and not lines[i].startswith(" "):
+                  break
+
+              if stripped == "assets:":
+                  assets_index = i
+                  break
+
+          if assets_index is not None:
+              insert_at = assets_index + 1
+
+              while (
+                  insert_at < len(lines)
+                  and (
+                      lines[insert_at].startswith(" ")
+                      or lines[insert_at].strip() == ""
+                  )
+              ):
+                  insert_at += 1
+
+              lines.insert(insert_at, asset_line)
+
+          else:
+              insert_at = flutter_index + 1
+
+              while (
+                  insert_at < len(lines)
+                  and (
+                      lines[insert_at].startswith(" ")
+                      or lines[insert_at].strip() == ""
+                  )
+              ):
+                  insert_at += 1
+
+              lines.insert(insert_at, "  assets:")
+              lines.insert(insert_at + 1, asset_line)
+
+          pubspec.write_text("\n".join(lines) + "\n")
+
+          print("Play verification asset added to pubspec.yaml.")
+          PY
+
+      - name: Configure Android release signing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          kts = Path("android/app/build.gradle.kts")
+          groovy = Path("android/app/build.gradle")
+
+          if kts.exists():
+              path = kts
+              text = path.read_text()
+
+              if "keystoreProperties" not in text:
+                  import_block = """import java.util.Properties
+          import java.io.FileInputStream
+
+          """
+
+                  text = import_block + text
+
+                  marker = "android {"
+
+                  signing_properties = """val keystoreProperties = Properties()
+          val keystorePropertiesFile = rootProject.file("key.properties")
+
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+          }
+
+          """
+
+                  text = text.replace(
+                      marker,
+                      signing_properties + marker,
+                      1
+                  )
+
+              if 'create("release")' not in text:
+                  signing_config = """        signingConfigs {
+              create("release") {
+                  keyAlias = keystoreProperties.getProperty("keyAlias")
+                  keyPassword = keystoreProperties.getProperty("keyPassword")
+                  storeFile = keystoreProperties.getProperty("storeFile")?.let { file(it) }
+                  storePassword = keystoreProperties.getProperty("storePassword")
+              }
+          }
+
+          """
+
+                  text = text.replace(
+                      "    buildTypes {",
+                      signing_config + "    buildTypes {",
+                      1
+                  )
+
+              release_pattern = r'buildTypes\s*\{\s*release\s*\{(.*?)\n\s*\}'
+
+              match = re.search(
+                  release_pattern,
+                  text,
+                  re.DOTALL
+              )
+
+              if match:
+                  release_block = match.group(1)
+
+                  release_block = re.sub(
+                      r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("debug"\)',
+                      "",
+                      release_block
+                  )
+
+                  if 'signingConfigs.getByName("release")' not in release_block:
+                      release_block += '\n        signingConfig = signingConfigs.getByName("release")'
+
+                  replacement = (
+                      "buildTypes {\n"
+                      "        release {"
+                      + release_block
+                      + "\n    }"
+                  )
+
+                  text = text[:match.start()] + replacement + text[match.end():]
+
+              path.write_text(text)
+
+              print(f"Release signing configured in {path}.")
+
+          elif groovy.exists():
+              path = groovy
+              text = path.read_text()
+
+              if "keystoreProperties" not in text:
+                  import_block = """import java.util.Properties
+          import java.io.FileInputStream
+
+          """
+
+                  text = import_block + text
+
+                  marker = "android {"
+
+                  signing_properties = """def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file('key.properties')
+
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+
+          """
+
+                  text = text.replace(
+                      marker,
+                      signing_properties + marker,
+                      1
+                  )
+
+              if "signingConfigs {" not in text:
+                  signing_config = """    signingConfigs {
+              release {
+                  keyAlias keystoreProperties['keyAlias']
+                  keyPassword keystoreProperties['keyPassword']
+                  storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
+                  storePassword keystoreProperties['storePassword']
+              }
+          }
+
+          """
+
+                  text = text.replace(
+                      "    buildTypes {",
+                      signing_config + "    buildTypes {",
+                      1
+                  )
+
+              release_pattern = r'buildTypes\s*\{\s*release\s*\{(.*?)\n\s*\}'
+
+              match = re.search(
+                  release_pattern,
+                  text,
+                  re.DOTALL
+              )
+
+              if match:
+                  release_block = match.group(1)
+
+                  release_block = re.sub(
+                      r'\s*signingConfig\s*=?\s*signingConfigs\.debug',
+                      "",
+                      release_block
+                  )
+
+                  if "signingConfigs.release" not in release_block:
+                      release_block += "\n        signingConfig signingConfigs.release"
+
+                  replacement = (
+                      "buildTypes {\n"
+                      "        release {"
+                      + release_block
+                      + "\n    }"
+                  )
+
+                  text = text[:match.start()] + replacement + text[match.end():]
+
+              path.write_text(text)
+
+              print(f"Release signing configured in {path}.")
+
+          else:
+              raise SystemExit("No Android app Gradle file found.")
+          PY
 
       - name: Set CHIBBY League Creator app name
         run: |
@@ -132,6 +416,7 @@ jobs:
                       'plugins {\n    id("com.google.gms.google-services")',
                       1,
                   )
+
           else:
               if "com.google.gms.google-services" not in s:
                   s = s.replace(
@@ -228,8 +513,31 @@ jobs:
           print(f"ML Kit language dependencies configured in {target}.")
           PY
 
+      - name: Verify signing setup
+        run: |
+          test -f android/upload-keystore.jks
+          test -f android/key.properties
+          test -f assets/adi-registration.properties
+
+          echo "Signing and Play verification files are ready."
+
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Clean Flutter build
+        run: flutter clean
+
+      - name: Get dependencies again
+        run: flutter pub get
+
+      - name: Build verification APK
+        run: flutter build apk --release
+
+      - name: Rename verification APK
+        run: |
+          cp \
+            build/app/outputs/flutter-apk/app-release.apk \
+            "CHIBBY-League-Creator-verification.apk"
 
       - name: Build Android App Bundle
         run: flutter build appbundle --release
@@ -239,6 +547,12 @@ jobs:
           cp \
             build/app/outputs/bundle/release/app-release.aab \
             "CHIBBY-League-Creator.aab"
+
+      - name: Upload verification APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CHIBBY-League-Creator-Verification-APK
+          path: CHIBBY-League-Creator-verification.apk
 
       - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
@@ -250,15 +564,19 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: chibbyball-aab-latest
-          name: CHIBBY League Creator AAB
+          name: CHIBBY League Creator
           body: |
             # CHIBBY League Creator
 
-            Android App Bundle for Google Play.
+            Signed Android App Bundle for Google Play.
+
+            Signed verification APK for Android Developer package ownership verification.
 
             App name:
             CHIBBY League Creator
-          files: CHIBBY-League-Creator.aab
+          files: |
+            CHIBBY-League-Creator.aab
+            CHIBBY-League-Creator-verification.apk
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
