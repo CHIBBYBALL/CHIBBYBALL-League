@@ -306,6 +306,40 @@ class ChibbyballApp extends StatelessWidget {
 // MODELS
 // ============================================================
 
+class LeagueJoinRequest {
+  final String id;
+  final String leagueId;
+  final String leagueName;
+  final String playerId;
+  final String gamerTag;
+  final String status;
+  final DateTime? createdAt;
+
+  const LeagueJoinRequest({
+    required this.id,
+    required this.leagueId,
+    required this.leagueName,
+    required this.playerId,
+    required this.gamerTag,
+    required this.status,
+    this.createdAt,
+  });
+
+  factory LeagueJoinRequest.fromJson(Map<String, dynamic> row) {
+    return LeagueJoinRequest(
+      id: row['id']?.toString() ?? '',
+      leagueId: row['league_id']?.toString() ?? '',
+      leagueName: row['league_name']?.toString() ?? '',
+      playerId: row['player_id']?.toString() ?? '',
+      gamerTag: row['gamer_tag']?.toString() ?? '',
+      status: row['status']?.toString() ?? 'pending',
+      createdAt: row['created_at'] == null
+          ? null
+          : DateTime.tryParse(row['created_at'].toString()),
+    );
+  }
+}
+
 class Player {
   final String id;
   final String name;
@@ -1202,6 +1236,20 @@ class Store {
     try {
       final data = await supabase.rpc('list_my_league_join_requests');
       return (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<List<LeagueJoinRequest>> fetchLeagueJoinRequests({bool pendingOnly = false}) async {
+    if (current?.admin != true) return [];
+    try {
+      final data = await supabase.rpc('list_my_league_join_requests');
+      final rows = (data as List)
+          .map((e) => LeagueJoinRequest.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      if (!pendingOnly) return rows;
+      return rows.where((r) => r.status.toLowerCase() == 'pending').toList();
     } catch (_) {
       return [];
     }
@@ -6070,9 +6118,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
       builder: (_) => AlertDialog(
         title: const Text('DELETE PLAYER ACCOUNT?'),
         content: Text(
-          'This will permanently delete ${player.gamerTag} and remove the account from CHIBBYBALL. This cannot be undone.
-
-Use DISREGISTER instead if you only want to remove the player from leagues.',
+          'This will permanently delete ${player.gamerTag} and remove the account from CHIBBYBALL. This cannot be undone.\n\nUse DISREGISTER instead if you only want to remove the player from leagues.',
         ),
         actions: [
           TextButton(
