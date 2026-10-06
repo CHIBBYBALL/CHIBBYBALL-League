@@ -26,6 +26,44 @@ jobs:
       - name: Generate Android project
         run: flutter create --platforms=android .
 
+      - name: Apply CHIBBYBALL launcher icon
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+
+          ICON="chibbyball_creator_icon.png"
+          test -f "$ICON"
+
+          declare -A SIZES=(
+            [mdpi]=48
+            [hdpi]=72
+            [xhdpi]=96
+            [xxhdpi]=144
+            [xxxhdpi]=192
+          )
+
+          for density in "${!SIZES[@]}"; do
+            size="${SIZES[$density]}"
+
+            mkdir -p "android/app/src/main/res/mipmap-$density"
+
+            convert "$ICON" \
+              -resize "${size}x${size}" \
+              -gravity center \
+              -background none \
+              -extent "${size}x${size}" \
+              "android/app/src/main/res/mipmap-$density/ic_launcher.png"
+
+            cp \
+              "android/app/src/main/res/mipmap-$density/ic_launcher.png" \
+              "android/app/src/main/res/mipmap-$density/ic_launcher_round.png"
+          done
+
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+
+          echo "CHIBBYBALL launcher icon applied successfully."
+
       - name: Add Firebase configuration
         run: |
           mkdir -p android/app
@@ -121,12 +159,20 @@ jobs:
 
           text = target.read_text()
 
-          deps = [
-              'implementation("com.google.mlkit:text-recognition-chinese:16.0.1")',
-              'implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")',
-              'implementation("com.google.mlkit:text-recognition-japanese:16.0.1")',
-              'implementation("com.google.mlkit:text-recognition-korean:16.0.1")',
-          ]
+          if target.suffix == ".kts":
+              deps = [
+                  'implementation("com.google.mlkit:text-recognition-chinese:16.0.1")',
+                  'implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")',
+                  'implementation("com.google.mlkit:text-recognition-japanese:16.0.1")',
+                  'implementation("com.google.mlkit:text-recognition-korean:16.0.1")',
+              ]
+          else:
+              deps = [
+                  'implementation "com.google.mlkit:text-recognition-chinese:16.0.1"',
+                  'implementation "com.google.mlkit:text-recognition-devanagari:16.0.1"',
+                  'implementation "com.google.mlkit:text-recognition-japanese:16.0.1"',
+                  'implementation "com.google.mlkit:text-recognition-korean:16.0.1"',
+              ]
 
           missing = [dep for dep in deps if dep not in text]
 
@@ -149,7 +195,7 @@ jobs:
 
               target.write_text(text)
 
-          print("ML Kit language dependencies configured.")
+          print(f"ML Kit language dependencies configured in {target}.")
           PY
 
       - name: Get dependencies
