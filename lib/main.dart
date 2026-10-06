@@ -362,6 +362,42 @@ class Player {
         isOnline: json['isOnline'] == true,
         avatarUrl: json['avatarUrl']?.toString() ?? '',
       );
+
+  bool get profileComplete =>
+      phoneNumber.trim().isNotEmpty &&
+      country.trim().isNotEmpty &&
+      countryCode.trim().isNotEmpty &&
+      whatsappNumber.trim().isNotEmpty;
+}
+
+class CreatorBadge {
+  final String id;
+  final String playerId;
+  final String badgeType;
+  final String source;
+  final String? leagueId;
+  final DateTime? awardedAt;
+  final String? awardedBy;
+
+  const CreatorBadge({
+    required this.id,
+    required this.playerId,
+    required this.badgeType,
+    required this.source,
+    this.leagueId,
+    this.awardedAt,
+    this.awardedBy,
+  });
+
+  factory CreatorBadge.fromJson(Map<String, dynamic> row) => CreatorBadge(
+        id: row['id']?.toString() ?? '',
+        playerId: row['player_id']?.toString() ?? '',
+        badgeType: row['badge_type']?.toString() ?? 'creator',
+        source: row['source']?.toString() ?? 'earned',
+        leagueId: row['league_id']?.toString(),
+        awardedAt: row['awarded_at'] == null ? null : DateTime.tryParse(row['awarded_at'].toString()),
+        awardedBy: row['awarded_by']?.toString(),
+      );
 }
 
 
@@ -593,6 +629,7 @@ class Store {
   final Map<String, int> pointAdjustments = {};
   final Map<String, double> fineTotals = {};
   final Map<String, bool> suspendedPlayers = {};
+  final List<CreatorBadge> creatorBadges = [];
   bool matchDayDateControlsEnabled = true;
 
   Future<void> load() async {
@@ -630,6 +667,7 @@ class Store {
 
     try {
       await refreshPlayers();
+      await refreshBadges();
       await refreshLeagues();
       await loadMatchesFromSupabase();
       if (activeLeagueId != null) await loadDisciplineForLeague(activeLeagueId!);
@@ -763,6 +801,10 @@ class Store {
 
   Future<String?> addLeagueMember(String leagueId, String playerId) async {
     if (Store.instance.current?.admin != true) return 'Admin access required.';
+    final target = players.where((p) => p.id == playerId).firstOrNull;
+    if (target != null && !target.profileComplete) {
+      return 'Player must complete phone, country, country code and WhatsApp before joining a league.';
+    }
     try {
       await supabase.from('league_members').upsert({
         'league_id': leagueId,
@@ -801,6 +843,22 @@ class Store {
       return 'Could not disregister player: ${e.message}';
     } catch (e) {
       return 'Could not disregister player: $e';
+    }
+  }
+
+  Future<String?> adminDeletePlayer(String playerId) async {
+    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    if (playerId == supabase.auth.currentUser?.id) {
+      return 'You cannot delete the currently signed-in admin account.';
+    }
+    try {
+      await supabase.rpc('admin_delete_player', params: {'p_player_id': playerId});
+      players.removeWhere((p) => p.id == playerId);
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not delete player: ${e.message}';
+    } catch (e) {
+      return 'Could not delete player: $e';
     }
   }
 
@@ -1033,6 +1091,156 @@ class Store {
       });
     } catch (e) {
       debugPrint('FCM token registration failed: $e');
+    }
+  }
+
+  Future<void> refreshBadges() async {
+    try {
+      final data = await supabase
+          .from('player_badges')
+          .select('id, player_id, badge_type, source, league_id, awarded_at, awarded_by')
+          .order('awarded_at', ascending: false);
+      creatorBadges
+        ..clear()
+        ..addAll((data as List).map((e) => CreatorBadge.fromJson(Map<String, dynamic>.from(e))));
+    } catch (e) {
+      debugPrint('Badge refresh failed: $e');
+    }
+  }
+
+  List<CreatorBadge> badgesForPlayer(String playerId) =>
+      creatorBadges.where((b) => b.playerId == playerId).toList();
+
+  bool hasCreatorBadge(String playerId) => badgesForPlayer(playerId).isNotEmpty;
+
+  bool isProfileComplete(String? playerId) {
+    final id = playerId ?? current?.id;
+    if (id == null) return false;
+    final player = players.where((p) => p.id == id).firstOrNull ??
+        (current?.id == id ? current : null);
+    return player?.profileComplete == true;
+  }
+
+  Future<String?> awardCreatorBadge({
+    required String playerId,
+    String badgeType = 'creator',
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.rpc('admin_award_creator_badge', params: {
+        'p_player_id': playerId,
+        'p_badge_type': badgeType,
+      });
+      await refreshBadges();
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not award badge: $e';
+    }
+  }
+
+  Future<Map<String, dynamic>?> creatorStatus() async {
+    final me = current;
+    if (me == null) return null;
+    try {
+      final result = await supabase.rpc('get_my_creator_status');
+      return result == null ? null : Map<String, dynamic>.from(result as Map);
+    } catch (e) {
+      debugPrint('Creator status lookup failed: $e');
+      return null;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchCreators() async {
+    try {
+      final data = await supabase.rpc('list_creator_pages');
+      return (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (e) {
+      debugPrint('Creator pages lookup failed: $e');
+      return [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchCreatorLeagues(String playerId) async {
+    try {
+      final data = await supabase.rpc('list_creator_leagues', params: {'p_creator_id': playerId});
+      return (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (e) {
+      debugPrint('Creator leagues lookup failed: $e');
+      return [];
+    }
+  }
+
+  Future<String?> requestToJoinLeague(String leagueId) async {
+    final me = current;
+    if (me == null) return 'Please log in again.';
+    if (!me.profileComplete) return 'Complete your profile and WhatsApp details before joining a league.';
+    try {
+      await supabase.rpc('request_to_join_creator_league', params: {'p_league_id': leagueId});
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not request league membership: $e';
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchMyLeagueJoinRequests() async {
+    if (current == null) return [];
+    try {
+      final data = await supabase.rpc('list_my_league_join_requests');
+      return (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<String?> reviewLeagueJoinRequest({required String requestId, required String decision}) async {
+    if (current == null) return 'Please log in again.';
+    try {
+      await supabase.rpc('review_creator_league_join_request', params: {
+        'p_request_id': requestId,
+        'p_decision': decision,
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not review join request: $e';
+    }
+  }
+
+  Future<Map<String, dynamic>?> championsStatus() async {
+    try {
+      final result = await supabase.rpc('get_current_champions_status');
+      return result == null ? null : Map<String, dynamic>.from(result as Map);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> createChampionsSeason({String name = 'CHIBBYBALL Champions League'}) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.rpc('create_champions_season', params: {'p_name': name});
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not create Champions League season: $e';
+    }
+  }
+
+  Future<String?> generateChampionsGroups(String seasonId) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.rpc('generate_champions_groups', params: {'p_season_id': seasonId});
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return 'Could not generate Champions League groups: $e';
     }
   }
 
@@ -3172,6 +3380,10 @@ class DashboardPage extends StatelessWidget {
         const SizedBox(height: 10),
         _neonAction(context, Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
         const SizedBox(height: 10),
+        _neonAction(context, Icons.verified, 'CREATOR HUB', 'Find league creators and join their leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
+        const SizedBox(height: 10),
+        _neonAction(context, Icons.emoji_events, 'CHIBBYBALL CHAMPIONS LEAGUE', 'See qualified players and the current championship season', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChampionsLeaguePage()))),
+        const SizedBox(height: 10),
         _neonAction(context, Icons.person, 'PLAYER PROFILE', 'Edit details and profile photo', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
         const SizedBox(height: 10),
         _neonAction(context, Icons.people_alt, 'PLAYERS & MESSAGES', 'See online players and chat', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
@@ -4452,6 +4664,14 @@ class _ProfilePageState extends State<ProfilePage> {
       _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
       _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
       _info(Icons.shield_outlined, 'Account Role', p?.admin == true ? 'Administrator' : 'Player', _purple),
+      if (p != null && !p.profileComplete) ...[
+        Container(padding: const EdgeInsets.all(14), decoration: _neonBox(const Color(0xFFFF4D7D), radius: 16), child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Icon(Icons.warning_amber_rounded, color: Color(0xFFFF4D7D)), SizedBox(width: 10), Expanded(child: Text('PROFILE INCOMPLETE\nComplete your phone, country, country code and WhatsApp details before you can join a league.', style: TextStyle(fontWeight: FontWeight.w800)))])),
+        const SizedBox(height: 10),
+      ],
+      if (p != null && Store.instance.hasCreatorBadge(p.id)) ...[
+        Container(padding: const EdgeInsets.all(14), decoration: _neonBox(_yellow, radius: 16), child: Row(children: [const Icon(Icons.verified, color: _yellow, size: 30), const SizedBox(width: 10), Expanded(child: Text('CHIBBYBALL CREATOR BADGE\nYou are eligible to create/request leagues.', style: const TextStyle(fontWeight: FontWeight.w900)))])),
+        const SizedBox(height: 10),
+      ],
       const SizedBox(height: 6),
       Row(children: [Expanded(child: _neonSectionTitle('PLAYER DETAILS', accent: _cyan)), IconButton(onPressed: startEditing, icon: const Icon(Icons.edit, color: _cyan))]),
       const SizedBox(height: 8),
@@ -5013,6 +5233,7 @@ class _LeagueRequestPageState extends State<LeagueRequestPage> {
   String fixtureMode = 'single_round';
   String? batch;
   bool eligible = false;
+  bool hasCreatorBadge = false;
   String? pendingStatus;
 
   @override
@@ -5026,6 +5247,7 @@ class _LeagueRequestPageState extends State<LeagueRequestPage> {
       if (permission != null) {
         batch = permission['batch_name']?.toString();
         eligible = permission['can_create'] == true;
+        hasCreatorBadge = permission['has_creator_badge'] == true || eligible;
         pendingStatus = permission['pending_status']?.toString();
       }
     } catch (_) {}
@@ -5033,11 +5255,11 @@ class _LeagueRequestPageState extends State<LeagueRequestPage> {
   }
 
   Future<void> _submit() async {
-    if (!eligible || batch == null) return;
+    if (!eligible) return;
     setState(() => submitting = true);
     final error = await Store.instance.submitLeagueRequest(
       leagueName: nameController.text,
-      batchName: batch!,
+      batchName: 'CREATOR BADGE',
       description: descriptionController.text,
       isPaid: isPaid,
       entryFee: double.tryParse(feeController.text.trim()) ?? 0,
@@ -5057,13 +5279,13 @@ class _LeagueRequestPageState extends State<LeagueRequestPage> {
         Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_purple, radius: 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('LEAGUE CREATOR ACCESS', style: TextStyle(color: _purple, fontWeight: FontWeight.w900, fontSize: 17)),
           const SizedBox(height: 7),
-          Text(batch == null ? 'No creator batch is assigned to your account.' : 'Your batch: ${batch!}', style: const TextStyle(color: _muted)),
+          Text(hasCreatorBadge ? 'Creator Badge verified.' : 'You do not currently have a Creator Badge.', style: const TextStyle(color: _muted)),
           const SizedBox(height: 5),
-          Text(eligible ? 'You are eligible to request a league.' : 'Your batch is not currently allowed to create leagues.', style: TextStyle(color: eligible ? _cyan : const Color(0xFFFF4D7D), fontWeight: FontWeight.w800)),
+          Text(eligible ? 'You are eligible to request a league.' : 'A Creator Badge is required before you can create leagues.', style: TextStyle(color: eligible ? _cyan : const Color(0xFFFF4D7D), fontWeight: FontWeight.w800)),
         ])),
         const SizedBox(height: 14),
         if (pendingStatus != null) Card(child: ListTile(leading: const Icon(Icons.hourglass_top, color: _yellow), title: const Text('REQUEST STATUS'), subtitle: Text(pendingStatus!.toUpperCase()))),
-        if (!eligible) const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('Ask an administrator to assign your account to an approved creator batch.')))
+        if (!eligible) const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('Finish in the Top 3 of a completed qualifying league, or ask an administrator to award you a Creator Badge.')))
         else ...[
           TextField(controller: nameController, enabled: !submitting, decoration: const InputDecoration(labelText: 'League name', hintText: 'e.g. CHIBBYBALL Batch 2 League')),
           const SizedBox(height: 12),
@@ -5251,7 +5473,44 @@ class _CreatorBatchAdminPageState extends State<CreatorBatchAdminPage> {
   bool loading = false;
   @override void dispose(){ batchController.dispose(); super.dispose(); }
   Future<void> _save() async { if(selectedPlayerId==null || batchController.text.trim().isEmpty)return; setState(()=>loading=true); final e=await Store.instance.setPlayerCreatorBatch(playerId:selectedPlayerId!,batchName:batchController.text,canCreate:canCreate); if(mounted){setState(()=>loading=false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(e??'Creator batch access saved.')));} }
-  @override Widget build(BuildContext context){ final players=Store.instance.players.where((p)=>!p.admin).toList(); return Scaffold(appBar:AppBar(title:const Text('Creator Batch Access')),body:ListView(padding:const EdgeInsets.all(16),children:[DropdownButtonFormField<String>(value:selectedPlayerId,decoration:const InputDecoration(labelText:'PLAYER'),items:players.map((p)=>DropdownMenuItem(value:p.id,child:Text(p.gamerTag))).toList(),onChanged:loading?(v){}:(v)=>setState(()=>selectedPlayerId=v)),const SizedBox(height:12),TextField(controller:batchController,decoration:const InputDecoration(labelText:'Batch name',hintText:'e.g. Batch 1')),SwitchListTile(title:const Text('Allow this batch/player to request leagues'),value:canCreate,onChanged:loading?null:(v)=>setState(()=>canCreate=v)),const SizedBox(height:12),FilledButton.icon(onPressed:loading?null:_save,icon:const Icon(Icons.save),label:const Text('SAVE ACCESS')),const SizedBox(height:20),const Text('Use this screen to assign a player to an approved batch. The player still needs admin approval for every league request.',style:TextStyle(color:_muted))])); }
+  @override Widget build(BuildContext context){ final players=Store.instance.players.where((p)=>!p.admin).toList(); return Scaffold(appBar:AppBar(title:const Text('Creator Batch Access')),body:ListView(padding:const EdgeInsets.all(16),children:[DropdownButtonFormField<String>(value:selectedPlayerId,decoration:const InputDecoration(labelText:'PLAYER'),items:players.map((p)=>DropdownMenuItem(value:p.id,child:Text(p.gamerTag))).toList(),onChanged:loading?(v){}:(v)=>setState(()=>selectedPlayerId=v)),const SizedBox(height:12),TextField(controller:batchController,decoration:const InputDecoration(labelText:'Batch name',hintText:'e.g. Batch 1')),SwitchListTile(title:const Text('Allow this batch/player to request leagues'),value:canCreate,onChanged:loading?null:(v)=>setState(()=>canCreate=v)),const SizedBox(height:12),FilledButton.icon(onPressed:loading?null:_save,icon:const Icon(Icons.save),label:const Text('SAVE ACCESS')),const SizedBox(height:20),const Text('Legacy batch settings are retained for compatibility. A Creator Badge is required to create a league.',style:TextStyle(color:_muted))])); }
+}
+
+// ============================================================
+// ADMIN BADGE MANAGEMENT
+// ============================================================
+
+class BadgeAdminPage extends StatefulWidget {
+  const BadgeAdminPage({super.key});
+  @override State<BadgeAdminPage> createState() => _BadgeAdminPageState();
+}
+
+class _BadgeAdminPageState extends State<BadgeAdminPage> {
+  String? selectedPlayerId;
+  bool loading = false;
+
+  Future<void> _award() async {
+    if (selectedPlayerId == null) return;
+    setState(() => loading = true);
+    final error = await Store.instance.awardCreatorBadge(playerId: selectedPlayerId!);
+    if (!mounted) return;
+    setState(() => loading = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Creator Badge awarded.')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final players = Store.instance.players.where((p) => !p.admin).toList();
+    return Scaffold(appBar: AppBar(title: const Text('Badge Management')), body: ListView(padding: const EdgeInsets.all(16), children: [
+      const Text('MANUALLY AWARD CREATOR BADGE', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+      const SizedBox(height: 8),
+      const Text('Use this only when an administrator wants to grant creator privileges directly.', style: TextStyle(color: _muted)),
+      const SizedBox(height: 16),
+      DropdownButtonFormField<String>(value: selectedPlayerId, decoration: const InputDecoration(labelText: 'PLAYER'), items: players.map((p) => DropdownMenuItem(value: p.id, child: Text(p.gamerTag))).toList(), onChanged: loading ? null : (v) => setState(() => selectedPlayerId = v)),
+      const SizedBox(height: 16),
+      FilledButton.icon(onPressed: loading ? null : _award, icon: const Icon(Icons.verified), label: const Text('AWARD CREATOR BADGE')),
+    ]));
+  }
 }
 
 // ============================================================
@@ -5777,6 +6036,47 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
     if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? '${player.gamerTag} disregistered from all leagues.'))); }
   }
 
+  Future<void> _deletePlayer(Player player) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('DELETE PLAYER ACCOUNT?'),
+        content: Text(
+          'This will permanently delete ${player.gamerTag} and remove the account from CHIBBYBALL. This cannot be undone.
+
+Use DISREGISTER instead if you only want to remove the player from leagues.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFF4D7D)),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('DELETE ACCOUNT'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    setState(() => loading = true);
+    final error = await store.adminDeletePlayer(player.id);
+    if (error == null) {
+      memberIds.remove(player.id);
+      await store.refreshPlayers();
+      await store.refreshLeagues();
+      await store.loadMatchesFromSupabase();
+    }
+    if (mounted) {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error ?? '${player.gamerTag} account deleted permanently.')),
+      );
+    }
+  }
+
   Future<void> _disciplineDialog(
     Player player, {
     required String action,
@@ -5910,6 +6210,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                 if (value == 'unsuspend') _disciplineDialog(player, action: 'unsuspend');
                 if (value == 'deduct') _disciplineDialog(player, action: 'deduct');
                 if (value == 'fine') _disciplineDialog(player, action: 'fine');
+                if (value == 'delete') _deletePlayer(player);
               },
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'suspend', child: Text('Suspend player')),
@@ -5918,11 +6219,247 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                 PopupMenuItem(value: 'fine', child: Text('Fine player')),
                 PopupMenuDivider(),
                 PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues')),
+                PopupMenuItem(value: 'delete', child: Text('DELETE PLAYER ACCOUNT')),
               ],
             ),
           ])));
         }),
       ])),
+    );
+  }
+}
+
+// ============================================================
+// CREATOR HUB
+// ============================================================
+
+class CreatorHubPage extends StatefulWidget {
+  const CreatorHubPage({super.key});
+  @override State<CreatorHubPage> createState() => _CreatorHubPageState();
+}
+
+class _CreatorHubPageState extends State<CreatorHubPage> {
+  bool loading = true;
+  List<Map<String, dynamic>> creators = [];
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    creators = await Store.instance.fetchCreators();
+    if (mounted) setState(() => loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('CHIBBYBALL CREATORS')),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: creators.isEmpty
+                  ? const Center(child: Text('No league creators are available yet.'))
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(14),
+                      itemCount: creators.length,
+                      itemBuilder: (_, i) {
+                        final c = creators[i];
+                        return Card(
+                          child: ListTile(
+                            leading: const CircleAvatar(child: Icon(Icons.verified)),
+                            title: Text(c['gamer_tag']?.toString() ?? 'Creator', style: const TextStyle(fontWeight: FontWeight.w900)),
+                            subtitle: Text('${c['badge_count'] ?? 1} creator badge(s) • ${c['league_count'] ?? 0} league(s) created'),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CreatorPage(creator: c))),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+    );
+  }
+}
+
+class CreatorPage extends StatefulWidget {
+  final Map<String, dynamic> creator;
+  const CreatorPage({super.key, required this.creator});
+  @override State<CreatorPage> createState() => _CreatorPageState();
+}
+
+class _CreatorPageState extends State<CreatorPage> {
+  bool loading = true;
+  List<Map<String, dynamic>> leagues = [];
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    leagues = await Store.instance.fetchCreatorLeagues(widget.creator['player_id'].toString());
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _join(String leagueId) async {
+    final me = Store.instance.current;
+    if (me == null) return;
+    if (!me.profileComplete) {
+      final go = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
+        title: const Text('PROFILE REQUIRED'),
+        content: const Text('Complete your phone, country, country code and WhatsApp details before joining a league.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('COMPLETE PROFILE')),
+        ],
+      ));
+      if (go == true && mounted) Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()));
+      return;
+    }
+    final error = await Store.instance.requestToJoinLeague(leagueId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Join request sent to the league creator.')));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.creator;
+    return Scaffold(
+      appBar: AppBar(title: Text('${c['gamer_tag'] ?? 'Creator'}')),
+      body: loading ? const Center(child: CircularProgressIndicator()) : ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_yellow, radius: 20), child: Column(children: [
+            const Icon(Icons.verified, color: _yellow, size: 52),
+            const SizedBox(height: 8),
+            Text(c['gamer_tag']?.toString() ?? 'Creator', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
+            Text('${c['league_count'] ?? 0} leagues created', style: const TextStyle(color: _muted)),
+          ])),
+          const SizedBox(height: 16),
+          const Text('ACTIVE CREATOR LEAGUES', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          if (leagues.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('This creator has no active leagues available right now.'))),
+          ...leagues.map((l) => Card(child: ListTile(
+            title: Text(l['league_name']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w900)),
+            subtitle: Text('${l['status']?.toString().toUpperCase() ?? 'OPEN'} • ${l['member_count'] ?? 0} players'),
+            trailing: FilledButton(onPressed: l['status']?.toString() == 'completed' ? null : () => _join(l['league_id'].toString()), child: const Text('JOIN')),
+          ))),
+          if (Store.instance.current?.id == widget.creator['player_id']?.toString()) ...[
+            const SizedBox(height: 16),
+            const Text('JOIN REQUESTS', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 8),
+            CreatorJoinRequestsWidget(creatorId: widget.creator['player_id'].toString()),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class CreatorJoinRequestsWidget extends StatefulWidget {
+  final String creatorId;
+  const CreatorJoinRequestsWidget({super.key, required this.creatorId});
+  @override State<CreatorJoinRequestsWidget> createState() => _CreatorJoinRequestsWidgetState();
+}
+
+class _CreatorJoinRequestsWidgetState extends State<CreatorJoinRequestsWidget> {
+  bool loading = true;
+  List<Map<String, dynamic>> requests = [];
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    requests = await Store.instance.fetchMyLeagueJoinRequests();
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _review(String id, String decision) async {
+    final error = await Store.instance.reviewLeagueJoinRequest(requestId: id, decision: decision);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Join request $decision.')));
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return const Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator());
+    final pending = requests.where((r) => r['status']?.toString() == 'pending').toList();
+    if (pending.isEmpty) return const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('No pending join requests.')));
+    return Column(children: pending.map((r) => Card(child: ListTile(
+      title: Text(r['gamer_tag']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w800)),
+      subtitle: Text(r['league_name']?.toString() ?? ''),
+      trailing: Wrap(children: [
+        IconButton(onPressed: () => _review(r['id'].toString(), 'rejected'), icon: const Icon(Icons.close, color: Color(0xFFFF4D7D))),
+        IconButton(onPressed: () => _review(r['id'].toString(), 'approved'), icon: const Icon(Icons.check, color: _cyan)),
+      ]),
+    ))).toList());
+  }
+}
+
+// ============================================================
+// CHAMPIONS LEAGUE
+// ============================================================
+
+class ChampionsLeaguePage extends StatefulWidget {
+  const ChampionsLeaguePage({super.key});
+  @override State<ChampionsLeaguePage> createState() => _ChampionsLeaguePageState();
+}
+
+class _ChampionsLeaguePageState extends State<ChampionsLeaguePage> {
+  bool loading = true;
+  Map<String, dynamic>? data;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    data = await Store.instance.championsStatus();
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _createSeason() async {
+    final nameController = TextEditingController(text: 'CHIBBYBALL Champions League');
+    final name = await showDialog<String>(context: context, builder: (_) => AlertDialog(
+      title: const Text('CREATE CHAMPIONS LEAGUE'),
+      content: TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Season name')),
+      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(context, nameController.text.trim()), child: const Text('CREATE'))],
+    ));
+    nameController.dispose();
+    if (name == null || name.isEmpty) return;
+    final error = await Store.instance.createChampionsSeason(name: name);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Champions League season created.')));
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final qualified = (data?['qualified_players'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? [];
+    final groups = (data?['groups'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? [];
+    return Scaffold(
+      appBar: AppBar(title: const Text('CHIBBYBALL CHAMPIONS LEAGUE'), actions: [if (Store.instance.current?.admin == true) IconButton(onPressed: _createSeason, icon: const Icon(Icons.add))]),
+      body: loading ? const Center(child: CircularProgressIndicator()) : ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_yellow, radius: 20), child: const Column(children: [Icon(Icons.emoji_events, color: _yellow, size: 58), SizedBox(height: 8), Text('TOP CREATOR LEAGUE FINISHERS', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)), SizedBox(height: 5), Text('Top 3 from each completed qualifying league can enter the overall championship.', textAlign: TextAlign.center, style: TextStyle(color: _muted))])),
+          const SizedBox(height: 16),
+          if (data == null || data!['season_id'] == null) const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('No Champions League season is active yet. A season becomes available when enough qualifying leagues have completed.'))),
+          if (data != null && data!['season_id'] != null) ...[
+            Text(data!['season_name']?.toString() ?? 'Champions League', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+            Text('STATUS: ${data!['status']?.toString().toUpperCase() ?? 'OPEN'}', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 10),
+            if (Store.instance.current?.admin == true && groups.isEmpty)
+              FilledButton.icon(onPressed: () async { final e = await Store.instance.generateChampionsGroups(data!['season_id'].toString()); if (!mounted) return; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e ?? 'Groups generated.'))); await _load(); }, icon: const Icon(Icons.account_tree), label: const Text('GENERATE GROUP STAGE')),
+            const SizedBox(height: 10),
+            const Text('QUALIFIED PLAYERS', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+            ...qualified.map((q) => ListTile(leading: CircleAvatar(child: Text('${q['position'] ?? ''}')), title: Text(q['gamer_tag']?.toString() ?? ''), subtitle: Text(q['source_league_name']?.toString() ?? 'Qualified'),)),
+            if (groups.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              const Text('GROUP STAGE', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+              ...groups.map((g) { final gp = (g['players'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? []; return Card(child: ExpansionTile(title: Text(g['group_name']?.toString() ?? 'Group', style: const TextStyle(fontWeight: FontWeight.w900)), children: gp.map((p) => ListTile(leading: const Icon(Icons.person), title: Text(p['gamer_tag']?.toString() ?? ''))).toList())); }),
+            ],
+          ],
+        ],
+      ),
     );
   }
 }
@@ -5963,7 +6500,11 @@ class _AdminPageState extends State<AdminPage> {
         const SizedBox(height: 9),
         _neonAction(context, Icons.fact_check_outlined, 'LEAGUE REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueRequestsAdminPage())),
         const SizedBox(height: 9),
-        _neonAction(context, Icons.groups_2_outlined, 'CREATOR BATCH ACCESS', 'Choose which players/batches can request leagues', _cyan, () => open(const CreatorBatchAdminPage())),
+        _neonAction(context, Icons.groups_2_outlined, 'LEGACY BATCH ACCESS', 'Legacy batch settings; Creator Badge is now required to create leagues', _cyan, () => open(const CreatorBatchAdminPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.verified, 'BADGE MANAGEMENT', 'Manually award a Creator Badge to a player', _yellow, () => open(const BadgeAdminPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.emoji_events, 'CHAMPIONS LEAGUE', 'Create and manage the overall championship season', _purple, () => open(const ChampionsLeaguePage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.calendar_month, 'MATCH SCHEDULE', 'Set date and time windows', _cyan, () => open(const AdminMatchSchedulePage())),
         const SizedBox(height: 9),
