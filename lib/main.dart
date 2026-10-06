@@ -6042,9 +6042,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
       builder: (_) => AlertDialog(
         title: const Text('DELETE PLAYER ACCOUNT?'),
         content: Text(
-          'This will permanently delete ${player.gamerTag} and remove the account from CHIBBYBALL. This cannot be undone.
-
-Use DISREGISTER instead if you only want to remove the player from leagues.',
+          'This will permanently delete ${player.gamerTag} and remove the account from CHIBBYBALL. This cannot be undone.\n\nUse DISREGISTER instead if you only want to remove the player from leagues.',
         ),
         actions: [
           TextButton(
