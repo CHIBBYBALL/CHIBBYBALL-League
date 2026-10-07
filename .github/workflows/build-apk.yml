@@ -436,12 +436,48 @@ jobs:
           PY
 
       - name: Verify signing setup
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           test -f android/app/upload-keystore.jks
           test -f android/key.properties
           test -f assets/adi-registration.properties
 
-          echo "Signing and Play verification files are ready."
+          echo "Checking restored keystore..."
+          ls -lh android/app/upload-keystore.jks
+
+          echo "Checking keystore password and alias..."
+
+          keytool -list \
+            -keystore android/app/upload-keystore.jks \
+            -alias "$KEY_ALIAS" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            > /tmp/keystore-check.txt
+
+          echo "Keystore password and alias verified."
+
+          grep "Alias name:" /tmp/keystore-check.txt
+          grep "Entry type:" /tmp/keystore-check.txt
+
+          echo "Testing private key access..."
+
+          keytool -importkeystore \
+            -srckeystore android/app/upload-keystore.jks \
+            -srcstoretype JKS \
+            -srcalias "$KEY_ALIAS" \
+            -srcstorepass "$KEYSTORE_PASSWORD" \
+            -srckeypass "$KEYSTORE_PASSWORD" \
+            -destkeystore /tmp/chibby-test.p12 \
+            -deststoretype PKCS12 \
+            -deststorepass "temporary-test-password-123" \
+            -destkeypass "temporary-test-password-123" \
+            -noprompt
+
+          test -s /tmp/chibby-test.p12
+
+          echo "PRIVATE KEY ACCESS VERIFIED."
+          echo "Signing configuration is valid."
 
       - name: Get dependencies
         run: flutter pub get
