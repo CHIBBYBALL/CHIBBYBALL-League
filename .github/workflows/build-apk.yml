@@ -41,7 +41,7 @@ jobs:
           cat > android/key.properties <<EOF
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyAlias=upload
           storeFile=upload-keystore.jks
           EOF
 
@@ -438,7 +438,6 @@ jobs:
       - name: Verify signing setup
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           test -f android/app/upload-keystore.jks
           test -f android/key.properties
@@ -447,25 +446,24 @@ jobs:
           echo "Checking restored keystore..."
           ls -lh android/app/upload-keystore.jks
 
-          echo "Checking keystore password and alias..."
+          echo "Checking keystore..."
 
           keytool -list \
             -keystore android/app/upload-keystore.jks \
-            -alias "$KEY_ALIAS" \
             -storepass "$KEYSTORE_PASSWORD" \
             > /tmp/keystore-check.txt
 
-          echo "Keystore password and alias verified."
+          echo "Keystore password verified."
 
           grep "Alias name:" /tmp/keystore-check.txt
           grep "Entry type:" /tmp/keystore-check.txt
 
-          echo "Testing private key access..."
+          echo "Testing upload key..."
 
           keytool -importkeystore \
             -srckeystore android/app/upload-keystore.jks \
             -srcstoretype JKS \
-            -srcalias "$KEY_ALIAS" \
+            -srcalias upload \
             -srcstorepass "$KEYSTORE_PASSWORD" \
             -srckeypass "$KEYSTORE_PASSWORD" \
             -destkeystore /tmp/chibby-test.p12 \
