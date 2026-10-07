@@ -448,16 +448,33 @@ jobs:
 
           echo "Checking keystore..."
 
+          set +e
+
           keytool -list \
             -keystore android/app/upload-keystore.jks \
             -storepass "$KEYSTORE_PASSWORD" \
-            > /tmp/keystore-check.txt
+            > /tmp/keystore-output.txt 2>&1
 
-          echo "Keystore password verified."
+          RESULT=$?
 
-          grep "Alias name:" /tmp/keystore-check.txt
-          grep "Entry type:" /tmp/keystore-check.txt
+          set -e
 
+          cat /tmp/keystore-output.txt
+
+          if [ "$RESULT" -ne 0 ]; then
+            echo ""
+            echo "KEYSTORE CHECK FAILED."
+            echo "The exact keytool error is shown above."
+            exit "$RESULT"
+          fi
+
+          echo ""
+          echo "KEYSTORE PASSWORD VERIFIED."
+
+          grep "Alias name:" /tmp/keystore-output.txt || true
+          grep "Entry type:" /tmp/keystore-output.txt || true
+
+          echo ""
           echo "Testing upload key..."
 
           keytool -importkeystore \
@@ -474,6 +491,7 @@ jobs:
 
           test -s /tmp/chibby-test.p12
 
+          echo ""
           echo "PRIVATE KEY ACCESS VERIFIED."
           echo "Signing configuration is valid."
 
