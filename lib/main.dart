@@ -4694,7 +4694,11 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget build(BuildContext context) {
     final p = Store.instance.current;
     final online = p?.isOnline == true && (p?.lastSeen == null || DateTime.now().toUtc().difference(p!.lastSeen!.toUtc()).inMinutes < 3);
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 14, 16, 30), children: [
+    return Scaffold(
+      appBar: AppBar(title: const Text('PLAYER PROFILE')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 30),
+        children: [
       Container(padding: const EdgeInsets.fromLTRB(18, 20, 18, 18), decoration: _neonBox(_blue, radius: 24), child: Column(children: [
         Stack(
           clipBehavior: Clip.none,
@@ -4784,7 +4788,9 @@ class _ProfilePageState extends State<ProfilePage> {
       }),
       const SizedBox(height: 12),
       OutlinedButton.icon(onPressed: logout, icon: const Icon(Icons.logout), label: const Text('LOG OUT')),
-    ]);
+        ],
+      ),
+    );
   }
 }
 
