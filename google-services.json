@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:823247573061:android:339458a32a8ff0cb49132c",
+        "android_client_info": {
+          "package_name": "com.chibbyball.leaguecreator"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAWGkD1qaHO1eELL2vraiY8c2ytgVVRXjM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:823247573061:android:0a0486ff9dd152b449132c",
         "android_client_info": {
           "package_name": "com.example.chibbyball_league"
