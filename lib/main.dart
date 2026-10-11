@@ -997,10 +997,22 @@ class Store {
         'is_online': online,
         'last_seen': now.toIso8601String(),
       }).eq('id', player.id);
+
+      // Prefer the latest player record in memory. A presence update must not
+      // overwrite a newer avatar/profile with an older snapshot.
+      final latest = findPlayer(player.id) ?? current ?? player;
       final updated = Player(
-        id: player.id, name: player.name, gamerTag: player.gamerTag, admin: player.admin,
-        phoneNumber: player.phoneNumber, country: player.country, countryCode: player.countryCode,
-        whatsappNumber: player.whatsappNumber, lastSeen: now, isOnline: online, avatarUrl: player.avatarUrl,
+        id: latest.id,
+        name: latest.name,
+        gamerTag: latest.gamerTag,
+        admin: latest.admin,
+        phoneNumber: latest.phoneNumber,
+        country: latest.country,
+        countryCode: latest.countryCode,
+        whatsappNumber: latest.whatsappNumber,
+        lastSeen: now,
+        isOnline: online,
+        avatarUrl: latest.avatarUrl,
       );
       current = updated;
       final index = players.indexWhere((p) => p.id == player.id);
@@ -1319,6 +1331,7 @@ class Store {
   }
 
   Future<void> refreshPlayers() async {
+    final signedInId = current?.id;
     final data = await supabase
         .from('profiles')
         .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, avatar_url, last_seen, is_online, created_at')
@@ -1347,6 +1360,12 @@ class Store {
         }),
       );
 
+    // Keep the signed-in player in sync with the row fetched from Supabase.
+    // Otherwise the main Profile tab can keep using an old, empty avatar URL.
+    if (signedInId != null) {
+      final refreshedCurrent = findPlayer(signedInId);
+      if (refreshedCurrent != null) current = refreshedCurrent;
+    }
     await save();
   }
 
@@ -4648,6 +4667,30 @@ class _ProfilePageState extends State<ProfilePage> {
     countryCodeController = TextEditingController(text: p?.countryCode ?? '');
     whatsappController = TextEditingController(text: p?.whatsappNumber ?? '');
     editing = !_hasSavedDetails(p);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshProfile());
+  }
+
+  Future<void> _refreshProfile() async {
+    final id = Store.instance.current?.id;
+    if (id == null) return;
+    final oldPhone = phoneController.text;
+    final oldCountry = countryController.text;
+    final oldCountryCode = countryCodeController.text;
+    final oldWhatsapp = whatsappController.text;
+    try {
+      await Store.instance.refreshPlayers();
+      if (!mounted) return;
+      final p = Store.instance.current;
+      if (p == null || p.id != id) return;
+      // Update controllers only if the user has not changed them while loading.
+      if (phoneController.text == oldPhone) phoneController.text = p.phoneNumber;
+      if (countryController.text == oldCountry) countryController.text = p.country;
+      if (countryCodeController.text == oldCountryCode) countryCodeController.text = p.countryCode;
+      if (whatsappController.text == oldWhatsapp) whatsappController.text = p.whatsappNumber;
+      setState(() {});
+    } catch (e) {
+      debugPrint('Profile refresh failed: $e');
+    }
   }
 
   bool _hasSavedDetails(Player? p) => p != null && (p.phoneNumber.trim().isNotEmpty || p.country.trim().isNotEmpty || p.countryCode.trim().isNotEmpty || p.whatsappNumber.trim().isNotEmpty);
@@ -5009,7 +5052,12 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
 
   Future<void> _createLeague() async {
     final name = nameController.text.trim();
-    if (name.isEmpty) return;
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a league name first.')),
+      );
+      return;
+    }
     setState(() => loading = true);
     final fee = double.tryParse(feeController.text.trim()) ?? 0;
     final error = await store.createLeague(name, isPaid: isPaidLeague, entryFee: fee, currency: 'NGN', fixtureMode: fixtureMode);
@@ -5098,27 +5146,42 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'League name',
-                      hintText: 'e.g. CHIBBYBALL Season 1',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
+            // Keep the league name field and CREATE action in a vertical layout.
+            // This is more reliable on narrow mobile screens than squeezing both
+            // controls into one Row, and explicit styles keep the input readable.
+            TextField(
+              key: const ValueKey('league-name-input'),
+              controller: nameController,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) { if (!loading) _createLeague(); },
+              style: const TextStyle(color: Color(0xFFE8F1FF), fontSize: 16),
+              decoration: const InputDecoration(
+                labelText: 'League name',
+                hintText: 'e.g. CHIBBYBALL Season 1',
+                labelStyle: TextStyle(color: Color(0xFFB9C7DA)),
+                hintStyle: TextStyle(color: Color(0xFF8193AA)),
+                prefixIcon: Icon(Icons.emoji_events_outlined),
+                filled: true,
+                fillColor: Color(0xE6091221),
+                border: OutlineInputBorder(),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF14728B)),
                 ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  height: 56,
-                  child: FilledButton(
-                    onPressed: loading ? null : _createLeague,
-                    child: const Text('CREATE'),
-                  ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF00D9FF), width: 2),
                 ),
-              ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: FilledButton.icon(
+                key: const ValueKey('create-league-button'),
+                onPressed: loading ? null : _createLeague,
+                icon: const Icon(Icons.add),
+                label: Text(loading ? 'PLEASE WAIT...' : 'CREATE LEAGUE'),
+              ),
             ),
             const SizedBox(height: 12),
             Card(
