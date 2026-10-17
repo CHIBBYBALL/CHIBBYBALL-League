@@ -138,21 +138,21 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Firebase is used for messaging, but a Firebase startup problem must not
-  // prevent the main app from reaching its first screen.
-  try {
-    _firebaseInitialization ??= Firebase.initializeApp();
-    await _firebaseInitialization;
-    FirebaseMessaging.onBackgroundMessage(
-      _firebaseMessagingBackgroundHandler,
-    );
-  } catch (e, stackTrace) {
+  // Register the background handler immediately. Firebase initialization is
+  // started in the background so a slow Firebase startup cannot hold the UI.
+  FirebaseMessaging.onBackgroundMessage(
+    _firebaseMessagingBackgroundHandler,
+  );
+  _firebaseInitialization ??= Firebase.initializeApp();
+  _firebaseInitialization!.then((_) {
+    debugPrint('Firebase initialized.');
+  }).catchError((Object e, StackTrace stackTrace) {
     debugPrint('Firebase initialization failed: $e');
     debugPrintStack(stackTrace: stackTrace);
-  }
+  });
 
-  // Supabase is required by the app's data store. Keep initialization errors
-  // visible in the logs instead of silently leaving the app on its splash.
+  // Supabase must be initialized before Store is created, because Store holds
+  // a Supabase client. Do not wait for network data before showing the UI.
   try {
     await Supabase.initialize(
       url: supabaseUrl,
@@ -164,16 +164,14 @@ Future<void> main() async {
     rethrow;
   }
 
-  // Finish loading local cache and initial server data before displaying the
-  // app, matching the startup sequence that previously resolved the splash hang.
-  try {
-    await Store.instance.load();
-  } catch (e, stackTrace) {
+  runApp(const ChibbyballApp());
+
+  // Load cached data and refresh server data after the first frame can render.
+  // Store.load() already catches errors from its Supabase refresh sequence.
+  Store.instance.load().catchError((Object e, StackTrace stackTrace) {
     debugPrint('Store load failed: $e');
     debugPrintStack(stackTrace: stackTrace);
-  }
-
-  runApp(const ChibbyballApp());
+  });
 }
 
 class _ChibbyballBackgroundPainter extends CustomPainter {
