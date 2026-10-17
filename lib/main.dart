@@ -138,28 +138,40 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Start Firebase without blocking the first screen, but keep the same
-  // initialization Future so login/register can safely wait for it.
-  _firebaseInitialization ??= Firebase.initializeApp();
-  _firebaseInitialization!.then((_) {
+  // Firebase is used for messaging, but a Firebase startup problem must not
+  // prevent the main app from reaching its first screen.
+  try {
+    _firebaseInitialization ??= Firebase.initializeApp();
+    await _firebaseInitialization;
     FirebaseMessaging.onBackgroundMessage(
       _firebaseMessagingBackgroundHandler,
     );
-  }).catchError((e) {
+  } catch (e, stackTrace) {
     debugPrint('Firebase initialization failed: $e');
-  });
+    debugPrintStack(stackTrace: stackTrace);
+  }
 
-  // Supabase is required by the login/register actions, so initialize it
-  // before showing the main app.
-  await Supabase.initialize(
-    url: supabaseUrl,
-    publishableKey: supabasePublishableKey,
-  );
+  // Supabase is required by the app's data store. Keep initialization errors
+  // visible in the logs instead of silently leaving the app on its splash.
+  try {
+    await Supabase.initialize(
+      url: supabaseUrl,
+      publishableKey: supabasePublishableKey,
+    );
+  } catch (e, stackTrace) {
+    debugPrint('Supabase initialization failed: $e');
+    debugPrintStack(stackTrace: stackTrace);
+    rethrow;
+  }
 
-  // Load cached/server data without blocking the first screen.
-  Store.instance.load().catchError((e) {
+  // Finish loading local cache and initial server data before displaying the
+  // app, matching the startup sequence that previously resolved the splash hang.
+  try {
+    await Store.instance.load();
+  } catch (e, stackTrace) {
     debugPrint('Store load failed: $e');
-  });
+    debugPrintStack(stackTrace: stackTrace);
+  }
 
   runApp(const ChibbyballApp());
 }
