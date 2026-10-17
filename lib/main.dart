@@ -1789,6 +1789,106 @@ class Store {
   }
 
 
+  /// Converts an existing single-round league to Home & Away without
+  /// changing any existing fixture, result, proof, or submission.
+  /// Missing reverse fixtures are appended in rounds after the current rounds.
+  Future<String?> convertLeagueToHomeAway(String leagueId) async {
+    if (current?.admin != true) return 'Admin access required.';
+
+    try {
+      final leagueRow = await supabase
+          .from('leagues')
+          .select('id, fixture_mode')
+          .eq('id', leagueId)
+          .maybeSingle();
+      if (leagueRow == null) return 'League not found.';
+      if (leagueRow['fixture_mode']?.toString() == 'home_away') {
+        return 'This league is already set to Home & Away.';
+      }
+
+      final data = await supabase
+          .from('matches')
+          .select('id, round, home_player_id, away_player_id, scheduled_date, match_start_time, match_end_time')
+          .eq('league_id', leagueId)
+          .order('round')
+          .order('created_at');
+      final rows = (data as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+
+      // If no fixtures exist yet, simply change the mode; normal generation
+      // will then create both legs.
+      if (rows.isEmpty) {
+        await supabase.from('leagues').update({'fixture_mode': 'home_away'}).eq('id', leagueId);
+        await refreshLeagues();
+        return null;
+      }
+
+      final maxRound = rows.fold<int>(0, (max, row) {
+        final round = (row['round'] as num?)?.toInt() ?? 1;
+        return round > max ? round : max;
+      });
+      final minRound = rows.fold<int>(maxRound, (min, row) {
+        final round = (row['round'] as num?)?.toInt() ?? 1;
+        return round < min ? round : min;
+      });
+
+      String pairKey(String a, String b) => a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
+      String directionKey(String home, String away) => '$home>$away';
+      final directionsByPair = <String, Set<String>>{};
+      for (final row in rows) {
+        final home = row['home_player_id'].toString();
+        final away = row['away_player_id'].toString();
+        directionsByPair.putIfAbsent(pairKey(home, away), () => <String>{}).add(directionKey(home, away));
+      }
+
+      final additions = <Map<String, dynamic>>[];
+      final handledPairs = <String>{};
+      for (final row in rows) {
+        final home = row['home_player_id'].toString();
+        final away = row['away_player_id'].toString();
+        final pair = pairKey(home, away);
+        if (!handledPairs.add(pair)) continue;
+
+        final directions = directionsByPair[pair] ?? <String>{};
+        // A pair that already has both orientations already has its return leg.
+        if (directions.contains(directionKey(home, away)) &&
+            directions.contains(directionKey(away, home))) {
+          continue;
+        }
+
+        final originalRound = (row['round'] as num?)?.toInt() ?? 1;
+        additions.add({
+          'league_id': leagueId,
+          'round': maxRound + (originalRound - minRound + 1),
+          'home_player_id': away,
+          'away_player_id': home,
+          'status': 'scheduled',
+          // Return legs need their own schedule; admin can assign Match Day dates.
+          'scheduled_date': null,
+          'match_start_time': row['match_start_time']?.toString() ?? '17:00:00',
+          'match_end_time': row['match_end_time']?.toString() ?? '23:59:00',
+        });
+      }
+
+      // Insert the return legs first. If insertion fails, leave the league mode
+      // unchanged so the admin can safely retry.
+      if (additions.isNotEmpty) {
+        await supabase.from('matches').insert(additions);
+      }
+      await supabase.from('leagues').update({'fixture_mode': 'home_away'}).eq('id', leagueId);
+      await refreshLeagues();
+      if (activeLeagueId == leagueId) await loadMatchesFromSupabase();
+      return additions.isEmpty
+          ? 'League changed to Home & Away. Both legs already existed.'
+          : 'Home & Away enabled. Added ${additions.length} return fixture(s); existing matches and results were kept.';
+    } on PostgrestException catch (e) {
+      return 'Could not convert league to Home & Away: ${e.message}';
+    } catch (e) {
+      return 'Could not convert league to Home & Away: $e';
+    }
+  }
+
   Future<String?> updateLeagueMatchSchedule({
     required String leagueId,
     required String? scheduledDate,
@@ -5285,6 +5385,42 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                       Text('Current status: ${selected.status.toUpperCase()}'),
                       const SizedBox(height: 4),
                       Text(selected.feeLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      Text('Fixture format: ${selected.fixtureModeLabel}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 12),
+                      if (!selected.isHomeAway)
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: loading ? null : () async {
+                              final confirmed = await showDialog<bool>(
+                                context: context,
+                                builder: (dialogContext) => AlertDialog(
+                                  title: const Text('Convert to Home & Away?'),
+                                  content: const Text(
+                                    'This will keep all existing fixtures and results, then add missing return fixtures with home and away reversed. Return fixtures will need their Match Day dates scheduled. Continue?',
+                                  ),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('CANCEL')),
+                                    FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('ADD RETURN FIXTURES')),
+                                  ],
+                                ),
+                              );
+                              if (confirmed != true || !mounted) return;
+                              setState(() => loading = true);
+                              final result = await store.convertLeagueToHomeAway(selected.id);
+                              if (!mounted) return;
+                              await _refresh();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(result ?? 'League converted to Home & Away.')),
+                              );
+                            },
+                            icon: const Icon(Icons.swap_horiz),
+                            label: const Text('CONVERT TO HOME & AWAY'),
+                          ),
+                        )
+                      else
+                        const Text('Home & Away is already enabled.', style: TextStyle(color: Color(0xFF00D9FF), fontWeight: FontWeight.w800)),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
