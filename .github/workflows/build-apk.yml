@@ -518,11 +518,26 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Clean Flutter build
-        run: flutter clean
+      - name: Clean Flutter and Android build outputs
+        run: |
+          flutter clean
+          rm -rf android/.gradle android/app/build build
 
-      - name: Get dependencies again
-        run: flutter pub get
+      # The installed APK reported a SharedPreferencesApiRegistrar.getAll
+      # NoSuchMethodError. Clear Gradle's cached compiled plugin artifacts so
+      # the next build uses one consistent set of resolved plugin classes.
+      - name: Clear Gradle build cache
+        run: |
+          rm -rf "$HOME/.gradle/caches" "$HOME/.gradle/daemon"
+
+      - name: Resolve dependencies and record versions
+        run: |
+          flutter pub get
+          flutter pub deps --style=compact | tee flutter-dependencies.txt
+
+      - name: Verify SharedPreferences dependency versions
+        run: |
+          grep -E 'shared_preferences(_android|_platform_interface)? ' flutter-dependencies.txt || true
 
       - name: Verify final Android package
         run: |
