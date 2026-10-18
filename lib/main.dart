@@ -180,6 +180,21 @@ class _StartupGateState extends State<StartupGate> {
     _initializeSupabase();
   }
 
+  Future<void> _retrySupabase() async {
+    if (!mounted) return;
+    setState(() {
+      _startupError = null;
+      _takingLong = false;
+    });
+    _slowTimer?.cancel();
+    _slowTimer = Timer(const Duration(seconds: 20), () {
+      if (mounted && !_ready && _startupError == null) {
+        setState(() => _takingLong = true);
+      }
+    });
+    await _initializeSupabase();
+  }
+
   Future<void> _initializeSupabase() async {
     try {
       await Supabase.initialize(
@@ -256,10 +271,28 @@ class _StartupGateState extends State<StartupGate> {
                       style: TextStyle(color: Colors.white, fontSize: 16),
                     ),
                     const SizedBox(height: 10),
+                    const SizedBox(height: 10),
                     const Text(
-                      'Please close and reopen the app. If this screen returns, send the screenshot to the app developer so the startup configuration can be checked.',
+                      'Technical error (send this to the developer):',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70, fontSize: 14),
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                    const SizedBox(height: 6),
+                    SelectableText(
+                      _startupError.toString(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Color(0xFFFFD21F), fontSize: 12),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: _retrySupabase,
+                      child: const Text('TRY AGAIN'),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'If retry fails, send a screenshot showing the technical error.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                   ],
                 ],
