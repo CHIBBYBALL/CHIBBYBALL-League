@@ -26,5 +26,11 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
 
+# Temporary compatibility pin: avoid shared_preferences_android 2.5.0,
+# whose recent Pigeon-JNI implementation may be related to the runtime
+# SharedPreferencesApiRegistrar.getAll NoSuchMethodError.
+dependency_overrides:
+  shared_preferences_android: 2.4.28
+
 flutter:
   uses-material-design: true
