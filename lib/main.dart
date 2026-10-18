@@ -138,171 +138,30 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Register messaging immediately and let Firebase initialize in the
-  // background. Firebase must not prevent the app from showing its startup UI.
-  FirebaseMessaging.onBackgroundMessage(
-    _firebaseMessagingBackgroundHandler,
-  );
+  // Start Firebase without blocking the first screen, but keep the same
+  // initialization Future so login/register can safely wait for it.
   _firebaseInitialization ??= Firebase.initializeApp();
   _firebaseInitialization!.then((_) {
-    debugPrint('Firebase initialized.');
-  }).catchError((Object e, StackTrace stackTrace) {
+    FirebaseMessaging.onBackgroundMessage(
+      _firebaseMessagingBackgroundHandler,
+    );
+  }).catchError((e) {
     debugPrint('Firebase initialization failed: $e');
-    debugPrintStack(stackTrace: stackTrace);
   });
 
-  // Supabase is needed before Store.instance/LoginPage can be created.
-  // StartupGate displays a visible loading/error screen while this runs.
-  runApp(const StartupGate());
-}
+  // Supabase is required by the login/register actions, so initialize it
+  // before showing the main app.
+  await Supabase.initialize(
+    url: supabaseUrl,
+    publishableKey: supabasePublishableKey,
+  );
 
-class StartupGate extends StatefulWidget {
-  const StartupGate({super.key});
+  // Load cached/server data without blocking the first screen.
+  Store.instance.load().catchError((e) {
+    debugPrint('Store load failed: $e');
+  });
 
-  @override
-  State<StartupGate> createState() => _StartupGateState();
-}
-
-class _StartupGateState extends State<StartupGate> {
-  Timer? _slowTimer;
-  bool _takingLong = false;
-  Object? _startupError;
-  bool _ready = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _slowTimer = Timer(const Duration(seconds: 20), () {
-      if (mounted && !_ready && _startupError == null) {
-        setState(() => _takingLong = true);
-      }
-    });
-    _initializeSupabase();
-  }
-
-  Future<void> _retrySupabase() async {
-    if (!mounted) return;
-    setState(() {
-      _startupError = null;
-      _takingLong = false;
-    });
-    _slowTimer?.cancel();
-    _slowTimer = Timer(const Duration(seconds: 20), () {
-      if (mounted && !_ready && _startupError == null) {
-        setState(() => _takingLong = true);
-      }
-    });
-    await _initializeSupabase();
-  }
-
-  Future<void> _initializeSupabase() async {
-    try {
-      await Supabase.initialize(
-        url: supabaseUrl,
-        publishableKey: supabasePublishableKey,
-      );
-      if (!mounted) return;
-      _slowTimer?.cancel();
-      setState(() => _ready = true);
-
-      // Load cache/server data after the app can render. A slow data refresh
-      // must not hold the login screen behind a startup splash.
-      Store.instance.load().catchError((Object e, StackTrace stackTrace) {
-        debugPrint('Store load failed: $e');
-        debugPrintStack(stackTrace: stackTrace);
-      });
-    } catch (e, stackTrace) {
-      debugPrint('Supabase initialization failed: $e');
-      debugPrintStack(stackTrace: stackTrace);
-      if (!mounted) return;
-      _slowTimer?.cancel();
-      setState(() => _startupError = e);
-    }
-  }
-
-  @override
-  void dispose() {
-    _slowTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_ready) return const ChibbyballApp();
-
-    return MaterialApp(
-      title: 'CHIBBYBALL League',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
-      home: Scaffold(
-        backgroundColor: const Color(0xFF07111F),
-        body: SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'CHIBBYBALL',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Color(0xFF00D9FF),
-                      fontSize: 30,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  if (_startupError == null) ...[
-                    const CircularProgressIndicator(color: Color(0xFF00D9FF)),
-                    const SizedBox(height: 18),
-                    Text(
-                      _takingLong
-                          ? 'Connecting is taking longer than expected. Please keep the app open; it will continue if the connection completes.'
-                          : 'Starting up…',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white70, fontSize: 15),
-                    ),
-                  ] else ...[
-                    const Text(
-                      'CHIBBYBALL could not connect to its startup service.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                    const SizedBox(height: 10),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Technical error (send this to the developer):',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
-                    ),
-                    const SizedBox(height: 6),
-                    SelectableText(
-                      _startupError.toString(),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Color(0xFFFFD21F), fontSize: 12),
-                    ),
-                    const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: _retrySupabase,
-                      child: const Text('TRY AGAIN'),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'If retry fails, send a screenshot showing the technical error.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  runApp(const ChibbyballApp());
 }
 
 class _ChibbyballBackgroundPainter extends CustomPainter {
