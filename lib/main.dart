@@ -135,11 +135,11 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
 }
 
-Future<void> main() async {
+Future<void> main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Register the background handler immediately. Firebase initialization is
-  // started in the background so a slow Firebase startup cannot hold the UI.
+  // Register messaging immediately and let Firebase initialize in the
+  // background. Firebase must not prevent the app from showing its startup UI.
   FirebaseMessaging.onBackgroundMessage(
     _firebaseMessagingBackgroundHandler,
   );
@@ -151,27 +151,125 @@ Future<void> main() async {
     debugPrintStack(stackTrace: stackTrace);
   });
 
-  // Supabase must be initialized before Store is created, because Store holds
-  // a Supabase client. Do not wait for network data before showing the UI.
-  try {
-    await Supabase.initialize(
-      url: supabaseUrl,
-      publishableKey: supabasePublishableKey,
-    );
-  } catch (e, stackTrace) {
-    debugPrint('Supabase initialization failed: $e');
-    debugPrintStack(stackTrace: stackTrace);
-    rethrow;
+  // Supabase is needed before Store.instance/LoginPage can be created.
+  // StartupGate displays a visible loading/error screen while this runs.
+  runApp(const StartupGate());
+}
+
+class StartupGate extends StatefulWidget {
+  const StartupGate({super.key});
+
+  @override
+  State<StartupGate> createState() => _StartupGateState();
+}
+
+class _StartupGateState extends State<StartupGate> {
+  Timer? _slowTimer;
+  bool _takingLong = false;
+  Object? _startupError;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _slowTimer = Timer(const Duration(seconds: 20), () {
+      if (mounted && !_ready && _startupError == null) {
+        setState(() => _takingLong = true);
+      }
+    });
+    _initializeSupabase();
   }
 
-  runApp(const ChibbyballApp());
+  Future<void> _initializeSupabase() async {
+    try {
+      await Supabase.initialize(
+        url: supabaseUrl,
+        publishableKey: supabasePublishableKey,
+      );
+      if (!mounted) return;
+      _slowTimer?.cancel();
+      setState(() => _ready = true);
 
-  // Load cached data and refresh server data after the first frame can render.
-  // Store.load() already catches errors from its Supabase refresh sequence.
-  Store.instance.load().catchError((Object e, StackTrace stackTrace) {
-    debugPrint('Store load failed: $e');
-    debugPrintStack(stackTrace: stackTrace);
-  });
+      // Load cache/server data after the app can render. A slow data refresh
+      // must not hold the login screen behind a startup splash.
+      Store.instance.load().catchError((Object e, StackTrace stackTrace) {
+        debugPrint('Store load failed: $e');
+        debugPrintStack(stackTrace: stackTrace);
+      });
+    } catch (e, stackTrace) {
+      debugPrint('Supabase initialization failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
+      _slowTimer?.cancel();
+      setState(() => _startupError = e);
+    }
+  }
+
+  @override
+  void dispose() {
+    _slowTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ready) return const ChibbyballApp();
+
+    return MaterialApp(
+      title: 'CHIBBYBALL League',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(),
+      home: Scaffold(
+        backgroundColor: const Color(0xFF07111F),
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'CHIBBYBALL',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF00D9FF),
+                      fontSize: 30,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  if (_startupError == null) ...[
+                    const CircularProgressIndicator(color: Color(0xFF00D9FF)),
+                    const SizedBox(height: 18),
+                    Text(
+                      _takingLong
+                          ? 'Connecting is taking longer than expected. Please keep the app open; it will continue if the connection completes.'
+                          : 'Starting up…',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white70, fontSize: 15),
+                    ),
+                  ] else ...[
+                    const Text(
+                      'CHIBBYBALL could not connect to its startup service.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 16),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Please close and reopen the app. If this screen returns, send the screenshot to the app developer so the startup configuration can be checked.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70, fontSize: 14),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ChibbyballBackgroundPainter extends CustomPainter {
