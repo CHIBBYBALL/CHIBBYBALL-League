@@ -297,7 +297,7 @@ class ChibbyballApp extends StatelessWidget {
             ),
         ],
       ),
-      home: const LoginPage(),
+      home: const AuthSessionGate(),
     );
   }
 }
@@ -1692,6 +1692,56 @@ class Store {
     }
   }
 
+  /// Restore the existing Supabase session without asking the player for
+  /// their password again. Supabase persists its auth session securely.
+  Future<bool> restoreAuthenticatedSession() async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return false;
+
+    try {
+      final profile = await supabase
+          .from('profiles')
+          .select('id, full_name, gamer_tag, role, phone_number, country, country_code, whatsapp_number, last_seen, is_online')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (profile == null) {
+        current = null;
+        return false;
+      }
+
+      current = Player(
+        id: user.id,
+        name: profile['full_name']?.toString() ?? '',
+        gamerTag: profile['gamer_tag']?.toString() ?? '',
+        admin: profile['role']?.toString().toLowerCase() == 'admin',
+        phoneNumber: profile['phone_number']?.toString() ?? '',
+        country: profile['country']?.toString() ?? '',
+        countryCode: profile['country_code']?.toString() ?? '',
+        whatsappNumber: profile['whatsapp_number']?.toString() ?? '',
+        lastSeen: profile['last_seen'] == null
+            ? null
+            : DateTime.tryParse(profile['last_seen'].toString()),
+        isOnline: profile['is_online'] == true,
+      );
+
+      // Refresh supporting data, but don't discard a valid restored session
+      // if a secondary data request temporarily fails.
+      try {
+        await refreshPlayers();
+        await refreshLeagues();
+        await loadMatchesFromSupabase();
+        await refreshBadges();
+      } catch (e) {
+        debugPrint('Restored-session data refresh failed: $e');
+      }
+      return true;
+    } catch (e) {
+      debugPrint('Could not restore authenticated session: $e');
+      return false;
+    }
+  }
+
   Future<void> logout() async {
     try {
       await supabase.auth.signOut();
@@ -2688,6 +2738,50 @@ class Store {
       return a.player.gamerTag.toLowerCase().compareTo(b.player.gamerTag.toLowerCase());
     });
     return list;
+  }
+}
+
+// ============================================================
+// AUTH SESSION GATE
+// ============================================================
+
+/// Shows the login screen only when there is no valid saved Supabase session.
+class AuthSessionGate extends StatefulWidget {
+  const AuthSessionGate({super.key});
+
+  @override
+  State<AuthSessionGate> createState() => _AuthSessionGateState();
+}
+
+class _AuthSessionGateState extends State<AuthSessionGate> {
+  bool _checkingSession = true;
+  bool _hasSession = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreSession();
+  }
+
+  Future<void> _restoreSession() async {
+    final restored = await Store.instance.restoreAuthenticatedSession();
+    if (!mounted) return;
+    setState(() {
+      _hasSession = restored;
+      _checkingSession = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_checkingSession) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF00D9FF)),
+        ),
+      );
+    }
+    return _hasSession ? const HomePage() : const LoginPage();
   }
 }
 
