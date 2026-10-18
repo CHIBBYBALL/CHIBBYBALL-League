@@ -3631,65 +3631,186 @@ class DashboardPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final store = Store.instance;
     final player = store.current;
-    final myMatches = player == null ? <MatchItem>[] : store.matches.where((m) => m.homeId == player.id || m.awayId == player.id).toList();
-    final confirmed = myMatches.where((m) => m.status == 'Confirmed').length;
+    final myMatches = player == null
+        ? <MatchItem>[]
+        : store.matches.where((m) => m.homeId == player.id || m.awayId == player.id).toList();
+    final confirmedMatches = myMatches.where((m) => m.status == 'Confirmed' && m.homeScore != null && m.awayScore != null).toList();
     final pending = myMatches.where((m) => m.status == 'Awaiting Confirmation').length;
+    final scheduled = myMatches.where((m) => m.status == 'Scheduled').length;
+    var wins = 0;
+    var draws = 0;
+    var losses = 0;
+    var goalsFor = 0;
+    var goalsAgainst = 0;
+    for (final match in confirmedMatches) {
+      final isHome = match.homeId == player?.id;
+      final mine = isHome ? match.homeScore! : match.awayScore!;
+      final theirs = isHome ? match.awayScore! : match.homeScore!;
+      goalsFor += mine;
+      goalsAgainst += theirs;
+      if (mine > theirs) {
+        wins++;
+      } else if (mine == theirs) {
+        draws++;
+      } else {
+        losses++;
+      }
+    }
+
+    final recent = [...confirmedMatches]..sort((a, b) {
+      final ad = DateTime.tryParse(a.scheduledDate ?? '') ?? DateTime(2000);
+      final bd = DateTime.tryParse(b.scheduledDate ?? '') ?? DateTime(2000);
+      return bd.compareTo(ad);
+    });
+
+    Widget quickAction(IconData icon, String title, String subtitle, Color accent, VoidCallback onTap) {
+      return Container(
+        decoration: _neonBox(accent, radius: 18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(width: 43, height: 43,
+                decoration: BoxDecoration(color: accent.withOpacity(.13), borderRadius: BorderRadius.circular(14)),
+                child: Icon(icon, color: accent, size: 24)),
+              const SizedBox(height: 12),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+              const SizedBox(height: 4),
+              Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: _muted, fontSize: 10, height: 1.3)),
+            ]),
+          ),
+        ),
+      );
+    }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
       children: [
+        // Featured welcome card
         Container(
-          padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xE90B2039), Color(0xE9061020)]),
-            borderRadius: BorderRadius.circular(24),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+              colors: [Color(0xFF12365A), Color(0xFF081321), Color(0xFF15112D)],
+            ),
+            borderRadius: BorderRadius.circular(26),
             border: Border.all(color: _cyan.withOpacity(.75)),
-            boxShadow: const [BoxShadow(color: Color(0x2200D9FF), blurRadius: 24)],
+            boxShadow: [BoxShadow(color: _cyan.withOpacity(.12), blurRadius: 25, offset: const Offset(0, 8))],
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('WELCOME ${player?.gamerTag.toUpperCase() ?? ''}', style: const TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-            const SizedBox(height: 8),
-            const Text('CHIBBYBALL', style: TextStyle(fontSize: 31, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-            const SizedBox(height: 3),
-            const Text('eFOOTBALL • LEAGUE • COMPETE', style: TextStyle(color: _cyan, fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: .6)),
-            const SizedBox(height: 13),
-            const Text('PLAY • COMPETE • WIN', style: TextStyle(color: _yellow, fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+            Row(children: [
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('WELCOME BACK', style: TextStyle(color: _cyan, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.6)),
+                const SizedBox(height: 5),
+                Text(player?.gamerTag.isNotEmpty == true ? player!.gamerTag : 'CHAMPION',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: .3)),
+              ])),
+              _playerAvatar(player, radius: 29, accent: _yellow),
+            ]),
+            const SizedBox(height: 20),
+            const Text('YOUR NEXT WIN STARTS HERE.', style: TextStyle(color: _yellow, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1.1)),
+            const SizedBox(height: 5),
+            const Text('Check your fixtures, prove your skills and climb the CHIBBYBALL ranks.',
+              style: TextStyle(color: _muted, height: 1.4, fontSize: 12)),
+            const SizedBox(height: 16),
+            SizedBox(width: double.infinity, child: FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: _cyan, foregroundColor: const Color(0xFF06111E), padding: const EdgeInsets.symmetric(vertical: 13)),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage())),
+              icon: const Icon(Icons.sports_soccer), label: const Text('OPEN MY MATCHES', style: TextStyle(fontWeight: FontWeight.w900)),
+            )),
           ]),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 22),
+        _neonSectionTitle('YOUR SEASON SNAPSHOT'),
+        const SizedBox(height: 12),
         Row(children: [
-          _neonStat(context, Icons.sports_soccer, '${myMatches.length}', 'FIXTURES', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
-          _neonStat(context, Icons.check_circle, '$confirmed', 'CONFIRMED', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage(statusFilter: 'Confirmed')))),
+          _neonStat(context, Icons.sports_soccer, '${myMatches.length}', 'MATCHES', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
+          _neonStat(context, Icons.emoji_events, '$wins', 'WINS', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerStatsPage()))),
           _neonStat(context, Icons.hourglass_top, '$pending', 'PENDING', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage(statusFilter: 'Awaiting Confirmation')))),
         ]),
-        const SizedBox(height: 18),
-        _neonAction(context, Icons.calendar_month, 'YOUR FIXTURES', 'View matches and submit results', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
         const SizedBox(height: 10),
-        _neonAction(context, Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
-        const SizedBox(height: 10),
-         _neonAction(context, Icons.group_add, 'JOIN A LEAGUE', 'See admin and creator leagues and request to join', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const JoinLeaguePage()))),
-         const SizedBox(height: 10),
-        _neonAction(context, Icons.verified, 'CREATOR HUB', 'Find league creators and join their leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.emoji_events, 'CHIBBYBALL CHAMPIONS LEAGUE', 'See qualified players and the current championship season', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChampionsLeaguePage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.person, 'PLAYER PROFILE', 'Edit details and profile photo', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.people_alt, 'PLAYERS & MESSAGES', 'See online players and chat', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.public, 'GLOBAL LEADERBOARD', 'Combine points across every league', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GlobalLeaderboardPage()))),
-        const SizedBox(height: 10),
-        _neonAction(context, Icons.add_business, 'REQUEST A LEAGUE', 'Eligible batch players can request a league for admin approval', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueRequestPage()))),
-        const SizedBox(height: 18),
         Container(
-          padding: const EdgeInsets.all(16),
-          decoration: _neonBox(_blue, radius: 18),
-          child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('RESULT RULE', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-            SizedBox(height: 8),
-            Text('Both players submit the score and screenshot proof. The match only counts in the table after confirmation. Different claims can be disputed for admin review.', style: TextStyle(color: _muted, height: 1.45, fontSize: 12)),
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+          decoration: _neonBox(_blue, radius: 16),
+          child: Row(children: [
+            const Icon(Icons.insights, color: _blue, size: 22), const SizedBox(width: 10),
+            Expanded(child: Text('FORM  •  $wins W  /  $draws D  /  $losses L', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12))),
+            Text('$goalsFor GF  ·  $goalsAgainst GA', style: const TextStyle(color: _muted, fontSize: 10, fontWeight: FontWeight.w800)),
           ]),
         ),
+        const SizedBox(height: 22),
+        _neonSectionTitle('ENTER THE ACTION', accent: _yellow),
+        const SizedBox(height: 12),
+        GridView.count(
+          crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.18,
+          children: [
+            quickAction(Icons.calendar_month, 'MY FIXTURES', 'Matches and result submissions', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
+            quickAction(Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
+            quickAction(Icons.group_add, 'JOIN A LEAGUE', 'Find a competition to enter', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const JoinLeaguePage()))),
+            quickAction(Icons.verified, 'CREATOR HUB', 'Explore creator leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
+            quickAction(Icons.emoji_events, 'CHAMPIONS LEAGUE', 'Follow the championship', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChampionsLeaguePage()))),
+            quickAction(Icons.public, 'GLOBAL RANKING', 'Compare points across leagues', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GlobalLeaderboardPage()))),
+            quickAction(Icons.people_alt, 'PLAYERS & CHAT', 'Find players and message them', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
+            quickAction(Icons.person, 'MY PROFILE', 'Your player identity and details', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
+          ],
+        ),
+        const SizedBox(height: 22),
+        Row(children: [
+          Expanded(child: _neonSectionTitle('RECENT RESULTS')),
+          TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerStatsPage())), child: const Text('VIEW HISTORY')),
+        ]),
+        const SizedBox(height: 8),
+        if (recent.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(18), decoration: _neonBox(_blue, radius: 18),
+            child: const Row(children: [
+              Icon(Icons.sports_soccer, color: _blue, size: 30), SizedBox(width: 12),
+              Expanded(child: Text('Your confirmed results will appear here. Play your first match and start building your record!', style: TextStyle(color: _muted, height: 1.4, fontSize: 12))),
+            ]),
+          )
+        else
+          ...recent.take(3).map((match) {
+            final isHome = match.homeId == player?.id;
+            final mine = isHome ? match.homeScore! : match.awayScore!;
+            final theirs = isHome ? match.awayScore! : match.homeScore!;
+            final opponentId = isHome ? match.awayId : match.homeId;
+            final opponent = store.players.where((p) => p.id == opponentId).firstOrNull;
+            final result = mine > theirs ? 'WIN' : mine == theirs ? 'DRAW' : 'LOSS';
+            final color = mine > theirs ? _yellow : mine == theirs ? _cyan : const Color(0xFFFF5C7A);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 9), decoration: _neonBox(color, radius: 16),
+              child: ListTile(
+                leading: Container(width: 42, height: 42, alignment: Alignment.center,
+                  decoration: BoxDecoration(color: color.withOpacity(.12), borderRadius: BorderRadius.circular(13)),
+                  child: Text(result == 'WIN' ? 'W' : result == 'DRAW' ? 'D' : 'L', style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 18))),
+                title: Text('vs ${opponent?.gamerTag ?? store.playerName(opponentId)}', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                subtitle: Text('${result}  •  MATCHDAY ${match.round}', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w900)),
+                trailing: Text('$mine - $theirs', style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 19)),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage())),
+              ),
+            );
+          }),
+        const SizedBox(height: 10),
+        if (scheduled > 0)
+          Container(padding: const EdgeInsets.all(13), decoration: _neonBox(_purple, radius: 16),
+            child: Row(children: [const Icon(Icons.notifications_active, color: _purple), const SizedBox(width: 10), Expanded(child: Text('You have $scheduled scheduled match${scheduled == 1 ? '' : 'es'}. Check your fixtures and get ready.', style: const TextStyle(color: _muted, fontSize: 12, height: 1.35)))])),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(15), decoration: _neonBox(_blue, radius: 18),
+          child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('FAIR PLAY • REAL RESULTS', style: TextStyle(color: _cyan, fontWeight: FontWeight.w900, letterSpacing: .7)),
+            SizedBox(height: 7),
+            Text('Submit clear screenshot evidence after your matches. Confirm results honestly, and contact an admin if a result needs review.', style: TextStyle(color: _muted, height: 1.45, fontSize: 12)),
+          ]),
+        ),
+        const SizedBox(height: 12),
+        _neonAction(context, Icons.add_business, 'REQUEST A LEAGUE', 'Eligible players can request a league for admin approval', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueRequestPage()))),
       ],
     );
   }
