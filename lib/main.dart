@@ -3793,6 +3793,7 @@ class DashboardPage extends StatelessWidget {
             quickAction(Icons.public, 'GLOBAL RANKING', 'Compare points across leagues', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GlobalLeaderboardPage()))),
             quickAction(Icons.people_alt, 'PLAYERS & CHAT', 'Find players and message them', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
             quickAction(Icons.person, 'MY PROFILE', 'Your player identity and details', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
+            quickAction(Icons.auto_awesome, 'PLAYER FEATURES', 'Rivals, friends, tournaments, missions and awards', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerFeaturesHubPage()))),
           ],
         ),
         const SizedBox(height: 22),
@@ -5259,8 +5260,151 @@ class _HallOfFameRankRow extends StatelessWidget {
 }
 
 // ============================================================
+// PLAYER PROFILE ACHIEVEMENT SHOWCASE
+// ============================================================
+
+class PlayerAchievementShowcase extends StatefulWidget {
+  final String playerId;
+  const PlayerAchievementShowcase({super.key, required this.playerId});
+  @override State<PlayerAchievementShowcase> createState() => _PlayerAchievementShowcaseState();
+}
+
+class _PlayerAchievementShowcaseState extends State<PlayerAchievementShowcase> {
+  late Future<List<GlobalPlayerStat>> _future;
+  @override void initState() { super.initState(); _future = Store.instance.globalLeaderboard(); }
+  Future<void> _refresh() async { setState(() => _future = Store.instance.globalLeaderboard()); await _future; }
+
+  @override Widget build(BuildContext context) {
+    return FutureBuilder<List<GlobalPlayerStat>>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_purple, radius: 18), child: const Center(child: CircularProgressIndicator(color: _cyan)));
+        }
+        if (snapshot.hasError) {
+          return Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_purple, radius: 18), child: Row(children: [const Icon(Icons.military_tech, color: _purple), const SizedBox(width: 10), const Expanded(child: Text('Achievement showcase could not load.')), IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh, color: _cyan))]));
+        }
+        final all = snapshot.data ?? <GlobalPlayerStat>[];
+        final index = all.indexWhere((s) => s.player.id == widget.playerId);
+        if (index < 0) {
+          return Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_purple, radius: 18), child: const Text('Your achievements will appear here after your player statistics load.', style: TextStyle(color: _muted)));
+        }
+        final stat = all[index];
+        final badges = <({String title, String detail, IconData icon, Color color, bool earned})>[
+          (title: 'FIRST VICTORY', detail: '1 win', icon: Icons.sports_soccer, color: _yellow, earned: stat.won >= 1),
+          (title: 'HAT-TRICK HERO', detail: '3 wins', icon: Icons.local_fire_department, color: const Color(0xFFFF512F), earned: stat.won >= 3),
+          (title: 'FIVE-STAR WINNER', detail: '5 wins', icon: Icons.stars, color: const Color(0xFFFFB547), earned: stat.won >= 5),
+          (title: 'GOAL MACHINE', detail: '10 goals', icon: Icons.bolt, color: _cyan, earned: stat.goals >= 10),
+          (title: 'CLINICAL FINISHER', detail: '25 goals', icon: Icons.gps_fixed, color: const Color(0xFFFF4658), earned: stat.goals >= 25),
+          (title: 'THE WALL', detail: '5 clean sheets', icon: Icons.shield, color: const Color(0xFF31C9FF), earned: stat.cleanSheets >= 5),
+          (title: 'VETERAN', detail: '25 matches', icon: Icons.workspace_premium, color: _purple, earned: stat.played >= 25),
+          (title: 'CENTURION', detail: '100 matches', icon: Icons.workspace_premium, color: _yellow, earned: stat.played >= 100),
+          (title: 'UNBEATEN RUN', detail: '5 matches unbeaten', icon: Icons.security, color: const Color(0xFF31E69A), earned: stat.played >= 5 && stat.lost == 0),
+          (title: 'GLOBAL TOP 3', detail: 'Top 3 global points', icon: Icons.emoji_events, color: const Color(0xFFFF9E32), earned: index < 3),
+        ];
+        final earned = badges.where((b) => b.earned).toList();
+        return Container(
+          padding: const EdgeInsets.all(15),
+          decoration: _neonBox(_purple, radius: 20),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [Expanded(child: _neonSectionTitle('MY ACHIEVEMENTS', accent: _purple)), IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh, color: _cyan), tooltip: 'Refresh achievements')]),
+            const SizedBox(height: 4),
+            Row(children: [Icon(Icons.emoji_events, color: _yellow, size: 22), const SizedBox(width: 7), Text('${earned.length} / ${badges.length} UNLOCKED', style: const TextStyle(color: _yellow, fontWeight: FontWeight.w900, fontSize: 12)), const Spacer(), Text('GLOBAL RANK #${index + 1}', style: const TextStyle(color: _cyan, fontSize: 10, fontWeight: FontWeight.w900))]),
+            const SizedBox(height: 12),
+            Wrap(spacing: 9, runSpacing: 9, children: [
+              for (final b in earned) Container(width: 94, padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 10), decoration: BoxDecoration(borderRadius: BorderRadius.circular(13), border: Border.all(color: b.color.withOpacity(.85)), color: b.color.withOpacity(.09), boxShadow: [BoxShadow(color: b.color.withOpacity(.08), blurRadius: 10)]), child: Column(children: [Container(width: 42, height: 42, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [b.color.withOpacity(.35), b.color.withOpacity(.06)]), border: Border.all(color: b.color, width: 1.4)), child: Icon(b.icon, color: b.color, size: 24)), const SizedBox(height: 7), Text(b.title, textAlign: TextAlign.center, maxLines: 2, style: TextStyle(color: b.color, fontSize: 9, fontWeight: FontWeight.w900)), const SizedBox(height: 3), Text(b.detail, textAlign: TextAlign.center, style: const TextStyle(color: _muted, fontSize: 9))])),
+              if (earned.isEmpty) const Text('Play and win confirmed matches to unlock your first badge.', style: TextStyle(color: _muted, fontSize: 12)),
+            ]),
+            const SizedBox(height: 14),
+            const Text('CAREER RECORD • CONFIRMED MATCHES ONLY', style: TextStyle(color: _muted, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: .4)),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              _profileCareerChip('PLAYED', stat.played, _cyan), _profileCareerChip('WINS', stat.won, _yellow), _profileCareerChip('GOALS', stat.goals, _purple), _profileCareerChip('CLEAN SHEETS', stat.cleanSheets, const Color(0xFF31E69A)), _profileCareerChip('POINTS', stat.points, _yellow),
+            ]),
+            const SizedBox(height: 10),
+            SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AchievementsPage())), icon: const Icon(Icons.military_tech), label: const Text('VIEW ALL BADGES'))),
+          ]),
+        );
+      },
+    );
+  }
+}
+
+Widget _profileCareerChip(String label, int value, Color color) => Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8), decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), color: color.withOpacity(.08), border: Border.all(color: color.withOpacity(.5))), child: Column(mainAxisSize: MainAxisSize.min, children: [Text('$value', style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w900)), const SizedBox(height: 2), Text(label, style: const TextStyle(color: _muted, fontSize: 8, fontWeight: FontWeight.w800))]));
+
+// ============================================================
 // PROFILE
 // ============================================================
+
+
+// ============================================================
+// CHIBBYBALL PLAYER FEATURES: social, competition and activity
+// ============================================================
+class PlayerFeaturesHubPage extends StatelessWidget {
+  const PlayerFeaturesHubPage({super.key});
+  void _open(BuildContext context, String title, String table, IconData icon, Color color) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => FeatureRecordsPage(title: title, table: table, icon: icon, accent: color)));
+  }
+  @override Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('PLAYER FEATURES')),
+    body: ListView(padding: const EdgeInsets.all(16), children: [
+      Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_cyan, radius: 20), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LEVEL UP YOUR GAME', style: TextStyle(color: _cyan, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.5)), SizedBox(height: 7), Text('More than fixtures and tables.', style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900)), SizedBox(height: 5), Text('Challenge rivals, build your circle, follow activity and track your season.', style: TextStyle(color: _muted, height: 1.4))])),
+      const SizedBox(height: 14),
+      _featureTile(context, Icons.flash_on, 'RIVAL CHALLENGES', 'Send a challenge, accept or decline, and track its status.', _yellow, () => _open(context,'Rival Challenges','rival_challenges',Icons.flash_on,_yellow)),
+      _featureTile(context, Icons.dynamic_feed, 'LIVE ACTIVITY FEED', 'Recent results, achievements and community announcements.', _cyan, () => _open(context,'Live Activity Feed','community_activity',Icons.dynamic_feed,_cyan)),
+      _featureTile(context, Icons.account_tree, 'TOURNAMENT MODE', 'Create or follow tournaments, groups and knockout rounds.', _purple, () => _open(context,'Tournament Mode','community_tournaments',Icons.account_tree,_purple)),
+      _featureTile(context, Icons.flag, 'DAILY & WEEKLY MISSIONS', 'Track objectives and claim rewards when available.', _blue, () => _open(context,'Daily & Weekly Missions','player_missions',Icons.flag,_blue)),
+      _featureTile(context, Icons.people, 'FRIENDS SYSTEM', 'Find players and send or manage friend requests.', const Color(0xFF20E070), () => _open(context,'Friends','player_friends',Icons.people,const Color(0xFF20E070))),
+      _featureTile(context, Icons.military_tech, 'SEASON AWARDS', 'See champions, top scorers, winners and clean-sheet leaders.', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SeasonAwardsPage()))),
+      _featureTile(context, Icons.compare_arrows, 'HEAD-TO-HEAD', 'Compare your confirmed match record against any opponent.', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HeadToHeadPage()))),
+      _featureTile(context, Icons.badge, 'MY PLAYER SHOWCASE', 'Your career card and unlocked achievement badges.', _purple, () { final id=Store.instance.current?.id; if(id!=null) Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerShowcasePage(playerId:id))); }),
+      const SizedBox(height: 10),
+      const Text('Note: social and tournament actions require the matching database migration to be applied first. Existing match statistics use confirmed results only.', style: TextStyle(color: _muted, fontSize: 11, height: 1.4)),
+    ]));
+  Widget _featureTile(BuildContext context, IconData icon, String title, String subtitle, Color color, VoidCallback tap) => Container(margin: const EdgeInsets.only(bottom: 10), decoration: _neonBox(color,radius:16), child: ListTile(onTap:tap, contentPadding: const EdgeInsets.symmetric(horizontal:14,vertical:5), leading: Container(width:43,height:43,decoration:BoxDecoration(color:color.withOpacity(.13),borderRadius:BorderRadius.circular(13)),child:Icon(icon,color:color)), title:Text(title,style:const TextStyle(fontWeight:FontWeight.w900,fontSize:13)), subtitle:Text(subtitle,style:const TextStyle(color:_muted,fontSize:11,height:1.3)), trailing:const Icon(Icons.chevron_right,color:_muted)));
+}
+
+class FeatureRecordsPage extends StatefulWidget {
+  final String title, table; final IconData icon; final Color accent;
+  const FeatureRecordsPage({super.key,required this.title,required this.table,required this.icon,required this.accent});
+  @override State<FeatureRecordsPage> createState()=>_FeatureRecordsPageState();
+}
+class _FeatureRecordsPageState extends State<FeatureRecordsPage> {
+  bool loading=true; String? error; List<Map<String,dynamic>> rows=[];
+  @override void initState(){super.initState();_load();}
+  Future<void> _load() async {
+    setState(()=>loading=true);
+    try {
+      final user=Store.instance.supabase.auth.currentUser;
+      if(user==null) throw Exception('Please sign in again.');
+      final q=await Store.instance.supabase.from(widget.table).select().limit(100);
+      final all=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();
+      rows=all.where((r)=>r['player_id']==user.id||r['sender_id']==user.id||r['receiver_id']==user.id||r['challenger_id']==user.id||r['opponent_id']==user.id||r['created_by']==user.id||r['user_id']==user.id||r['is_public']==true).toList();
+      error=null;
+    } catch(e) { error=e.toString(); rows=[]; }
+    if(mounted)setState(()=>loading=false);
+  }
+  String _label(Map<String,dynamic> r) => (r['title']??r['name']??r['mission_title']??r['status']??r['reason']??'CHIBBYBALL update').toString();
+  @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:Text(widget.title),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),body:loading?const Center(child:CircularProgressIndicator()):error!=null?ListView(padding:const EdgeInsets.all(20),children:[Icon(widget.icon,color:widget.accent,size:45),const SizedBox(height:12),Text('Could not load ${widget.title.toLowerCase()}.',style:const TextStyle(fontWeight:FontWeight.w900,fontSize:18)),const SizedBox(height:8),const Text('The feature tables may not be installed yet. Apply the CHIBBYBALL features SQL migration, then refresh.',style:TextStyle(color:_muted,height:1.4)),const SizedBox(height:10),Text(error!,style:const TextStyle(color:Colors.orange,fontSize:11)),const SizedBox(height:14),FilledButton.icon(onPressed:_load,icon:const Icon(Icons.refresh),label:const Text('TRY AGAIN'))]):rows.isEmpty?Center(child:Padding(padding:const EdgeInsets.all(24),child:Column(mainAxisSize:MainAxisSize.min,children:[Icon(widget.icon,color:widget.accent,size:54),const SizedBox(height:12),Text('Nothing here yet',style:const TextStyle(fontSize:20,fontWeight:FontWeight.w900)),const SizedBox(height:7),Text('Your ${widget.title.toLowerCase()} will appear here when you start using this feature.',textAlign:TextAlign.center,style:const TextStyle(color:_muted,height:1.4)),const SizedBox(height:14),OutlinedButton.icon(onPressed:_load,icon:const Icon(Icons.refresh),label:const Text('REFRESH'))]))):RefreshIndicator(onRefresh:_load,child:ListView(padding:const EdgeInsets.all(14),children:rows.map((r)=>Container(margin:const EdgeInsets.only(bottom:9),decoration:_neonBox(widget.accent,radius:15),child:ListTile(leading:Icon(widget.icon,color:widget.accent),title:Text(_label(r),style:const TextStyle(fontWeight:FontWeight.w800)),subtitle:Text((r['message']??r['description']??r['status']??'CHIBBYBALL').toString(),maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(color:_muted,fontSize:11)),trailing:Text((r['status']??'').toString(),style:TextStyle(color:widget.accent,fontSize:10,fontWeight:FontWeight.w900))))).toList())));
+}
+
+class SeasonAwardsPage extends StatelessWidget {
+ const SeasonAwardsPage({super.key});
+ @override Widget build(BuildContext context){
+  final store=Store.instance; final players=store.players; final matches=store.matches.where((m)=>m.status=='Confirmed'&&m.homeScore!=null&&m.awayScore!=null).toList();
+  final wins=<String,int>{},goals=<String,int>{},clean=<String,int>{},points=<String,int>{};
+  for(final m in matches){final h=m.homeId,a=m.awayId,hs=m.homeScore!,as=m.awayScore!;goals[h]=(goals[h]??0)+hs;goals[a]=(goals[a]??0)+as;if(hs>as){wins[h]=(wins[h]??0)+1;points[h]=(points[h]??0)+3;}else if(as>hs){wins[a]=(wins[a]??0)+1;points[a]=(points[a]??0)+3;}else{points[h]=(points[h]??0)+1;points[a]=(points[a]??0)+1;}if(as==0)clean[h]=(clean[h]??0)+1;if(hs==0)clean[a]=(clean[a]??0)+1;}
+  Widget award(String title,IconData icon,Color color,Map<String,int> data){final sorted=data.entries.toList()..sort((a,b)=>b.value.compareTo(a.value));final top=sorted.take(3).toList();return Container(margin:const EdgeInsets.only(bottom:12),padding:const EdgeInsets.all(14),decoration:_neonBox(color,radius:16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Row(children:[Icon(icon,color:color),const SizedBox(width:9),Text(title,style:const TextStyle(fontWeight:FontWeight.w900))]),const SizedBox(height:9),if(top.isEmpty)const Text('No confirmed match data yet.',style:TextStyle(color:_muted,fontSize:12)) else ...top.map((e){final p=players.where((x)=>x.id==e.key).firstOrNull;return Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Row(children:[Expanded(child:Text(p?.gamerTag??p?.name??'Player',style:const TextStyle(fontWeight:FontWeight.w700))),Text('${e.value}',style:TextStyle(color:color,fontWeight:FontWeight.w900))]));})]));}
+  return Scaffold(appBar:AppBar(title:const Text('SEASON AWARDS')),body:ListView(padding:const EdgeInsets.all(16),children:[const Text('Calculated from confirmed matches in the loaded app records. Awards refresh as results are confirmed.',style:TextStyle(color:_muted,height:1.4)),const SizedBox(height:14),award('SEASON POINTS LEADER',Icons.emoji_events,_yellow,points),award('TOP GOAL SCORER',Icons.sports_soccer,_cyan,goals),award('MOST MATCH WINS',Icons.military_tech,_purple,wins),award('CLEAN-SHEET SPECIALIST',Icons.shield,_blue,clean)]));
+ }
+}
+
+class HeadToHeadPage extends StatefulWidget { const HeadToHeadPage({super.key}); @override State<HeadToHeadPage> createState()=>_HeadToHeadPageState(); }
+class _HeadToHeadPageState extends State<HeadToHeadPage>{String? opponent; @override Widget build(BuildContext context){final me=Store.instance.current;final others=Store.instance.players.where((p)=>p.id!=me?.id).toList();final selected=others.where((p)=>p.id==opponent).firstOrNull;final ms=Store.instance.matches.where((m)=>m.status=='Confirmed'&&m.homeScore!=null&&m.awayScore!=null&&me!=null&&selected!=null&&((m.homeId==me.id&&m.awayId==selected.id)||(m.awayId==me.id&&m.homeId==selected.id))).toList();int w=0,d=0,l=0,gf=0,ga=0;for(final m in ms){final home=m.homeId==me?.id;final a=home?m.homeScore!:m.awayScore!,b=home?m.awayScore!:m.homeScore!;gf+=a;ga+=b;if(a>b)w++;else if(a==b)d++;else l++;}return Scaffold(appBar:AppBar(title:const Text('HEAD-TO-HEAD')),body:ListView(padding:const EdgeInsets.all(16),children:[const Text('Choose an opponent to compare confirmed results.',style:TextStyle(color:_muted)),const SizedBox(height:12),DropdownButtonFormField<String>(value:opponent,decoration:const InputDecoration(labelText:'Opponent',border:OutlineInputBorder()),items:others.map((p)=>DropdownMenuItem(value:p.id,child:Text(p.gamerTag.isNotEmpty?p.gamerTag:p.name))).toList(),onChanged:(v)=>setState(()=>opponent=v)),const SizedBox(height:16),if(selected!=null)...[Container(padding:const EdgeInsets.all(18),decoration:_neonBox(_cyan,radius:18),child:Column(children:[Text('${me?.gamerTag??'You'}  vs  ${selected.gamerTag}',textAlign:TextAlign.center,style:const TextStyle(fontSize:18,fontWeight:FontWeight.w900)),const SizedBox(height:16),Row(children:[_h2hStat('WINS','$w',_yellow),_h2hStat('DRAWS','$d',_cyan),_h2hStat('LOSSES','$l',const Color(0xFFFF4D7D))]),const SizedBox(height:12),Text('$gf goals for  •  $ga goals against',style:const TextStyle(color:_muted)),Text('${ms.length} confirmed matches',style:const TextStyle(color:_muted,fontSize:11))])),if(ms.isEmpty)const Padding(padding:EdgeInsets.all(14),child:Text('No confirmed head-to-head matches yet.',textAlign:TextAlign.center,style:TextStyle(color:_muted)))]]));}
+ Widget _h2hStat(String label,String value,Color color)=>Expanded(child:Column(children:[Text(value,style:TextStyle(color:color,fontSize:25,fontWeight:FontWeight.w900)),Text(label,style:const TextStyle(color:_muted,fontSize:10,fontWeight:FontWeight.w800))]));
+}
+
+class PlayerShowcasePage extends StatelessWidget { final String playerId; const PlayerShowcasePage({super.key,required this.playerId}); @override Widget build(BuildContext context){final p=Store.instance.players.where((x)=>x.id==playerId).firstOrNull;return Scaffold(appBar:AppBar(title:const Text('PLAYER SHOWCASE')),body:ListView(padding:const EdgeInsets.all(16),children:[Container(padding:const EdgeInsets.all(20),decoration:BoxDecoration(gradient:const LinearGradient(colors:[Color(0xFF102D50),Color(0xFF11152D)]),borderRadius:BorderRadius.circular(24),border:Border.all(color:_cyan)),child:Column(children:[_playerAvatar(p,radius:45,accent:_yellow),const SizedBox(height:12),Text(p?.gamerTag.isNotEmpty==true?p!.gamerTag:'CHIBBYBALL PLAYER',style:const TextStyle(fontSize:22,fontWeight:FontWeight.w900),textAlign:TextAlign.center),Text(p?.country.isNotEmpty==true?p!.country:'eFootball Competitor',style:const TextStyle(color:_muted)),const SizedBox(height:14),const Text('PLAYER CARD • CHIBBYBALL',style:TextStyle(color:_cyan,fontWeight:FontWeight.w900,letterSpacing:1.1))])),const SizedBox(height:14),PlayerAchievementShowcase(playerId:playerId),const SizedBox(height:14),_neonAction(context,Icons.bar_chart,'CAREER STATS','View confirmed results and match history',_yellow,()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>const PlayerStatsPage()))) ]));}}
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -5401,6 +5545,8 @@ class _ProfilePageState extends State<ProfilePage> {
         Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: (online ? const Color(0xFF20E070) : const Color(0xFF667085)).withOpacity(.12), borderRadius: BorderRadius.circular(30), border: Border.all(color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), const SizedBox(width: 7), Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11, fontWeight: FontWeight.w900))])),
       ])),
       const SizedBox(height: 16),
+      if (p != null) PlayerAchievementShowcase(playerId: p.id),
+      const SizedBox(height: 16),
       _neonSectionTitle('ACCOUNT', accent: _yellow), const SizedBox(height: 10),
       _info(Icons.badge_outlined, 'Gamer Tag', p?.gamerTag ?? '', _cyan),
       _info(Icons.person_outline, 'Full Name', p?.name ?? '', _cyan),
@@ -5433,6 +5579,8 @@ class _ProfilePageState extends State<ProfilePage> {
       Container(decoration: _neonBox(_purple, radius: 18), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 4), leading: Stack(children: [const Icon(Icons.chat_bubble_outline, color: _purple, size: 29), Positioned(right: -2, bottom: -2, child: Container(width: 9, height: 9, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]), title: const Text('PLAYERS & MESSAGES', style: TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'You are online • chat with other players' : 'Chat with other players and see their status'), trailing: const Icon(Icons.chevron_right, color: _purple), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())))),
       const SizedBox(height: 10),
       _neonAction(context, Icons.bar_chart, 'MY STATS & HISTORY', 'Confirmed results and league statistics', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerStatsPage()))),
+      const SizedBox(height: 9),
+      _neonAction(context, Icons.workspace_premium, 'PLAYER PROFILE SHOWCASE', 'Show your player card, achievements and career record', _cyan, () { final id = Store.instance.current?.id; if (id != null) Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerShowcasePage(playerId: id))); }),
       const SizedBox(height: 14),
       _neonSectionTitle('ADMIN SUPPORT', accent: _purple),
       const SizedBox(height: 9),
