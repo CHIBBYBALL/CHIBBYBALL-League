@@ -552,6 +552,7 @@ class MatchItem {
   String? homeProof;
   String? awayProof;
   String? scheduledDate;
+  DateTime? screenshotResponseDeadline;
   String startTime;
   String endTime;
   String status;
@@ -589,6 +590,7 @@ class MatchItem {
         'homeProof': homeProof,
         'awayProof': awayProof,
         'scheduledDate': scheduledDate,
+        'screenshotResponseDeadline': screenshotResponseDeadline?.toIso8601String(),
         'startTime': startTime,
         'endTime': endTime,
         'status': status,
@@ -608,6 +610,7 @@ class MatchItem {
         homeProof: json['homeProof']?.toString(),
         awayProof: json['awayProof']?.toString(),
         scheduledDate: json['scheduledDate']?.toString(),
+        screenshotResponseDeadline: DateTime.tryParse(json['screenshotResponseDeadline']?.toString() ?? ''),
         startTime: json['startTime']?.toString() ?? '17:00:00',
         endTime: json['endTime']?.toString() ?? '23:59:00',
         status: json['status']?.toString() ?? 'Scheduled',
@@ -907,7 +910,7 @@ class Store {
     final data = await supabase
         .from('matches')
         .select(
-          'id, round, home_player_id, away_player_id, status, home_score, away_score, scheduled_date, match_start_time, match_end_time',
+          'id, round, home_player_id, away_player_id, status, home_score, away_score, scheduled_date, match_start_time, match_end_time, screenshot_response_deadline',
         )
         .eq('league_id', leagueId)
         .order('round')
@@ -941,6 +944,7 @@ class Store {
           homeScore: (row['home_score'] as num?)?.toInt(),
           awayScore: (row['away_score'] as num?)?.toInt(),
           scheduledDate: row['scheduled_date']?.toString(),
+          screenshotResponseDeadline: DateTime.tryParse(row['screenshot_response_deadline']?.toString() ?? ''),
           startTime: row['match_start_time']?.toString() ?? '00:00:00',
           endTime: row['match_end_time']?.toString() ?? '23:59:59',
           status: _dbStatusToLocal(row['status']?.toString()),
@@ -2484,6 +2488,25 @@ class Store {
       return 'Could not confirm match: ${e.message}';
     } catch (e) {
       return 'Could not confirm match: $e';
+    }
+  }
+
+  Future<String?> reportMatchNoShow({
+    required String matchId,
+    required String reason,
+  }) async {
+    if (current == null) return 'Please sign in first.';
+    if (reason.trim().isEmpty) return 'Enter a reason for the report.';
+    try {
+      await supabase.rpc('report_match_no_show', params: {
+        'p_match_id': matchId,
+        'p_reason': reason.trim(),
+      });
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not submit no-show report: ${e.message}';
+    } catch (e) {
+      return 'Could not submit no-show report: $e';
     }
   }
 
@@ -4153,6 +4176,57 @@ class _ResultPageState extends State<ResultPage> {
     setState(() => proof = File(image.path));
   }
 
+  Future<void> reportNoShow() async {
+    final player = Store.instance.current;
+    if (player == null) return;
+    final isParticipant = player.id == widget.match.homeId ||
+        player.id == widget.match.awayId;
+    if (!isParticipant) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only players in this match can report a no-show.')),
+      );
+      return;
+    }
+    final reasonController = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Report a No-Show'),
+        content: TextField(
+          controller: reasonController,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'Reason',
+            hintText: 'Explain when you tried to play the scheduled match.',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, reasonController.text.trim()),
+            child: const Text('SUBMIT REPORT'),
+          ),
+        ],
+      ),
+    );
+    reasonController.dispose();
+    if (reason == null || reason.trim().isEmpty || !mounted) return;
+    setState(() => loading = true);
+    final error = await Store.instance.reportMatchNoShow(
+      matchId: widget.match.id,
+      reason: reason,
+    );
+    if (!mounted) return;
+    setState(() => loading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error ?? 'No-show report submitted. The opponent has been notified.')),
+    );
+  }
+
   Future<void> submit() async {
     final player = Store.instance.current;
 
@@ -4353,6 +4427,17 @@ class _ResultPageState extends State<ResultPage> {
           Text('Status: ${match.status}'),
           const SizedBox(height: 12),
           _verificationExplanation(match),
+          if (match.screenshotResponseDeadline != null &&
+              match.status != 'Confirmed') ...[
+            const SizedBox(height: 8),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.timer_outlined),
+                title: const Text('Screenshot response deadline'),
+                subtitle: Text(match.screenshotResponseDeadline!.toLocal().toString()),
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
 
           // Both players can see BOTH stored proof screenshots.
@@ -4424,6 +4509,15 @@ class _ResultPageState extends State<ResultPage> {
             onPressed: (loading || Store.instance.current == null || !Store.instance.canSubmitMatch(widget.match, playerId: Store.instance.current!.id)) ? null : submit,
             icon: const Icon(Icons.send),
             label: const Text('SUBMIT RESULT'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: loading || Store.instance.current == null ||
+                    match.status == 'Confirmed'
+                ? null
+                : reportNoShow,
+            icon: const Icon(Icons.report_gmailerrorred_outlined),
+            label: const Text('REPORT OPPONENT NO-SHOW'),
           ),
         ],
       ),
