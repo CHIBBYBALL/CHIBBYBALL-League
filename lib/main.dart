@@ -5402,103 +5402,96 @@ class _CommunityActivityPageState extends State<CommunityActivityPage> with _Fea
     return tag.isNotEmpty?tag:(p?['full_name']??'Player').toString();
   }
 
-  Future<void> _insertGenerated({required String title, required String message, required String type}) async {
-    // The current schema has no event-key column. Use the event title/message
-    // pair as an idempotency check so refreshing this page doesn't repost it.
-    final existing=await Store.instance.supabase.from('community_activity')
-      .select('id').eq('title',title).eq('message',message).limit(1);
-    if((existing as List).isNotEmpty) return;
-    await Store.instance.supabase.from('community_activity').insert({
-      'user_id':_userId,'title':title,'message':message,
-      'activity_type':type,'is_public':true,
-    });
-  }
-
-  Future<void> _generateConfirmedMatchEvents(Map<String,Map<String,dynamic>> byId) async {
-    // Only read confirmed records with actual scores. Pending/disputed matches
-    // are intentionally excluded from the activity feed.
-    final raw=await Store.instance.supabase.from('matches')
-      .select('id, league_id, home_player_id, away_player_id, home_score, away_score, status')
-      .eq('status','Confirmed').order('created_at',ascending:false).limit(300);
-    for(final item in (raw as List)) {
-      final m=Map<String,dynamic>.from(item as Map);
-      final hs=(m['home_score'] as num?)?.toInt();
-      final as=(m['away_score'] as num?)?.toInt();
-      final homeId=m['home_player_id']?.toString();
-      final awayId=m['away_player_id']?.toString();
-      if(hs==null||as==null||homeId==null||awayId==null) continue;
-      final home=_nameFor(homeId,byId); final away=_nameFor(awayId,byId);
-      final result=hs==as?'drew with':hs>as?'defeated':'lost to';
-      final message='$home $result $away $hs–$as. Match ID: ${m['id']}';
-      await _insertGenerated(title:'Confirmed match result',message:message,type:'result');
-    }
-  }
-
-  Future<void> _generateGlobalRankingEvents() async {
-    final leaderboard=await Store.instance.globalLeaderboard();
-    if(leaderboard.isEmpty) return;
-    final snapshotRows=await Store.instance.supabase.from('community_rank_snapshots')
-      .select('player_id,rank').limit(1000);
-    final previous=<String,int>{};
-    for(final item in (snapshotRows as List)) {
-      final r=Map<String,dynamic>.from(item as Map);
-      final id=r['player_id']?.toString();
-      final rank=(r['rank'] as num?)?.toInt();
-      if(id!=null&&rank!=null) previous[id]=rank;
-    }
-    final snapshots=<Map<String,dynamic>>[];
-    for(var i=0;i<leaderboard.length;i++) {
-      final stat=leaderboard[i]; final id=stat.player.id; final rank=i+1;
-      final old=previous[id];
-      if(old!=null&&old!=rank) {
-        final movement=old-rank;
-        final verb=movement>0?'moved up $movement ${movement==1?'place':'places'}':'moved down ${movement.abs()} ${movement.abs()==1?'place':'places'}';
-        final publicMessage='${stat.player.gamerTag.isNotEmpty?stat.player.gamerTag:stat.player.name} $verb in the global rankings (#$old → #$rank).';
-        await _insertGenerated(title:'Global ranking movement',message:publicMessage,type:'achievement');
-      }
-      snapshots.add({'player_id':id,'rank':rank,'updated_at':DateTime.now().toUtc().toIso8601String()});
-    }
-    if(snapshots.isNotEmpty) {
-      await Store.instance.supabase.from('community_rank_snapshots')
-        .upsert(snapshots,onConflict:'player_id');
-    }
-  }
-
   Future<void> _load() async {
-    if(mounted)setState(()=>loading=true);
+    if (mounted) setState(() => loading = true);
     try {
-      final id=_userId; if(id==null) throw Exception('Please sign in again.');
-      final prof=await Store.instance.supabase.from('profiles').select('id,gamer_tag,full_name').limit(500);
-      final byId=<String,Map<String,dynamic>>{};
-      for(final item in (prof as List)) { final r=Map<String,dynamic>.from(item as Map); if(r['id']!=null) byId[r['id'].toString()]=r; }
-      await _generateConfirmedMatchEvents(byId);
-      await _generateGlobalRankingEvents();
-      // Announce the current active-league leader from the same confirmed-only
-      // table calculation used by the league standings screen.
-      final store=Store.instance;
-      final table=store.buildTable();
-      final ranked=table.entries.toList()..sort((a,b){
-        final points=b.value['points']!.compareTo(a.value['points']!);
-        if(points!=0)return points;
-        final gd=b.value['gd']!.compareTo(a.value['gd']!);
-        if(gd!=0)return gd;
-        return b.value['gf']!.compareTo(a.value['gf']!);
-      });
-      if(ranked.isNotEmpty && store.activeLeagueName!=null) {
-        final leaderId=ranked.first.key;
-        final leader=store.players.where((p)=>p.id==leaderId).firstOrNull;
-        final name=leader==null?'A player':(leader.gamerTag.isNotEmpty?leader.gamerTag:leader.name);
-        final pts=ranked.first.value['points']??0;
-        await _insertGenerated(title:'League table leader',message:'$name is currently top of ${store.activeLeagueName} with $pts points.',type:'achievement');
+      final id = _userId;
+      if (id == null) throw Exception('Please sign in again.');
+      final prof = await Store.instance.supabase
+          .from('profiles').select('id,gamer_tag,full_name').limit(500);
+      final byId = <String, Map<String, dynamic>>{};
+      for (final item in (prof as List)) {
+        final r = Map<String, dynamic>.from(item as Map);
+        if (r['id'] != null) byId[r['id'].toString()] = r;
       }
-      final q=await Store.instance.supabase.from('community_activity').select()
-        .eq('is_public',true).order('created_at',ascending:false).limit(200);
-      rows=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();
-      error=null;
-    } catch(e) { error=e.toString(); }
-    if(mounted)setState(()=>loading=false);
-  }
 
+      // Read stored public posts, but never try to insert generated posts from
+      // a normal player's client. That was triggering the community_activity RLS error.
+      final stored = await Store.instance.supabase.from('community_activity')
+          .select().eq('is_public', true)
+          .order('created_at', ascending: false).limit(200);
+      final combined = (stored as List)
+          .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+      // Generate confirmed-match announcements locally for this view. They are
+      // not persisted, so this works without granting players broad INSERT rights.
+      final raw = await Store.instance.supabase.from('matches')
+          .select('id, home_player_id, away_player_id, home_score, away_score, status, created_at')
+          .eq('status', 'Confirmed').order('created_at', ascending: false).limit(100);
+      for (final item in (raw as List)) {
+        final m = Map<String, dynamic>.from(item as Map);
+        final hs = (m['home_score'] as num?)?.toInt();
+        final ascore = (m['away_score'] as num?)?.toInt();
+        final homeId = m['home_player_id']?.toString();
+        final awayId = m['away_player_id']?.toString();
+        if (hs == null || ascore == null || homeId == null || awayId == null) continue;
+        final home = _nameFor(homeId, byId);
+        final away = _nameFor(awayId, byId);
+        final result = hs == ascore ? 'drew with' : hs > ascore ? 'defeated' : 'lost to';
+        combined.add({
+          'id': 'local-match-${m['id']}', 'title': 'Confirmed match result',
+          'message': '$home $result $away $hs–$ascore.',
+          'activity_type': 'result', 'is_public': true,
+          'created_at': m['created_at'] ?? DateTime.now().toUtc().toIso8601String(),
+        });
+      }
+
+      // Ranking snapshots are optional. If their table or policies are not
+      // configured, the feed still loads rather than failing completely.
+      try {
+        final leaderboard = await Store.instance.globalLeaderboard();
+        if (leaderboard.isNotEmpty) {
+          final snapshotRows = await Store.instance.supabase
+              .from('community_rank_snapshots').select('player_id,rank').limit(1000);
+          final previous = <String, int>{};
+          for (final item in (snapshotRows as List)) {
+            final r = Map<String, dynamic>.from(item as Map);
+            final pid = r['player_id']?.toString();
+            final rank = (r['rank'] as num?)?.toInt();
+            if (pid != null && rank != null) previous[pid] = rank;
+          }
+          for (var i = 0; i < leaderboard.length; i++) {
+            final stat = leaderboard[i];
+            final old = previous[stat.player.id];
+            final rank = i + 1;
+            if (old != null && old != rank) {
+              final movement = old - rank;
+              final verb = movement > 0
+                  ? 'moved up $movement ${movement == 1 ? 'place' : 'places'}'
+                  : 'moved down ${movement.abs()} ${movement.abs() == 1 ? 'place' : 'places'}';
+              combined.add({
+                'id': 'local-rank-${stat.player.id}-$rank',
+                'title': 'Global ranking movement',
+                'message': '${stat.player.gamerTag.isNotEmpty ? stat.player.gamerTag : stat.player.name} $verb in the global rankings (#$old → #$rank).',
+                'activity_type': 'achievement', 'is_public': true,
+                'created_at': DateTime.now().toUtc().toIso8601String(),
+              });
+            }
+          }
+        }
+      } catch (_) {
+        // Optional table/policy issue: do not block the main activity feed.
+      }
+
+      combined.sort((a, b) => (DateTime.tryParse((b['created_at'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0))
+          .compareTo(DateTime.tryParse((a['created_at'] ?? '').toString()) ?? DateTime.fromMillisecondsSinceEpoch(0)));
+      rows = combined.take(200).toList();
+      error = null;
+    } catch (e) {
+      error = e.toString();
+    }
+    if (mounted) setState(() => loading = false);
+  }
   @override Widget build(BuildContext context)=>Scaffold(
     appBar:AppBar(title:const Text('LIVE ACTIVITY FEED'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),
     body:loading?const Center(child:CircularProgressIndicator()):error!=null
@@ -5516,12 +5509,13 @@ class _CommunityActivityPageState extends State<CommunityActivityPage> with _Fea
 class CommunityTournamentsPage extends StatefulWidget { const CommunityTournamentsPage({super.key}); @override State<CommunityTournamentsPage> createState()=>_CommunityTournamentsPageState(); }
 class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> with _FeaturePageHelpers<CommunityTournamentsPage> {
   bool loading=true; String? error; List<Map<String,dynamic>> rows=[]; Set<String> joined={};
+  bool get _isAdmin => Store.instance.current?.admin == true;
   @override void initState(){super.initState();_load();}
-  Future<void> _load() async {if(mounted)setState(()=>loading=true);try{final q=await Store.instance.supabase.from('community_tournaments').select().order('created_at',ascending:false).limit(150);rows=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();final e=await Store.instance.supabase.from('tournament_entries').select('tournament_id,status').eq('player_id',_userId!).limit(300);joined=(e as List).map((x)=>Map<String,dynamic>.from(x as Map)['tournament_id'].toString()).toSet();error=null;}catch(e){error=e.toString();}if(mounted)setState(()=>loading=false);}
-  Future<void> _create() async {final name=TextEditingController();final desc=TextEditingController();final max=TextEditingController(text:'8');String format='knockout';final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(title:const Text('Create tournament'),content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:name,maxLength:80,decoration:const InputDecoration(labelText:'Tournament name',border:OutlineInputBorder())),const SizedBox(height:10),TextField(controller:desc,maxLines:3,maxLength:300,decoration:const InputDecoration(labelText:'Description',border:OutlineInputBorder())),const SizedBox(height:10),DropdownButtonFormField<String>(value:format,decoration:const InputDecoration(labelText:'Format'),items:const [DropdownMenuItem(value:'knockout',child:Text('Knockout')),DropdownMenuItem(value:'groups',child:Text('Groups')),DropdownMenuItem(value:'groups_knockout',child:Text('Groups + knockout')),DropdownMenuItem(value:'league',child:Text('League'))],onChanged:(v)=>setD(()=>format=v??'knockout')),TextField(controller:max,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Maximum players (2–256)',border:OutlineInputBorder()))])),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('CREATE'))])));if(ok==true){final count=int.tryParse(max.text.trim())??8;if(name.text.trim().length<3||count<2||count>256){_toast('Use a name of at least 3 characters and a player limit from 2 to 256.');}else{try{await Store.instance.supabase.from('community_tournaments').insert({'created_by':_userId,'name':name.text.trim(),'description':desc.text.trim(),'format':format,'max_players':count});_toast('Tournament created.');await _load();}catch(e){_toast('Could not create tournament: $e');}}}name.dispose();desc.dispose();max.dispose();}
+  Future<void> _load() async {if(mounted)setState(()=>loading=true);try{final q=await Store.instance.supabase.from('community_tournaments').select().order('created_at',ascending:false).limit(150);rows=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();final id=_userId;if(id!=null){final e=await Store.instance.supabase.from('tournament_entries').select('tournament_id,status').eq('player_id',id).limit(300);joined=(e as List).map((x)=>Map<String,dynamic>.from(x as Map)['tournament_id'].toString()).toSet();}error=null;}catch(e){error=e.toString();}if(mounted)setState(()=>loading=false);}
+  Future<void> _create() async {if(!_isAdmin){_toast('Only an administrator can create tournaments.');return;}final name=TextEditingController();final desc=TextEditingController();final max=TextEditingController(text:'8');String format='knockout';final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(title:const Text('Create tournament'),content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:name,maxLength:80,decoration:const InputDecoration(labelText:'Tournament name',border:OutlineInputBorder())),const SizedBox(height:10),TextField(controller:desc,maxLines:3,maxLength:300,decoration:const InputDecoration(labelText:'Description',border:OutlineInputBorder())),const SizedBox(height:10),DropdownButtonFormField<String>(value:format,decoration:const InputDecoration(labelText:'Format'),items:const [DropdownMenuItem(value:'knockout',child:Text('Knockout')),DropdownMenuItem(value:'groups',child:Text('Groups')),DropdownMenuItem(value:'groups_knockout',child:Text('Groups + knockout')),DropdownMenuItem(value:'league',child:Text('League'))],onChanged:(v)=>setD(()=>format=v??'knockout')),TextField(controller:max,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Maximum players (2–256)',border:OutlineInputBorder()))])),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('CREATE'))])));if(ok==true){final count=int.tryParse(max.text.trim())??8;if(name.text.trim().length<3||count<2||count>256){_toast('Use a name of at least 3 characters and a player limit from 2 to 256.');}else{try{await Store.instance.supabase.from('community_tournaments').insert({'created_by':_userId,'name':name.text.trim(),'description':desc.text.trim(),'format':format,'max_players':count});_toast('Tournament created.');await _load();}catch(e){_toast('Could not create tournament: $e');}}}name.dispose();desc.dispose();max.dispose();}
   Future<void> _join(Map<String,dynamic> t) async {try{if((t['status']??'registration')!='registration'){_toast('Registration is closed for this tournament.');return;}final countResult=await Store.instance.supabase.from('tournament_entries').select('id').eq('tournament_id',t['id']);final count=(countResult as List).length;final maxPlayers=(t['max_players'] as num?)?.toInt()??8;if(count>=maxPlayers){_toast('This tournament is full.');return;}await Store.instance.supabase.from('tournament_entries').insert({'tournament_id':t['id'],'player_id':_userId});_toast('You are registered for this tournament.');await _load();}catch(e){_toast(e.toString().contains('duplicate')?'You are already registered.':'Could not join tournament: $e');}}
-  Future<void> _setTournamentStatus(Map<String,dynamic> t,String status) async {try{await Store.instance.supabase.from('community_tournaments').update({'status':status}).eq('id',t['id']).eq('created_by',_userId!);_toast('Tournament status updated.');await _load();}catch(e){_toast('Could not update tournament: $e');}}
-  @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('TOURNAMENT MODE'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),floatingActionButton:FloatingActionButton.extended(onPressed:_create,icon:const Icon(Icons.add),label:const Text('CREATE')),body:loading?const Center(child:CircularProgressIndicator()):error!=null?Center(child:Text('Could not load tournaments.\n$error',textAlign:TextAlign.center)):rows.isEmpty?const _FeatureEmpty(icon:Icons.account_tree,title:'No tournaments yet',message:'Create the first community tournament and invite other players.'):ListView(padding:const EdgeInsets.all(14),children:rows.map((t){final status=(t['status']??'registration').toString();final canJoin=status=='registration'&&!joined.contains(t['id'].toString());final actions=<Widget>[];if(canJoin)actions.add(FilledButton(onPressed:()=>_join(t),child:const Text('JOIN TOURNAMENT')));else if(joined.contains(t['id'].toString()))actions.add(const Chip(label:Text('REGISTERED')));if(t['created_by']==_userId&&status=='registration')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'in_progress'),child:const Text('START')));if(t['created_by']==_userId&&status=='in_progress')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'completed'),child:const Text('FINISH')));if(t['created_by']==_userId&&status!='completed'&&status!='cancelled')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'cancelled'),child:const Text('CANCEL')));return _featureCard(_purple,Icons.account_tree,(t['name']??'Tournament').toString(),'${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()}  •  Max players: ${t['max_players']??8}',status,actions:actions);}).toList()));
+  Future<void> _setTournamentStatus(Map<String,dynamic> t,String status) async {if(!_isAdmin){_toast('Only an administrator can manage tournaments.');return;}try{await Store.instance.supabase.from('community_tournaments').update({'status':status}).eq('id',t['id']);_toast('Tournament status updated.');await _load();}catch(e){_toast('Could not update tournament: $e');}}
+  @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('TOURNAMENT MODE'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),floatingActionButton:_isAdmin?FloatingActionButton.extended(onPressed:_create,icon:const Icon(Icons.add),label:const Text('CREATE')):null,body:loading?const Center(child:CircularProgressIndicator()):error!=null?Center(child:Text('Could not load tournaments.\n$error',textAlign:TextAlign.center)):rows.isEmpty?const _FeatureEmpty(icon:Icons.account_tree,title:'No tournaments yet',message:'The administrator will publish community tournaments here.'):ListView(padding:const EdgeInsets.all(14),children:rows.map((t){final status=(t['status']??'registration').toString();final canJoin=status=='registration'&&!joined.contains(t['id'].toString());final actions=<Widget>[];if(canJoin)actions.add(FilledButton(onPressed:()=>_join(t),child:const Text('JOIN TOURNAMENT')));else if(joined.contains(t['id'].toString()))actions.add(const Chip(label:Text('REGISTERED')));if(_isAdmin&&status=='registration')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'in_progress'),child:const Text('START')));if(_isAdmin&&status=='in_progress')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'completed'),child:const Text('FINISH')));if(_isAdmin&&status!='completed'&&status!='cancelled')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'cancelled'),child:const Text('CANCEL')));return _featureCard(_purple,Icons.account_tree,(t['name']??'Tournament').toString(),'${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()}  •  Max players: ${t['max_players']??8}',status,actions:actions);}).toList()));
 }
 
 class PlayerMissionsPage extends StatefulWidget { const PlayerMissionsPage({super.key}); @override State<PlayerMissionsPage> createState()=>_PlayerMissionsPageState(); }
@@ -5529,87 +5523,34 @@ class _PlayerMissionsPageState extends State<PlayerMissionsPage> with _FeaturePa
   bool loading=true; String? error; List<Map<String,dynamic>> rows=[];
   DateTime _dayStart(DateTime now)=>DateTime(now.year,now.month,now.day);
   DateTime _weekStart(DateTime now) { final d=_dayStart(now); return d.subtract(Duration(days:d.weekday-1)); }
-  String _iso(DateTime d)=>d.toUtc().toIso8601String();
-
+  String _date(DateTime d)=>'${d.year.toString().padLeft(4,'0')}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
   Future<int> _confirmedCount(DateTime start, DateTime end) async {
     final id=_userId!;
     final data=await Store.instance.supabase.from('matches')
       .select('id,home_player_id,away_player_id,scheduled_date,status')
       .eq('status','Confirmed')
       .or('home_player_id.eq.$id,away_player_id.eq.$id')
-      .gte('scheduled_date','${start.year.toString().padLeft(4,'0')}-${start.month.toString().padLeft(2,'0')}-${start.day.toString().padLeft(2,'0')}').lt('scheduled_date','${end.year.toString().padLeft(4,'0')}-${end.month.toString().padLeft(2,'0')}-${end.day.toString().padLeft(2,'0')}').limit(1000);
+      .gte('scheduled_date',_date(start)).lt('scheduled_date',_date(end)).limit(1000);
     return (data as List).length;
   }
-
-  Future<void> _ensureGeneratedMission({required String cadence,required String title,required String description,required int target,required DateTime start,required DateTime end}) async {
-    final existing=await Store.instance.supabase.from('player_missions').select('id,status')
-      .eq('user_id',_userId!).eq('cadence',cadence).eq('mission_title',title)
-      .eq('starts_at',_iso(start)).limit(1);
-    if((existing as List).isNotEmpty) return;
-    await Store.instance.supabase.from('player_missions').insert({
-      'user_id':_userId,'mission_title':title,'description':description,
-      'cadence':cadence,'target_count':target,'progress_count':0,
-      'reward_label':'Reward integration not configured yet',
-      'status':'active','starts_at':_iso(start),'ends_at':_iso(end),
-    });
-  }
-
-  Future<void> _refreshProgress(List<Map<String,dynamic>> missions) async {
-    final now=DateTime.now();
-    for(final m in missions) {
-      final cadence=(m['cadence']??'daily').toString();
-      final start=DateTime.tryParse((m['starts_at']??'').toString())?.toLocal();
-      final end=DateTime.tryParse((m['ends_at']??'').toString())?.toLocal();
-      if(start==null||end==null) continue;
-      if(now.isAfter(end)) {
-        if((m['status']??'')=='active') await Store.instance.supabase.from('player_missions')
-          .update({'status':'expired'}).eq('id',m['id']).eq('user_id',_userId!);
-        continue;
-      }
-      if((m['status']??'')=='claimed'||(m['status']??'')=='expired') continue;
-      final count=await _confirmedCount(start,end);
-      final target=(m['target_count'] as num?)?.toInt()??1;
-      final progress=count.clamp(0,target);
-      final status=progress>=target?'completed':'active';
-      if(progress!=((m['progress_count'] as num?)?.toInt()??0)||(m['status']??'')!=status) {
-        await Store.instance.supabase.from('player_missions').update({'progress_count':progress,'status':status})
-          .eq('id',m['id']).eq('user_id',_userId!);
-      }
-    }
-  }
-
   Future<void> _load() async {
     if(mounted)setState(()=>loading=true);
     try {
-      final id=_userId; if(id==null) throw Exception('Please sign in again.');
+      if(_userId==null) throw Exception('Please sign in again.');
       final now=DateTime.now(); final day=_dayStart(now); final week=_weekStart(now);
-      await _ensureGeneratedMission(cadence:'daily',title:'Daily: Complete 1 confirmed match',description:'Play and confirm one eligible match today. Progress counts confirmed results only.',target:1,start:day,end:day.add(const Duration(days:1)));
-      await _ensureGeneratedMission(cadence:'weekly',title:'Weekly: Complete 5 confirmed matches',description:'Complete five eligible confirmed matches this week. Pending or disputed results do not count.',target:5,start:week,end:week.add(const Duration(days:7)));
-      final q=await Store.instance.supabase.from('player_missions').select().eq('user_id',id)
-        .order('starts_at',ascending:false).limit(100);
-      var all=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();
-      // Only display system-generated daily/weekly challenges. Old manually
-      // created personal missions are not treated as the new challenge system.
-      all=all.where((m){final t=(m['mission_title']??'').toString();return t.startsWith('Daily: ')||t.startsWith('Weekly: ');}).toList();
-      await _refreshProgress(all);
-      final refreshed=await Store.instance.supabase.from('player_missions').select().eq('user_id',id)
-        .order('starts_at',ascending:false).limit(100);
-      rows=(refreshed as List).map((e)=>Map<String,dynamic>.from(e as Map))
-        .where((m){final t=(m['mission_title']??'').toString();return t.startsWith('Daily: ')||t.startsWith('Weekly: ');}).toList();
+      // Challenges are derived from confirmed fixtures at read time. No mission
+      // rows are inserted, so an RLS policy or optional mission table cannot hang the page.
+      final daily=await _confirmedCount(day,day.add(const Duration(days:1)));
+      final weekly=await _confirmedCount(week,week.add(const Duration(days:7)));
+      rows=[
+        {'id':'daily-${_date(day)}','mission_title':'Daily: Complete 1 confirmed match','description':'Play and confirm one eligible match today.','cadence':'daily','progress_count':daily.clamp(0,1),'target_count':1,'status':daily>=1?'completed':'active','reward_label':'Not configured'},
+        {'id':'weekly-${_date(week)}','mission_title':'Weekly: Complete 5 confirmed matches','description':'Complete five eligible confirmed matches this week. Pending or disputed results do not count.','cadence':'weekly','progress_count':weekly.clamp(0,5),'target_count':5,'status':weekly>=5?'completed':'active','reward_label':'Not configured'},
+      ];
       error=null;
     } catch(e) { error=e.toString(); }
     if(mounted)setState(()=>loading=false);
   }
-
-  @override Widget build(BuildContext context)=>Scaffold(
-    appBar:AppBar(title:const Text('DAILY & WEEKLY CHALLENGES'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),
-    body:loading?const Center(child:CircularProgressIndicator()):error!=null
-      ?Center(child:Padding(padding:const EdgeInsets.all(18),child:Text('Could not load challenges.\n$error',textAlign:TextAlign.center)))
-      :rows.isEmpty?const _FeatureEmpty(icon:Icons.flag,title:'Challenges are loading',message:'Daily and weekly challenges are generated automatically.')
-      :ListView(padding:const EdgeInsets.all(14),children:[
-        Container(margin:const EdgeInsets.only(bottom:12),padding:const EdgeInsets.all(12),decoration:_neonBox(_cyan,radius:14),child:const Text('Challenges are generated automatically. Progress counts confirmed matches only. Super Beans rewards are not connected yet because that system has not been implemented.',style:TextStyle(color:_muted,fontSize:12,height:1.4))),
-        ...rows.map((m){final progress=(m['progress_count'] as num?)?.toInt()??0;final target=(m['target_count'] as num?)?.toInt()??1;final status=(m['status']??'active').toString();final cadence=(m['cadence']??'daily').toString();final expired=status=='expired';final description='${m['description']??''}\n${cadence.toUpperCase()}  •  Progress: $progress/$target\nReward: Not configured yet';return _featureCard(cadence=='daily'?_blue:_purple,cadence=='daily'?Icons.today:Icons.date_range,(m['mission_title']??'Challenge').toString(),description,status);}),
-      ]));
+  @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('DAILY & WEEKLY CHALLENGES'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),body:loading?const Center(child:CircularProgressIndicator()):error!=null?Center(child:Padding(padding:const EdgeInsets.all(18),child:Text('Could not load challenges.\n$error',textAlign:TextAlign.center))):ListView(padding:const EdgeInsets.all(14),children:[Container(margin:const EdgeInsets.only(bottom:12),padding:const EdgeInsets.all(12),decoration:_neonBox(_cyan,radius:14),child:const Text('Challenges are generated automatically. Progress counts confirmed matches only. Super Beans rewards are not implemented.',style:TextStyle(color:_muted,fontSize:12,height:1.4))),...rows.map((m){final progress=(m['progress_count'] as num?)?.toInt()??0;final target=(m['target_count'] as num?)?.toInt()??1;final cadence=(m['cadence']??'daily').toString();return _featureCard(cadence=='daily'?_blue:_purple,cadence=='daily'?Icons.today:Icons.date_range,(m['mission_title']??'Challenge').toString(),'${m['description']}\n${cadence.toUpperCase()} • Progress: $progress/$target\nReward: Not configured', (m['status']??'active').toString());})]));
 }
 
 class PlayerFriendsPage extends StatefulWidget { const PlayerFriendsPage({super.key}); @override State<PlayerFriendsPage> createState()=>_PlayerFriendsPageState(); }
