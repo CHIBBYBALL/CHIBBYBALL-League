@@ -571,6 +571,7 @@ class MatchItem {
     this.homeProof,
     this.awayProof,
     this.scheduledDate,
+    this.screenshotResponseDeadline,
     this.startTime = '17:00:00',
     this.endTime = '23:59:00',
     this.status = 'Scheduled',
