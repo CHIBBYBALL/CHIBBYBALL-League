@@ -511,6 +511,9 @@ class LeagueInfo {
   final bool matchDayDateControlsEnabled;
   final bool sequentialMatchDayLockEnabled;
   final bool gracePeriodEnabled;
+  final int screenshotResponseHours;
+  final int noShowResponseHours;
+  final bool noShowReportsEnabled;
 
   const LeagueInfo({
     required this.id,
@@ -526,6 +529,9 @@ class LeagueInfo {
     this.matchDayDateControlsEnabled = true,
     this.sequentialMatchDayLockEnabled = true,
     this.gracePeriodEnabled = true,
+    this.screenshotResponseHours = 24,
+    this.noShowResponseHours = 24,
+    this.noShowReportsEnabled = true,
   });
 
   String get feeLabel =>
@@ -715,7 +721,7 @@ class Store {
   Future<void> refreshLeagues() async {
     final data = await supabase
         .from('leagues')
-        .select('id, name, status, is_paid, entry_fee, currency, created_at, start_date, end_date, fixture_mode, match_day_date_controls_enabled, sequential_match_day_lock_enabled, grace_period_enabled')
+        .select('id, name, status, is_paid, entry_fee, currency, created_at, start_date, end_date, fixture_mode, match_day_date_controls_enabled, sequential_match_day_lock_enabled, grace_period_enabled, screenshot_response_hours, no_show_response_hours, no_show_reports_enabled')
         .order('created_at', ascending: false);
 
     leagues
@@ -742,6 +748,9 @@ class Store {
           matchDayDateControlsEnabled: row['match_day_date_controls_enabled'] != false,
           sequentialMatchDayLockEnabled: row['sequential_match_day_lock_enabled'] != false,
           gracePeriodEnabled: row['grace_period_enabled'] != false,
+          screenshotResponseHours: (row['screenshot_response_hours'] as num?)?.toInt() ?? 24,
+          noShowResponseHours: (row['no_show_response_hours'] as num?)?.toInt() ?? 24,
+          noShowReportsEnabled: row['no_show_reports_enabled'] != false,
         );
       }));
 
@@ -7247,6 +7256,139 @@ class _LeagueJoinRequestsAdminPageState extends State<LeagueJoinRequestsAdminPag
 // ADMIN
 // ============================================================
 
+class NoShowReportsAdminPage extends StatefulWidget {
+  const NoShowReportsAdminPage({super.key});
+  @override State<NoShowReportsAdminPage> createState() => _NoShowReportsAdminPageState();
+}
+
+class _NoShowReportsAdminPageState extends State<NoShowReportsAdminPage> {
+  bool loading = true;
+  String? error;
+  List<Map<String, dynamic>> reports = [];
+
+  Future<void> load() async {
+    setState(() { loading = true; error = null; });
+    try {
+      final data = await Store.instance.supabase
+          .from('no_show_reports')
+          .select('id, match_id, league_id, reporter_id, reported_player_id, reason, status, response_deadline, admin_decision, admin_note, created_at')
+          .order('created_at', ascending: false);
+      reports = (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (e) { error = e.toString(); }
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> resolve(Map<String, dynamic> report, String decision) async {
+    final note = TextEditingController();
+    final extension = TextEditingController(text: '24');
+    final accepted = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: Text('Resolve report: ${decision.replaceAll('_', ' ')}'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: note, decoration: const InputDecoration(labelText: 'Admin note (optional)')),
+        if (decision == 'extend_deadline') TextField(controller: extension, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Extra hours (1–168)')),
+      ]),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('CONFIRM'))],
+    ));
+    if (accepted != true) return;
+    try {
+      await Store.instance.supabase.rpc('resolve_no_show_report', params: {
+        'p_report_id': report['id'], 'p_decision': decision,
+        'p_admin_note': note.text.trim().isEmpty ? null : note.text.trim(),
+        'p_extend_hours': decision == 'extend_deadline' ? int.tryParse(extension.text) : null,
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No-show report updated.')));
+      await load();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not resolve report: $e')));
+    }
+  }
+
+  @override void initState() { super.initState(); load(); }
+  String playerName(dynamic id) {
+    final p = Store.instance.players.where((p) => p.id == id?.toString()).toList();
+    return p.isEmpty ? (id?.toString() ?? 'Unknown player') : p.first.gamerTag;
+  }
+  @override Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('No-show Reports'), actions: [IconButton(onPressed: loading ? null : load, icon: const Icon(Icons.refresh))]),
+    body: loading ? const Center(child: CircularProgressIndicator()) : error != null
+      ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Text('Could not load reports:\n$error')))
+      : reports.isEmpty ? const Center(child: Text('No no-show reports yet.'))
+      : ListView(padding: const EdgeInsets.all(14), children: reports.map((r) {
+          final status = r['status']?.toString() ?? 'unknown';
+          final deadline = DateTime.tryParse(r['response_deadline']?.toString() ?? '')?.toLocal().toString() ?? 'Not set';
+          final pending = !['resolved', 'rejected'].contains(status);
+          return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${playerName(r['reporter_id'])} reported ${playerName(r['reported_player_id'])}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6), Text('Reason: ${r['reason']}'),
+            Text('Status: $status'), Text('Response deadline: $deadline'),
+            if ((r['admin_note'] ?? '').toString().isNotEmpty) Text('Admin note: ${r['admin_note']}'),
+            if (pending) Wrap(spacing: 6, runSpacing: 4, children: [
+              TextButton(onPressed: () => resolve(r, 'award_reporter'), child: const Text('Award reporter')),
+              TextButton(onPressed: () => resolve(r, 'award_reported_player'), child: const Text('Award opponent')),
+              TextButton(onPressed: () => resolve(r, 'extend_deadline'), child: const Text('Extend deadline')),
+              TextButton(onPressed: () => resolve(r, 'reject_report'), child: const Text('Reject')),
+              TextButton(onPressed: () => resolve(r, 'no_penalty'), child: const Text('No penalty')),
+            ]),
+          ])));
+        }).toList()),
+  );
+}
+
+class ScreenshotTimerAdminPage extends StatefulWidget {
+  const ScreenshotTimerAdminPage({super.key});
+  @override State<ScreenshotTimerAdminPage> createState() => _ScreenshotTimerAdminPageState();
+}
+
+class _ScreenshotTimerAdminPageState extends State<ScreenshotTimerAdminPage> {
+  String? leagueId;
+  int screenshotHours = 24;
+  int noShowHours = 24;
+  bool enabled = true;
+  bool loading = true;
+  bool saving = false;
+
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async {
+    try {
+      await Store.instance.refreshLeagues();
+      if (Store.instance.leagues.isNotEmpty) {
+        final league = Store.instance.leagues.firstWhere((l) => l.id == leagueId, orElse: () => Store.instance.leagues.first);
+        leagueId = league.id; screenshotHours = league.screenshotResponseHours; noShowHours = league.noShowResponseHours; enabled = league.noShowReportsEnabled;
+      }
+    } catch (_) {}
+    if (mounted) setState(() => loading = false);
+  }
+  Future<void> _save() async {
+    if (leagueId == null) return;
+    setState(() => saving = true);
+    try {
+      await Store.instance.supabase.from('leagues').update({
+        'screenshot_response_hours': screenshotHours,
+        'no_show_response_hours': noShowHours,
+        'no_show_reports_enabled': enabled,
+      }).eq('id', leagueId!);
+      await Store.instance.refreshLeagues();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('League timer settings saved.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save settings: $e')));
+    }
+    if (mounted) setState(() => saving = false);
+  }
+  Widget _hours(String title, int value, ValueChanged<int> changed) => Card(child: Padding(padding: const EdgeInsets.all(12), child: Row(children: [Expanded(child: Text(title)), IconButton(onPressed: value <= 1 ? null : () => changed(value - 1), icon: const Icon(Icons.remove)), Text('$value h', style: const TextStyle(fontWeight: FontWeight.bold)), IconButton(onPressed: value >= 168 ? null : () => changed(value + 1), icon: const Icon(Icons.add))])));
+  @override Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Screenshot & No-show Timers')),
+    body: loading ? const Center(child: CircularProgressIndicator()) : Store.instance.leagues.isEmpty ? const Center(child: Text('Create a league first.')) : ListView(padding: const EdgeInsets.all(16), children: [
+      DropdownButtonFormField<String>(value: leagueId, decoration: const InputDecoration(labelText: 'League'), items: Store.instance.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text(l.name, overflow: TextOverflow.ellipsis))).toList(), onChanged: (id) { final l = Store.instance.leagues.firstWhere((x) => x.id == id); setState(() { leagueId = id; screenshotHours = l.screenshotResponseHours; noShowHours = l.noShowResponseHours; enabled = l.noShowReportsEnabled; }); }),
+      const SizedBox(height: 12),
+      _hours('Screenshot response window', screenshotHours, (v) => setState(() => screenshotHours = v)),
+      _hours('No-show response window', noShowHours, (v) => setState(() => noShowHours = v)),
+      SwitchListTile(title: const Text('Enable no-show reports'), value: enabled, onChanged: (v) => setState(() => enabled = v)),
+      const SizedBox(height: 12), FilledButton.icon(onPressed: saving ? null : _save, icon: const Icon(Icons.save), label: Text(saving ? 'SAVING…' : 'SAVE SETTINGS')),
+      const SizedBox(height: 8), const Text('Timer settings apply to future reports/submissions. Existing deadlines are not automatically recalculated.'),
+    ]),
+  );
+}
+
 class AdminPage extends StatefulWidget {
   const AdminPage({super.key});
   @override State<AdminPage> createState() => _AdminPageState();
@@ -7290,6 +7432,10 @@ class _AdminPageState extends State<AdminPage> {
         _neonAction(context, Icons.calendar_month, 'MATCH SCHEDULE', 'Set date and time windows', _cyan, () => open(const AdminMatchSchedulePage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.fact_check, 'RESULT REVIEW', 'Confirm or dispute submitted results', _purple, () => open(const ResultReviewPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.flag_outlined, 'NO-SHOW REPORTS', 'Review and resolve player no-show reports', _yellow, () => open(const NoShowReportsAdminPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.timer_outlined, 'SCREENSHOT & NO-SHOW TIMERS', 'Configure response windows for each league', _purple, () => open(const ScreenshotTimerAdminPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.manage_accounts, 'MANAGE PLAYERS', 'Assign, remove or disregister players', _cyan, () => open(const PlayerManagementPage())),
         const SizedBox(height: 9),
