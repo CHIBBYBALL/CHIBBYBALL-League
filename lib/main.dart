@@ -5094,7 +5094,7 @@ class _AchievementsPageState extends State<AchievementsPage> {
             (title: 'CLINICAL FINISHER', description: 'Score 25 goals across confirmed matches', icon: Icons.gps_fixed, color: const Color(0xFFFF4658), earned: mine.goals >= 25, tier: 'GOLD'),
             (title: 'THE WALL', description: 'Record 5 clean sheets', icon: Icons.shield, color: const Color(0xFF31C9FF), earned: mine.cleanSheets >= 5, tier: 'GOLD'),
             (title: 'VETERAN', description: 'Play 25 confirmed matches', icon: Icons.workspace_premium, color: const Color(0xFFB45CFF), earned: mine.played >= 25, tier: 'GOLD'),
-            (title: 'CENTURION', description: 'Play 100 confirmed matches', icon: Icons.looks_100, color: const Color(0xFFFFC928), earned: mine.played >= 100, tier: 'LEGENDARY'),
+            (title: 'CENTURION', description: 'Play 100 confirmed matches', icon: Icons.workspace_premium, color: const Color(0xFFFFC928), earned: mine.played >= 100, tier: 'LEGENDARY'),
             (title: 'UNBEATEN RUN', description: 'Finish 5 matches without a loss', icon: Icons.security, color: const Color(0xFF31E69A), earned: mine.played >= 5 && mine.lost == 0, tier: 'LEGENDARY'),
             (title: 'GLOBAL TOP 3', description: 'Reach the top three in global points', icon: Icons.emoji_events, color: const Color(0xFFFF9E32), earned: stats.indexWhere((s) => s.player.id == me?.id) >= 0 && stats.indexWhere((s) => s.player.id == me?.id) < 3, tier: 'LEGENDARY'),
           ];
@@ -5187,7 +5187,39 @@ class _HallOfFamePageState extends State<HallOfFamePage> {
           for (int i=0; i<list.take(3).length; i++) _HallOfFameRankRow(rank: i + 1, stat: list[i], value: value(list[i]), suffix: suffix, accent: color),
         ]));
       return RefreshIndicator(onRefresh: _refresh, child: ListView(padding: const EdgeInsets.fromLTRB(14, 14, 14, 28), children: [
-        Container(padding: const EdgeInsets.all(19), decoration: BoxDecoration(borderRadius: BorderRadius.circular(23), border: Border.all(color: _yellow, width: 1.4), gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF183C65), Color(0xFF071629), Color(0xFF21162D)]), boxShadow: [BoxShadow(color: _yellow.withOpacity(.18), blurRadius: 24)]), child: Row(children: [Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('LEGENDS ARE MADE HERE', style: TextStyle(color: _yellow, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2)), const SizedBox(height: 8), const Text('HALL OF FAME', style: TextStyle(fontSize: 27, fontWeight: FontWeight.w900, height: 1)), const SizedBox(height: 8), const Text('Recognising the best performers across CHIBBYBALL leagues.', style: TextStyle(color: _muted, fontSize: 12, height: 1.4))])), const SizedBox(width: 8), Container(width: 76, height: 88, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [_yellow.withOpacity(.3), Colors.transparent]), boxShadow: [BoxShadow(color: _yellow.withOpacity(.22), blurRadius: 20)]), child: const Icon(Icons.emoji_events, color: _yellow, size: 67))]),
+        Container(
+          padding: const EdgeInsets.all(19),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(23),
+            border: Border.all(color: _yellow, width: 1.4),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF183C65), Color(0xFF071629), Color(0xFF21162D)],
+            ),
+            boxShadow: [BoxShadow(color: _yellow.withOpacity(.18), blurRadius: 24)],
+          ),
+          child: Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('LEGENDS ARE MADE HERE', style: TextStyle(color: _yellow, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+              const SizedBox(height: 8),
+              const Text('HALL OF FAME', style: TextStyle(fontSize: 27, fontWeight: FontWeight.w900, height: 1)),
+              const SizedBox(height: 8),
+              const Text('Recognising the best performers across CHIBBYBALL leagues.', style: TextStyle(color: _muted, fontSize: 12, height: 1.4)),
+            ])),
+            const SizedBox(width: 8),
+            Container(
+              width: 76,
+              height: 88,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(colors: [_yellow.withOpacity(.3), Colors.transparent]),
+                boxShadow: [BoxShadow(color: _yellow.withOpacity(.22), blurRadius: 20)],
+              ),
+              child: const Icon(Icons.emoji_events, color: _yellow, size: 67),
+            ),
+          ]),
+        ),
         const SizedBox(height: 16), legend('GLOBAL POINTS LEADERS', Icons.emoji_events, _yellow, points, (s) => s.points, 'PTS'),
         legend('MOST MATCH WINS', Icons.military_tech, _cyan, wins, (s) => s.won, 'WINS'),
         legend('TOP GOAL SCORERS', Icons.sports_soccer, _purple, goals, (s) => s.goals, 'GOALS'),
@@ -5208,7 +5240,19 @@ class _HallOfFameRankRow extends StatelessWidget {
   @override Widget build(BuildContext context) {
     final medal = rank == 1 ? const Color(0xFFFFC928) : rank == 2 ? const Color(0xFFD7E3F3) : const Color(0xFFFF9147);
     return Container(margin: const EdgeInsets.only(top: 4), padding: const EdgeInsets.symmetric(vertical: 7), decoration: BoxDecoration(border: Border(bottom: BorderSide(color: accent.withOpacity(.12)))), child: Row(children: [
-      Container(width: 29, height: 29, decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [medal, Color.lerp(medal, const Color(0xFF4B3421), .5)!]), border: Border.all(color: Colors.white.withOpacity(.65)), boxShadow: [BoxShadow(color: medal.withOpacity(.25), blurRadius: 8)]), child: Center(child: Text('$rank', style: const TextStyle(color: Color(0xFF101827), fontWeight: FontWeight.w900, fontSize: 14))),
+      Container(
+        width: 29,
+        height: 29,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(colors: [medal, Color.lerp(medal, const Color(0xFF4B3421), .5)!]),
+          border: Border.all(color: Colors.white.withOpacity(.65)),
+          boxShadow: [BoxShadow(color: medal.withOpacity(.25), blurRadius: 8)],
+        ),
+        child: Center(
+          child: Text('$rank', style: const TextStyle(color: Color(0xFF101827), fontWeight: FontWeight.w900, fontSize: 14)),
+        ),
+      ),
       const SizedBox(width: 8), _playerAvatar(stat.player, radius: 18, accent: accent), const SizedBox(width: 9), Expanded(child: Text(stat.player.gamerTag, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900))), const SizedBox(width: 6), Flexible(child: Text('$value $suffix', textAlign: TextAlign.end, maxLines: 2, style: TextStyle(color: accent, fontWeight: FontWeight.w900, fontSize: 11))),
     ]));
   }
