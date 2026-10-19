@@ -3788,6 +3788,8 @@ class DashboardPage extends StatelessWidget {
             quickAction(Icons.group_add, 'JOIN A LEAGUE', 'Find a competition to enter', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const JoinLeaguePage()))),
             quickAction(Icons.verified, 'CREATOR HUB', 'Explore creator leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
             quickAction(Icons.emoji_events, 'CHAMPIONS LEAGUE', 'Follow the championship', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChampionsLeaguePage()))),
+            quickAction(Icons.military_tech, 'ACHIEVEMENTS', 'Unlock badges from confirmed results', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AchievementsPage()))),
+            quickAction(Icons.workspace_premium, 'HALL OF FAME', 'Celebrate CHIBBYBALL top performers', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HallOfFamePage()))),
             quickAction(Icons.public, 'GLOBAL RANKING', 'Compare points across leagues', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GlobalLeaderboardPage()))),
             quickAction(Icons.people_alt, 'PLAYERS & CHAT', 'Find players and message them', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage()))),
             quickAction(Icons.person, 'MY PROFILE', 'Your player identity and details', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfilePage()))),
@@ -5058,6 +5060,103 @@ class _GlobalLeaderboardPageState extends State<GlobalLeaderboardPage> {
   }
 }
 
+
+// ============================================================
+// ACHIEVEMENTS & BADGES (computed from confirmed global statistics)
+// ============================================================
+
+class AchievementsPage extends StatefulWidget {
+  const AchievementsPage({super.key});
+  @override State<AchievementsPage> createState() => _AchievementsPageState();
+}
+
+class _AchievementsPageState extends State<AchievementsPage> {
+  late Future<List<GlobalPlayerStat>> future;
+  @override void initState() { super.initState(); future = Store.instance.globalLeaderboard(); }
+  Future<void> _refresh() async { setState(() => future = Store.instance.globalLeaderboard()); await future; }
+
+  @override Widget build(BuildContext context) {
+    final me = Store.instance.current;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Achievements & Badges'), actions: [IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh))]),
+      body: FutureBuilder<List<GlobalPlayerStat>>(
+        future: future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: _cyan));
+          if (snapshot.hasError) return Center(child: Padding(padding: const EdgeInsets.all(24), child: Text('Could not load achievements. Pull to refresh.\n${snapshot.error}', textAlign: TextAlign.center)));
+          final stats = snapshot.data ?? <GlobalPlayerStat>[];
+          final mine = stats.where((s) => s.player.id == me?.id).firstOrNull ?? GlobalPlayerStat(player: me ?? const Player(id: '', name: 'Player', gamerTag: 'PLAYER'));
+          final achievements = <({String title, String description, IconData icon, Color color, bool earned})>[
+            (title: 'FIRST VICTORY', description: 'Win your first confirmed match', icon: Icons.flag, color: _cyan, earned: mine.won >= 1),
+            (title: 'HAT-TRICK HERO', description: 'Win 3 confirmed matches', icon: Icons.sports_soccer, color: _yellow, earned: mine.won >= 3),
+            (title: 'FIVE-STAR WINNER', description: 'Win 5 confirmed matches', icon: Icons.stars, color: _purple, earned: mine.won >= 5),
+            (title: 'GOAL MACHINE', description: 'Score 10 goals across confirmed matches', icon: Icons.gps_fixed, color: _yellow, earned: mine.goals >= 10),
+            (title: 'CLINICAL FINISHER', description: 'Score 25 goals across confirmed matches', icon: Icons.bolt, color: _cyan, earned: mine.goals >= 25),
+            (title: 'THE WALL', description: 'Record 5 clean sheets', icon: Icons.shield, color: _blue, earned: mine.cleanSheets >= 5),
+            (title: 'VETERAN', description: 'Play 25 confirmed matches', icon: Icons.military_tech, color: _purple, earned: mine.played >= 25),
+            (title: 'CENTURION', description: 'Play 100 confirmed matches', icon: Icons.workspace_premium, color: _yellow, earned: mine.played >= 100),
+            (title: 'UNBEATEN RUN', description: 'Finish 5 matches without a loss', icon: Icons.local_fire_department, color: _cyan, earned: mine.played >= 5 && mine.lost == 0),
+            (title: 'GLOBAL TOP 3', description: 'Reach the top three in global points', icon: Icons.emoji_events, color: _yellow, earned: stats.indexWhere((s) => s.player.id == me?.id) >= 0 && stats.indexWhere((s) => s.player.id == me?.id) < 3),
+          ];
+          final earnedCount = achievements.where((a) => a.earned).length;
+          return RefreshIndicator(onRefresh: _refresh, child: ListView(padding: const EdgeInsets.all(16), children: [
+            Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_yellow, radius: 22), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('YOUR TROPHY CABINET', style: TextStyle(color: _yellow, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.4)),
+              const SizedBox(height: 8), Text('$earnedCount / ${achievements.length} achievements unlocked', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 10), LinearProgressIndicator(value: earnedCount / achievements.length, minHeight: 8, borderRadius: BorderRadius.circular(20), backgroundColor: Colors.white12, color: _yellow),
+              const SizedBox(height: 10), Text('${mine.won} wins • ${mine.goals} goals • ${mine.played} matches • ${mine.cleanSheets} clean sheets', style: const TextStyle(color: _muted, fontSize: 11)),
+            ])),
+            const SizedBox(height: 18), _neonSectionTitle('BADGES', accent: _cyan), const SizedBox(height: 8),
+            for (final a in achievements) Container(margin: const EdgeInsets.only(bottom: 9), padding: const EdgeInsets.all(13), decoration: _neonBox(a.earned ? a.color : _blue, radius: 16), child: Row(children: [
+              Container(width: 48, height: 48, decoration: BoxDecoration(shape: BoxShape.circle, color: a.color.withOpacity(a.earned ? .18 : .06), border: Border.all(color: a.earned ? a.color : Colors.white24)), child: Icon(a.earned ? a.icon : Icons.lock_outline, color: a.earned ? a.color : _muted, size: 25)),
+              const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(a.title, style: TextStyle(fontWeight: FontWeight.w900, color: a.earned ? a.color : _muted)), const SizedBox(height: 3), Text(a.description, style: const TextStyle(color: _muted, fontSize: 11))])),
+              Icon(a.earned ? Icons.check_circle : Icons.lock, color: a.earned ? _cyan : _muted, size: 20),
+            ])),
+            const SizedBox(height: 8), const Text('Achievements are calculated from confirmed results across all leagues. Unconfirmed or disputed results do not count.', style: TextStyle(color: _muted, fontSize: 10)),
+          ]));
+        },
+      ),
+    );
+  }
+}
+
+// ============================================================
+// HALL OF FAME (global confirmed-match leaders)
+// ============================================================
+
+class HallOfFamePage extends StatefulWidget {
+  const HallOfFamePage({super.key});
+  @override State<HallOfFamePage> createState() => _HallOfFamePageState();
+}
+
+class _HallOfFamePageState extends State<HallOfFamePage> {
+  late Future<List<GlobalPlayerStat>> future;
+  @override void initState() { super.initState(); future = Store.instance.globalLeaderboard(); }
+  Future<void> _refresh() async { setState(() => future = Store.instance.globalLeaderboard()); await future; }
+
+  @override Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('CHIBBYBALL Hall of Fame'), actions: [IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh))]),
+    body: FutureBuilder<List<GlobalPlayerStat>>(future: future, builder: (context, snapshot) {
+      if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: _cyan));
+      final stats = snapshot.data ?? <GlobalPlayerStat>[];
+      if (stats.isEmpty) return const Center(child: Text('No confirmed match records yet.'));
+      final points = [...stats]..sort((a,b) => b.points.compareTo(a.points));
+      final wins = [...stats]..sort((a,b) => b.won.compareTo(a.won));
+      final goals = [...stats]..sort((a,b) => b.goals.compareTo(a.goals));
+      final clean = [...stats]..sort((a,b) => b.cleanSheets.compareTo(a.cleanSheets));
+      Widget legend(String title, IconData icon, Color color, List<GlobalPlayerStat> list, int Function(GlobalPlayerStat) value, String suffix) => Container(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(14), decoration: _neonBox(color, radius: 18), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Icon(icon, color: color), const SizedBox(width: 8), Expanded(child: Text(title, style: TextStyle(color: color, fontWeight: FontWeight.w900, letterSpacing: .6))),]), const SizedBox(height: 10), for (int i=0; i<list.take(3).length; i++) Padding(padding: const EdgeInsets.symmetric(vertical: 5), child: Row(children: [Text('${i+1}.', style: TextStyle(color: color, fontWeight: FontWeight.w900)), const SizedBox(width: 9), _playerAvatar(list[i].player, radius: 17, accent: color), const SizedBox(width: 9), Expanded(child: Text(list[i].player.gamerTag, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800))), Text('${value(list[i])} $suffix', style: TextStyle(color: color, fontWeight: FontWeight.w900))]))]));
+      return RefreshIndicator(onRefresh: _refresh, child: ListView(padding: const EdgeInsets.all(16), children: [
+        Container(padding: const EdgeInsets.all(20), decoration: _neonBox(_yellow, radius: 22), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LEGENDS ARE MADE HERE', style: TextStyle(color: _yellow, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.4)), SizedBox(height: 7), Text('HALL OF FAME', style: TextStyle(fontSize: 27, fontWeight: FontWeight.w900)), SizedBox(height: 5), Text('Recognising the best performers across CHIBBYBALL leagues.', style: TextStyle(color: _muted, fontSize: 12))])),
+        const SizedBox(height: 16), legend('GLOBAL POINTS LEADERS', Icons.emoji_events, _yellow, points, (s) => s.points, 'PTS'),
+        legend('MOST MATCH WINS', Icons.military_tech, _cyan, wins, (s) => s.won, 'WINS'),
+        legend('TOP GOAL SCORERS', Icons.sports_soccer, _purple, goals, (s) => s.goals, 'GOALS'),
+        legend('CLEAN-SHEET SPECIALISTS', Icons.shield, _blue, clean, (s) => s.cleanSheets, 'CLEAN SHEETS'),
+        const Text('Hall of Fame rankings use confirmed matches only and refresh from Supabase.', style: TextStyle(color: _muted, fontSize: 10)),
+        const SizedBox(height: 10), OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const GlobalLeaderboardPage())), icon: const Icon(Icons.public), label: const Text('OPEN GLOBAL RANKING')),
+      ]));
+    }),
+  );
+}
 
 // ============================================================
 // PROFILE
