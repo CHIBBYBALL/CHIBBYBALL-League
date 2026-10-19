@@ -2715,13 +2715,16 @@ class Store {
         result[entry.key]?.leagues = entry.value.length;
       }
 
+      // Read every match status and normalize it in Dart. Older records may
+      // use different capitalization, and filtering on one exact spelling
+      // silently made global stats look empty.
       final rows = await supabase
           .from('matches')
-          .select('league_id, home_player_id, away_player_id, home_score, away_score, status')
-          .eq('status', 'Confirmed');
+          .select('league_id, home_player_id, away_player_id, home_score, away_score, status');
 
       for (final item in (rows as List)) {
         final row = Map<String, dynamic>.from(item);
+        if ((row['status'] ?? '').toString().trim().toLowerCase() != 'confirmed') continue;
         final homeId = row['home_player_id']?.toString();
         final awayId = row['away_player_id']?.toString();
         final home = homeId == null ? null : result[homeId];
@@ -5521,6 +5524,11 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
 class PlayerMissionsPage extends StatefulWidget { const PlayerMissionsPage({super.key}); @override State<PlayerMissionsPage> createState()=>_PlayerMissionsPageState(); }
 class _PlayerMissionsPageState extends State<PlayerMissionsPage> with _FeaturePageHelpers<PlayerMissionsPage> {
   bool loading=true; String? error; List<Map<String,dynamic>> rows=[];
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
   DateTime _dayStart(DateTime now)=>DateTime(now.year,now.month,now.day);
   DateTime _weekStart(DateTime now) { final d=_dayStart(now); return d.subtract(Duration(days:d.weekday-1)); }
   String _date(DateTime d)=>'${d.year.toString().padLeft(4,'0')}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
