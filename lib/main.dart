@@ -3901,6 +3901,7 @@ class DashboardPage extends StatelessWidget {
           mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.18,
           children: [
             quickAction(Icons.calendar_month, 'MY FIXTURES', 'Matches and result submissions', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
+            quickAction(Icons.menu_book, 'RULES & REGULATIONS', 'Read the current CHIBBYBALL rules', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AppRulesPage()))),
             quickAction(Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
             quickAction(Icons.group_add, 'JOIN A LEAGUE', 'Find a competition to enter', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const JoinLeaguePage()))),
             quickAction(Icons.verified, 'CREATOR HUB', 'Explore creator leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
@@ -8179,6 +8180,8 @@ class _AdminPageState extends State<AdminPage> {
           _neonStat(context, Icons.check_circle, '$confirmed', 'CONFIRMED', _yellow, () => open(const ResultReviewPage())),
         ]),
         const SizedBox(height: 16),
+        _neonAction(context, Icons.menu_book, 'MANAGE APP RULES', 'Edit and publish the general CHIBBYBALL rules', _purple, () => open(const AppRulesPage())),
+        const SizedBox(height: 9),
         _neonAction(context, Icons.emoji_events, 'MANAGE LEAGUES', 'Create and activate multiple leagues', _yellow, () => open(const LeagueManagementPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.fact_check_outlined, 'LEAGUE REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueRequestsAdminPage())),
@@ -8222,3 +8225,87 @@ class _AdminPageState extends State<AdminPage> {
   }
 }
 
+
+
+// ============================================================
+// GENERAL APP RULES — editable by admins, readable by players
+// Requires the chibbyball_app_rules SQL migration.
+// ============================================================
+class AppRulesPage extends StatefulWidget {
+  const AppRulesPage({super.key});
+  @override
+  State<AppRulesPage> createState() => _AppRulesPageState();
+}
+
+class _AppRulesPageState extends State<AppRulesPage> {
+  final TextEditingController _rules = TextEditingController();
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+  DateTime? _updatedAt;
+  bool get _isAdmin => Store.instance.current?.admin == true;
+
+  @override
+  void initState() { super.initState(); _loadRules(); }
+  @override
+  void dispose() { _rules.dispose(); super.dispose(); }
+
+  Future<void> _loadRules() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final row = await Store.instance.supabase
+          .from('chibbyball_app_rules')
+          .select('rules_text, updated_at')
+          .eq('id', 1)
+          .maybeSingle();
+      if (row != null) {
+        _rules.text = row['rules_text']?.toString() ?? '';
+        _updatedAt = DateTime.tryParse(row['updated_at']?.toString() ?? '');
+      } else {
+        _rules.text = 'Welcome to CHIBBYBALL!\n\n1. Treat every player with respect.\n2. Play fairly; cheating and deliberate result manipulation are prohibited.\n3. Submit honest scores and genuine screenshots when required.\n4. Respect scheduled match times and deadlines.\n5. Report disputes and no-shows honestly.\n6. Follow league-specific rules and admin decisions made under those rules.\n7. Harassment, threats, fake evidence, and repeated abuse may lead to disciplinary action.';
+      }
+    } catch (e) {
+      _error = 'Could not load rules. Confirm the CHIBBYBALL rules SQL migration has been run. Details: $e';
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _saveRules() async {
+    if (!_isAdmin) return;
+    final text = _rules.text.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter the rules before publishing.')));
+      return;
+    }
+    setState(() { _saving = true; _error = null; });
+    try {
+      await Store.instance.supabase.from('chibbyball_app_rules').upsert({
+        'id': 1,
+        'rules_text': text,
+        'updated_by': Store.instance.current!.id,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      await _loadRules();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('CHIBBYBALL rules published successfully.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not publish rules: $e')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(_isAdmin ? 'Manage App Rules' : 'Rules & Regulations'), actions: [IconButton(onPressed: _loading ? null : _loadRules, icon: const Icon(Icons.refresh))]),
+    body: _loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(16), children: [
+      Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_purple, radius: 18), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('CHIBBYBALL COMMUNITY STANDARDS', style: TextStyle(color: _purple, fontWeight: FontWeight.w900, fontSize: 16)), SizedBox(height: 8), Text('These general rules apply across the app. Individual leagues may publish additional competition rules.', style: TextStyle(color: _muted, height: 1.4))])),
+      const SizedBox(height: 12),
+      if (_error != null) Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(border: Border.all(color: Colors.redAccent), borderRadius: BorderRadius.circular(12)), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
+      TextField(controller: _rules, readOnly: !_isAdmin, minLines: 12, maxLines: null, keyboardType: TextInputType.multiline, decoration: InputDecoration(labelText: _isAdmin ? 'Edit general rules' : 'Current rules', alignLabelWithHint: true, hintText: 'Write the CHIBBYBALL rules here...', border: const OutlineInputBorder())),
+      if (_updatedAt != null) Padding(padding: const EdgeInsets.only(top: 10), child: Text('Last published: ${_updatedAt!.toLocal()}', style: const TextStyle(color: _muted, fontSize: 12))),
+      if (_isAdmin) ...[const SizedBox(height: 14), SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _saving ? null : _saveRules, icon: const Icon(Icons.publish), label: Text(_saving ? 'PUBLISHING…' : 'SAVE & PUBLISH RULES')))],
+      const SizedBox(height: 10),
+      const Text('Please read these rules carefully. Updates are shared through the app and do not require a new APK.', style: TextStyle(color: _muted, height: 1.4)),
+    ]),
+  );
+}
