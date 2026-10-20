@@ -5694,6 +5694,8 @@ class CommunityTournamentsPage extends StatefulWidget { const CommunityTournamen
 class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> with _FeaturePageHelpers<CommunityTournamentsPage> {
   bool loading=true; String? error; List<Map<String,dynamic>> rows=[];
   List<Map<String,dynamic>> entries=[];
+  List<Map<String,dynamic>> profiles=[];
+  List<Map<String,dynamic>> tournamentMatches=[];
   bool get _isAdmin => Store.instance.current?.admin == true;
   @override void initState(){super.initState();_load();}
 
@@ -5708,9 +5710,137 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
         final e=_isAdmin ? await query.limit(1000) : await query.eq('player_id',uid).limit(300);
         entries=(e as List).map((x)=>Map<String,dynamic>.from(x as Map)).toList();
       } else { entries=[]; }
+      final p=await Store.instance.supabase.from('profiles').select('id,gamer_tag,full_name').limit(1000);
+      profiles=(p as List).map((x)=>Map<String,dynamic>.from(x as Map)).toList();
+      try { final mm=await Store.instance.supabase.from('tournament_matches').select().order('round_number').limit(2000); tournamentMatches=(mm as List).map((x)=>Map<String,dynamic>.from(x as Map)).toList(); } catch (_) { tournamentMatches=[]; }
       error=null;
     } catch(e) { error=e.toString(); }
     if(mounted)setState(()=>loading=false);
+  }
+
+  String _playerTag(String? id) {
+    final p=profiles.where((x)=>x['id']?.toString()==id).firstOrNull;
+    final tag=(p?['gamer_tag']??'').toString().trim();
+    if(tag.isNotEmpty) return tag;
+    final name=(p?['full_name']??'').toString().trim();
+    return name.isNotEmpty?name:'Player';
+  }
+
+  List<Map<String,dynamic>> _matchesFor(String id)=>tournamentMatches.where((m)=>m['tournament_id']?.toString()==id).toList();
+
+  Future<void> _generateFixtures(Map<String,dynamic> t) async {
+    if(!_isAdmin) { _toast('Only an administrator can generate fixtures.'); return; }
+    final tid=t['id'].toString();
+    try {
+      if(_matchesFor(tid).isNotEmpty) { _toast('Fixtures already exist.'); return; }
+      final approved=_entriesFor(tid).where((e)=>e['status'].toString().toLowerCase()=='approved').toList();
+      if(approved.length<2) { _toast('Approve at least two players before generating fixtures.'); return; }
+      final format=(t['format']??'knockout').toString().toLowerCase();
+      final players=approved.map((e)=>e['player_id'].toString()).toList()..sort();
+      final fixtures=<Map<String,dynamic>>[];
+      void addMatch(String stage,int round,String a,String b) {
+        if(a==b || a=='BYE' || b=='BYE') return;
+        fixtures.add({'tournament_id':tid,'stage':stage,'round_number':round,
+          'match_number':fixtures.length+1,'player_one_id':a,'player_two_id':b,'status':'scheduled'});
+      }
+      // Round-robin generator. For Groups, split the approved entrants into groups
+      // of up to four; the current table schema stores the stage/round, but not a
+      // group label, so each group's fixtures are kept in separate round blocks.
+      List<List<String>> roundRobin(List<String> entrants) {
+        final pool=List<String>.from(entrants);
+        if(pool.length.isOdd) pool.add('BYE');
+        final out=<List<String>>[];
+        for(var round=0;round<pool.length-1;round++) {
+          final pairings=<List<String>>[];
+          for(var i=0;i<pool.length~/2;i++) pairings.add([pool[i],pool[pool.length-1-i]]);
+          out.add(pairings.expand((p)=>p).toList());
+          final last=pool.removeLast(); pool.insert(1,last);
+        }
+        return out;
+      }
+      if(format=='league') {
+        final rounds=roundRobin(players);
+        for(var r=0;r<rounds.length;r++) {
+          final flat=rounds[r];
+          for(var i=0;i<flat.length;i+=2) addMatch('league',r+1,flat[i],flat[i+1]);
+        }
+      } else if(format=='groups' || format=='groups_knockout') {
+        const groupSize=4;
+        final groups=<List<String>>[];
+        for(var i=0;i<players.length;i+=groupSize) groups.add(players.sublist(i,(i+groupSize>players.length)?players.length:i+groupSize));
+        var roundOffset=0;
+        for(final group in groups) {
+          final rounds=roundRobin(group);
+          for(var r=0;r<rounds.length;r++) {
+            final flat=rounds[r];
+            for(var i=0;i<flat.length;i+=2) {
+              addMatch('groups',roundOffset+r+1,flat[i],flat[i+1]);
+            }
+          }
+          roundOffset+=rounds.length;
+        }
+        if(format=='groups_knockout') {
+          // The knockout phase is created after group results are entered and
+          // standings can be calculated. Avoid inventing qualifiers in advance.
+        }
+      } else {
+        // Seed a knockout bracket to the next power of two. First-round byes
+        // are advanced automatically by omitting BYE fixtures; the admin can
+        // create the next round after entering all first-round results.
+        final seeded=List<String>.from(players);
+        final target=1<<((seeded.length-1).bitLength);
+        while(seeded.length<target) seeded.add('BYE');
+        for(var i=0;i<seeded.length;i+=2) addMatch('knockout',1,seeded[i],seeded[i+1]);
+      }
+      if(fixtures.isEmpty) { _toast('No fixtures could be generated.'); return; }
+      await Store.instance.supabase.from('tournament_matches').insert(fixtures);
+      await _load();
+      _toast(format=='groups_knockout'
+        ? 'Group-stage fixtures generated. Generate the knockout phase after group results are complete.'
+        : 'Fixtures generated and saved.');
+    } catch(e) { _toast('Could not generate fixtures. Check the tournament SQL migration and permissions. Details: $e'); }
+  }
+
+  Future<void> _generateNextKnockoutRound(Map<String,dynamic> t) async {
+    if(!_isAdmin) { _toast('Only an administrator can generate rounds.'); return; }
+    final tid=t['id'].toString();
+    try {
+      final matches=_matchesFor(tid).where((m)=>(m['stage']??'').toString()=='knockout').toList()
+        ..sort((a,b)=>(a['round_number'] as num).compareTo(b['round_number'] as num));
+      if(matches.isEmpty) { _toast('Generate the first knockout round first.'); return; }
+      final currentRound=matches.map((m)=>(m['round_number'] as num).toInt()).reduce((a,b)=>a>b?a:b);
+      final current=matches.where((m)=>(m['round_number'] as num).toInt()==currentRound).toList();
+      if(current.any((m)=>(m['status']??'').toString()!='completed')) {
+        _toast('Enter results for every match in the current knockout round first.'); return;
+      }
+      final winners=<String>[];
+      for(final m in current) {
+        final winner=m['winner_id']?.toString();
+        if(winner==null || winner.isEmpty) { _toast('A knockout match is tied. Resolve it before progressing.'); return; }
+        winners.add(winner);
+      }
+      if(winners.length==1) { await _setTournamentStatus(t,'completed'); _toast('Champion: ${_playerTag(winners.single)}'); return; }
+      final nextRound=currentRound+1;
+      final existing=matches.any((m)=>(m['round_number'] as num).toInt()==nextRound);
+      if(existing) { _toast('The next round already exists.'); return; }
+      final fixtures=<Map<String,dynamic>>[];
+      for(var i=0;i<winners.length;i+=2) {
+        if(i+1>=winners.length) { _toast('The winner count is uneven; please review the bracket.'); return; }
+        fixtures.add({'tournament_id':tid,'stage':'knockout','round_number':nextRound,
+          'match_number':fixtures.length+1,'player_one_id':winners[i],'player_two_id':winners[i+1],'status':'scheduled'});
+      }
+      await Store.instance.supabase.from('tournament_matches').insert(fixtures);
+      await _load(); _toast('Round $nextRound fixtures generated.');
+    } catch(e) { _toast('Could not advance knockout round: $e'); }
+  }
+
+  Future<void> _enterScore(Map<String,dynamic> m) async {
+    if(!_isAdmin) { _toast('Only an administrator can enter tournament scores.'); return; }
+    final a=TextEditingController(text:'${m['player_one_score']??''}');
+    final b=TextEditingController(text:'${m['player_two_score']??''}');
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Enter match result'),content:Row(children:[Expanded(child:TextField(controller:a,keyboardType:TextInputType.number,decoration:InputDecoration(labelText:_playerTag(m['player_one_id']?.toString())))),const Padding(padding:EdgeInsets.all(8),child:Text('–')),Expanded(child:TextField(controller:b,keyboardType:TextInputType.number,decoration:InputDecoration(labelText:_playerTag(m['player_two_id']?.toString()))))]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('SAVE'))]));
+    if(ok==true) { final x=int.tryParse(a.text.trim()), y=int.tryParse(b.text.trim()); if(x==null||y==null||x<0||y<0) {_toast('Enter valid non-negative scores.');} else { try { await Store.instance.supabase.from('tournament_matches').update({'player_one_score':x,'player_two_score':y,'winner_id':x==y?null:(x>y?m['player_one_id']:m['player_two_id']),'status':'completed'}).eq('id',m['id']); await _load(); _toast('Match result saved.'); } catch(e) {_toast('Could not save result: $e');} } }
+    a.dispose(); b.dispose();
   }
 
   Future<void> _create() async {
@@ -5813,7 +5943,7 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
     await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
       title:Text('JOIN REQUESTS — ${(t['name']??'Tournament').toString()}'),
       content:SizedBox(width:420,child:requests.isEmpty?const Text('There are no pending join requests.'):SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:requests.map((entry)=>Card(child:Padding(padding:const EdgeInsets.all(8),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-        Text('Player ID: ${entry['player_id']}',style:const TextStyle(fontWeight:FontWeight.bold)),
+        Text('Player: ${_playerTag(entry['player_id']?.toString())}',style:const TextStyle(fontWeight:FontWeight.bold)),
         const SizedBox(height:6),
         Wrap(spacing:8,children:[OutlinedButton(onPressed:()=>_reviewEntry(entry,true).then((_) { if(ctx.mounted)Navigator.pop(ctx); }),child:const Text('APPROVE')),TextButton(onPressed:()=>_reviewEntry(entry,false).then((_) { if(ctx.mounted)Navigator.pop(ctx); }),child:const Text('REJECT'))]),
       ])))).toList()))),
@@ -5847,13 +5977,17 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
           final pending=_entriesFor(id).where((e)=>e['status'].toString().toLowerCase()=='registered').length;
           actions.add(OutlinedButton(onPressed:()=>_showRequests(t),child:Text('JOIN REQUESTS ($pending)')));
           if(isOpen) actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'ongoing'),child:const Text('START')));
+          if(status=='ongoing' && _matchesFor(id).isEmpty) actions.add(TextButton(onPressed:()=>_generateFixtures(t),child:const Text('GENERATE FIXTURES')));
+          if(status=='ongoing' && _matchesFor(id).any((m)=>(m['stage']??'').toString()=='knockout')) actions.add(TextButton(onPressed:()=>_generateNextKnockoutRound(t),child:const Text('NEXT KNOCKOUT ROUND')));
           if(status=='ongoing') actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'completed'),child:const Text('FINISH')));
           if(status!='completed'&&status!='cancelled') actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'cancelled'),child:const Text('CANCEL')));
         }
         final displayStatus=status.replaceAll('_',' ').toUpperCase();
         final approved=_entriesFor(id).where((e)=>e['status'].toString().toLowerCase()=='approved').length;
-        return _featureCard(_purple,Icons.account_tree,(t['name']??t['title']??'Tournament').toString(),
-          '${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()} • Players: $approved/${t['max_players']??8}',displayStatus,actions:actions);
+        final matchRows=_matchesFor(id);
+        final matchesPanel=matchRows.isEmpty?const SizedBox.shrink():Container(margin:const EdgeInsets.only(top:10),padding:const EdgeInsets.all(12),decoration:_neonBox(_cyan,radius:14),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('FIXTURES & RESULTS • ${matchRows.length}',style:const TextStyle(color:_cyan,fontWeight:FontWeight.w900)),const SizedBox(height:8),...matchRows.map((m)=>ListTile(contentPadding:EdgeInsets.zero,title:Text('${_playerTag(m['player_one_id']?.toString())}  ${m['player_one_score']??'—'} : ${m['player_two_score']??'—'}  ${_playerTag(m['player_two_id']?.toString())}',style:const TextStyle(fontWeight:FontWeight.w800)),subtitle:Text('${(m['stage']??'match').toString().toUpperCase()} • Round ${m['round_number']??1} • ${(m['status']??'scheduled').toString()}'),trailing:_isAdmin?IconButton(onPressed:()=>_enterScore(m),icon:const Icon(Icons.edit_note,color:_cyan),tooltip:'Enter score'):null))]));
+        return Column(children:[_featureCard(_purple,Icons.account_tree,(t['name']??t['title']??'Tournament').toString(),
+          '${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()} • Players: $approved/${t['max_players']??8}',displayStatus,actions:actions),matchesPanel]);
       }).toList()),
   );
 }
