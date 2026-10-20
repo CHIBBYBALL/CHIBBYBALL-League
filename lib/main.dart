@@ -2557,6 +2557,27 @@ class Store {
     }
   }
 
+  Future<String?> adminForfeitMatch({
+    required String matchId,
+    required String action,
+    required String note,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    try {
+      await supabase.rpc('admin_forfeit_match', params: {
+        'p_match_id': matchId,
+        'p_action': action,
+        'p_admin_note': note.trim().isEmpty ? null : note.trim(),
+      });
+      await loadMatchesFromSupabase();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not apply admin match decision: ${e.message}';
+    } catch (e) {
+      return 'Could not apply admin match decision: $e';
+    }
+  }
+
   Future<String?> reportMatchNoShow({
     required String matchId,
     required String reason,
@@ -3902,6 +3923,7 @@ class DashboardPage extends StatelessWidget {
           children: [
             quickAction(Icons.calendar_month, 'MY FIXTURES', 'Matches and result submissions', _cyan, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage()))),
             quickAction(Icons.menu_book, 'RULES & REGULATIONS', 'Read the current CHIBBYBALL rules', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AppRulesPage()))),
+            quickAction(Icons.rule, 'LEAGUE RULES', 'Read rules for your leagues', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueRulesPage()))),
             quickAction(Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
             quickAction(Icons.group_add, 'JOIN A LEAGUE', 'Find a competition to enter', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const JoinLeaguePage()))),
             quickAction(Icons.verified, 'CREATOR HUB', 'Explore creator leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
@@ -8019,6 +8041,120 @@ class _LeagueJoinRequestsAdminPageState extends State<LeagueJoinRequestsAdminPag
 // ADMIN
 // ============================================================
 
+class AdminForfeitMatchesPage extends StatefulWidget {
+  const AdminForfeitMatchesPage({super.key});
+  @override State<AdminForfeitMatchesPage> createState() => _AdminForfeitMatchesPageState();
+}
+
+class _AdminForfeitMatchesPageState extends State<AdminForfeitMatchesPage> {
+  final store = Store.instance;
+  String? leagueId;
+  bool loading = true;
+  String? error;
+  final Set<String> forfeitMatchIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    leagueId = store.activeLeagueId ?? (store.leagues.isNotEmpty ? store.leagues.first.id : null);
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() { loading = true; error = null; });
+    try {
+      if (leagueId != null) {
+        await store.selectLeague(leagueId!);
+        final rows = await store.supabase
+            .from('match_forfeit_audit')
+            .select('match_id')
+            .eq('league_id', leagueId!);
+        forfeitMatchIds
+          ..clear()
+          ..addAll((rows as List).map((r) => r['match_id'].toString()));
+      }
+    } catch (e) {
+      // The migration may not have been run yet; surface this so admins know.
+      error = e.toString();
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  String playerName(String id) {
+    final p = store.players.where((p) => p.id == id).firstOrNull;
+    return p?.gamerTag.isNotEmpty == true ? p!.gamerTag : (p?.name ?? 'Unknown player');
+  }
+
+  Future<void> _decide(MatchItem match, String action, String label) async {
+    final note = TextEditingController();
+    final accepted = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: Text(label),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('${playerName(match.homeId)} vs ${playerName(match.awayId)}'),
+        const SizedBox(height: 10),
+        Text(action == 'home_win' ? 'This records a 3–0 forfeit win for ${playerName(match.homeId)}.' : action == 'away_win' ? 'This records a 0–3 forfeit win for ${playerName(match.awayId)}.' : action == 'double_forfeit' ? 'This records a 0–0 double forfeit with no winner.' : 'This cancels the result and returns the fixture to Scheduled so it can be rescheduled.'),
+        const SizedBox(height: 10),
+        TextField(controller: note, maxLines: 3, decoration: const InputDecoration(labelText: 'Reason / admin note (required)', border: OutlineInputBorder())),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('CONFIRM DECISION'))],
+    ));
+    if (accepted != true) { note.dispose(); return; }
+    if (note.text.trim().isEmpty) {
+      note.dispose();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a reason before applying this decision.')));
+      return;
+    }
+    setState(() => loading = true);
+    final result = await store.adminForfeitMatch(matchId: match.id, action: action, note: note.text.trim());
+    note.dispose();
+    if (!mounted) return;
+    if (result != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result)));
+      setState(() => loading = false);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$label saved.')));
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final matches = [...store.matches]..sort((a, b) => a.round.compareTo(b.round));
+    return Scaffold(
+      appBar: AppBar(title: const Text('Admin Forfeit & Match Decisions'), actions: [IconButton(onPressed: loading ? null : _load, icon: const Icon(Icons.refresh))]),
+      body: loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(14), children: [
+        const Text('ADMIN-ONLY MATCH RESOLUTION', style: TextStyle(color: _yellow, fontWeight: FontWeight.w900, fontSize: 17)),
+        const SizedBox(height: 6),
+        const Text('Use only after reviewing the situation. Forfeit wins are recorded as confirmed league results and logged separately from screenshot-verified matches.', style: TextStyle(color: _muted)),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(value: leagueId, decoration: const InputDecoration(labelText: 'SELECT LEAGUE'), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text(l.name))).toList(), onChanged: loading ? null : (v) async { if (v == null) return; setState(() => leagueId = v); await _load(); }),
+        if (error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text('Could not load forfeit history. Make sure the admin-forfeit SQL migration has been run.\n$error', style: const TextStyle(color: Colors.redAccent))),
+        const SizedBox(height: 10),
+        if (matches.isEmpty) const Padding(padding: EdgeInsets.all(20), child: Text('No fixtures found for this league.')),
+        ...matches.map((m) {
+          final done = m.status == 'Confirmed';
+          final wasForfeit = forfeitMatchIds.contains(m.id);
+          return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('MATCH DAY ${m.round} • ${m.status.toUpperCase()}', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900, fontSize: 11)),
+            const SizedBox(height: 5),
+            Text('${playerName(m.homeId)}  vs  ${playerName(m.awayId)}', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+            if (m.homeScore != null && m.awayScore != null) Text('Current score: ${m.homeScore} – ${m.awayScore}'),
+            if (wasForfeit) const Padding(padding: EdgeInsets.only(top: 5), child: Text('⚠ ADMIN FORFEIT / DECISION LOGGED', style: TextStyle(color: _yellow, fontWeight: FontWeight.w900, fontSize: 11))),
+            if (done) const Padding(padding: EdgeInsets.only(top: 5), child: Text('Already confirmed. This screen will not overwrite a confirmed result.', style: TextStyle(color: _muted, fontSize: 12))),
+            if (!done) Wrap(spacing: 4, runSpacing: 4, children: [
+              TextButton(onPressed: loading ? null : () => _decide(m, 'home_win', 'Award home-player forfeit win'), child: const Text('HOME WINS 3–0')),
+              TextButton(onPressed: loading ? null : () => _decide(m, 'away_win', 'Award away-player forfeit win'), child: const Text('AWAY WINS 3–0')),
+              TextButton(onPressed: loading ? null : () => _decide(m, 'double_forfeit', 'Record double forfeit'), child: const Text('DOUBLE FORFEIT 0–0')),
+              TextButton(onPressed: loading ? null : () => _decide(m, 'cancel_reschedule', 'Cancel / reschedule fixture'), child: const Text('CANCEL / RESCHEDULE')),
+            ]),
+          ])));
+        }),
+      ]),
+    );
+  }
+}
+
 class NoShowReportsAdminPage extends StatefulWidget {
   const NoShowReportsAdminPage({super.key});
   @override State<NoShowReportsAdminPage> createState() => _NoShowReportsAdminPageState();
@@ -8182,6 +8318,8 @@ class _AdminPageState extends State<AdminPage> {
         const SizedBox(height: 16),
         _neonAction(context, Icons.menu_book, 'MANAGE APP RULES', 'Edit and publish the general CHIBBYBALL rules', _purple, () => open(const AppRulesPage())),
         const SizedBox(height: 9),
+        _neonAction(context, Icons.rule, 'MANAGE LEAGUE RULES', 'Publish rules for individual leagues', _blue, () => open(const LeagueRulesPage())),
+        const SizedBox(height: 9),
         _neonAction(context, Icons.emoji_events, 'MANAGE LEAGUES', 'Create and activate multiple leagues', _yellow, () => open(const LeagueManagementPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.fact_check_outlined, 'LEAGUE REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueRequestsAdminPage())),
@@ -8199,6 +8337,8 @@ class _AdminPageState extends State<AdminPage> {
         _neonAction(context, Icons.fact_check, 'RESULT REVIEW', 'Confirm or dispute submitted results', _purple, () => open(const ResultReviewPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.flag_outlined, 'NO-SHOW REPORTS', 'Review and resolve player no-show reports', _yellow, () => open(const NoShowReportsAdminPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.gavel, 'ADMIN FORFEIT & MATCH DECISIONS', 'Award a forfeit win, record double forfeits, or cancel/reschedule fixtures', _yellow, () => open(const AdminForfeitMatchesPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.timer_outlined, 'SCREENSHOT & NO-SHOW TIMERS', 'Configure response windows for each league', _purple, () => open(const ScreenshotTimerAdminPage())),
         const SizedBox(height: 9),
@@ -8306,6 +8446,116 @@ class _AppRulesPageState extends State<AppRulesPage> {
       if (_isAdmin) ...[const SizedBox(height: 14), SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _saving ? null : _saveRules, icon: const Icon(Icons.publish), label: Text(_saving ? 'PUBLISHING…' : 'SAVE & PUBLISH RULES')))],
       const SizedBox(height: 10),
       const Text('Please read these rules carefully. Updates are shared through the app and do not require a new APK.', style: TextStyle(color: _muted, height: 1.4)),
+    ]),
+  );
+}
+
+
+// ============================================================
+// INDIVIDUAL LEAGUE RULES
+// Requires chibbyball_league_rules_migration.sql.
+// Main admins and registered league managers can edit; members can read.
+// ============================================================
+class LeagueRulesPage extends StatefulWidget {
+  const LeagueRulesPage({super.key});
+  @override
+  State<LeagueRulesPage> createState() => _LeagueRulesPageState();
+}
+
+class _LeagueRulesPageState extends State<LeagueRulesPage> {
+  final TextEditingController _rules = TextEditingController();
+  String? _selectedLeagueId;
+  bool _loading = true;
+  bool _saving = false;
+  bool _canEdit = false;
+  String? _error;
+  DateTime? _updatedAt;
+  List<LeagueInfo> _visibleLeagues = [];
+  final Store _store = Store.instance;
+
+  @override
+  void initState() { super.initState(); _init(); }
+  @override
+  void dispose() { _rules.dispose(); super.dispose(); }
+
+  Future<void> _init() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      await _store.refreshLeagues();
+      final me = _store.current;
+      if (me == null) throw Exception('Please sign in again.');
+      if (me.admin) {
+        _visibleLeagues = List<LeagueInfo>.from(_store.leagues);
+      } else {
+        final rows = await _store.supabase.from('league_members').select('league_id').eq('player_id', me.id);
+        final ids = (rows as List).map((r) => r['league_id'].toString()).toSet();
+        final managerRows = await _store.supabase.from('league_managers').select('league_id').eq('player_id', me.id);
+        ids.addAll((managerRows as List).map((r) => r['league_id'].toString()));
+        _visibleLeagues = _store.leagues.where((l) => ids.contains(l.id)).toList();
+      }
+      if (_visibleLeagues.isNotEmpty) {
+        _selectedLeagueId ??= _visibleLeagues.first.id;
+        if (!_visibleLeagues.any((l) => l.id == _selectedLeagueId)) _selectedLeagueId = _visibleLeagues.first.id;
+      }
+      await _loadSelectedRules();
+    } catch (e) { _error = 'Could not load league rules: $e'; }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _loadSelectedRules() async {
+    final id = _selectedLeagueId;
+    final me = _store.current;
+    if (id == null || me == null) { _rules.clear(); _canEdit = false; return; }
+    setState(() { _loading = true; _error = null; });
+    try {
+      _canEdit = me.admin;
+      if (!_canEdit) {
+        final manager = await _store.supabase.from('league_managers').select('player_id').eq('league_id', id).eq('player_id', me.id).maybeSingle();
+        _canEdit = manager != null;
+      }
+      final row = await _store.supabase.from('chibbyball_league_rules').select('rules_text, updated_at').eq('league_id', id).maybeSingle();
+      _rules.text = row?['rules_text']?.toString() ?? '';
+      _updatedAt = row?['updated_at'] == null ? null : DateTime.tryParse(row!['updated_at'].toString());
+    } catch (e) { _error = 'Could not load rules. Confirm the league-rules SQL migration has been run. Details: $e'; }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _saveRules() async {
+    final id = _selectedLeagueId;
+    final me = _store.current;
+    if (!_canEdit || id == null || me == null) return;
+    if (_rules.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter the league rules before publishing.')));
+      return;
+    }
+    setState(() { _saving = true; _error = null; });
+    try {
+      await _store.supabase.from('chibbyball_league_rules').upsert({
+        'league_id': id, 'rules_text': _rules.text.trim(),
+        'updated_by': me.id, 'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      await _loadSelectedRules();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('League rules published successfully.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not publish league rules: $e')));
+    } finally { if (mounted) setState(() => _saving = false); }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(_canEdit ? 'Manage League Rules' : 'League Rules'), actions: [IconButton(onPressed: _loading ? null : _init, icon: const Icon(Icons.refresh))]),
+    body: _loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(16), children: [
+      Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_blue, radius: 18), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('INDIVIDUAL LEAGUE RULES', style: TextStyle(color: _cyan, fontWeight: FontWeight.w900, fontSize: 16)), SizedBox(height: 8), Text('Each league has separate rules. Changes are published to the app without requiring a new APK.', style: TextStyle(color: _muted))])),
+      const SizedBox(height: 14),
+      if (_visibleLeagues.isEmpty) const Padding(padding: EdgeInsets.all(16), child: Text('No leagues are available for your account yet.'))
+      else ...[
+        DropdownButtonFormField<String>(value: _selectedLeagueId, isExpanded: true, decoration: const InputDecoration(labelText: 'SELECT LEAGUE'), items: _visibleLeagues.map((l) => DropdownMenuItem(value: l.id, child: Text(l.name, overflow: TextOverflow.ellipsis))).toList(), onChanged: _loading ? null : (v) async { setState(() => _selectedLeagueId = v); await _loadSelectedRules(); }),
+        const SizedBox(height: 12),
+        TextField(controller: _rules, readOnly: !_canEdit, minLines: 10, maxLines: null, textCapitalization: TextCapitalization.sentences, decoration: InputDecoration(labelText: _canEdit ? 'Edit league rules' : 'Current league rules', alignLabelWithHint: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(16))),),
+        if (_updatedAt != null) ...[const SizedBox(height: 8), Text('Last published: ${_updatedAt!.toLocal()}', style: const TextStyle(color: _muted, fontSize: 12))],
+        if (_canEdit) ...[const SizedBox(height: 14), SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _saving ? null : _saveRules, icon: const Icon(Icons.publish), label: Text(_saving ? 'PUBLISHING…' : 'SAVE & PUBLISH LEAGUE RULES')))],
+      ],
+      if (_error != null) ...[const SizedBox(height: 12), Text(_error!, style: const TextStyle(color: Colors.redAccent))],
     ]),
   );
 }
