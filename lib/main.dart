@@ -673,6 +673,9 @@ class Store {
   final Map<String, int> pointAdjustments = {};
   final Map<String, double> fineTotals = {};
   final Map<String, bool> suspendedPlayers = {};
+  // League-only replacement map: historical results keep their real player IDs,
+  // while standings attribute the outgoing player's league record to the replacement.
+  final Map<String, Map<String, String>> leagueReplacementMap = {};
   final List<CreatorBadge> creatorBadges = [];
   bool matchDayDateControlsEnabled = true;
 
@@ -881,6 +884,41 @@ class Store {
     }
   }
 
+  Future<String?> replaceLeaguePlayer({
+    required String leagueId,
+    required String outgoingPlayerId,
+    required String replacementPlayerId,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    if (outgoingPlayerId == replacementPlayerId) return 'Choose a different replacement player.';
+    final outgoing = findPlayer(outgoingPlayerId);
+    final replacement = findPlayer(replacementPlayerId);
+    if (outgoing == null || replacement == null) return 'Could not find both players.';
+    if (replacement.admin) return 'An admin account cannot replace a league player.';
+    if (!replacement.profileComplete) {
+      return 'The replacement player must complete their phone, country, country code and WhatsApp profile first.';
+    }
+    try {
+      await supabase.rpc('admin_replace_league_player', params: {
+        'p_league_id': leagueId,
+        'p_outgoing_player_id': outgoingPlayerId,
+        'p_replacement_player_id': replacementPlayerId,
+      });
+      await refreshLeagues();
+      if (activeLeagueId != leagueId) {
+        activeLeagueId = leagueId;
+        activeLeagueName = leagues.where((l) => l.id == leagueId).firstOrNull?.name;
+      }
+      await loadMatchesFromSupabase();
+      activeLeagueMemberIds = (await leagueMemberIds(leagueId)).toSet();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not replace player: ${e.message}';
+    } catch (e) {
+      return 'Could not replace player: $e';
+    }
+  }
+
   Future<String?> disregisterPlayerFromAllLeagues(String playerId) async {
     if (Store.instance.current?.admin != true) return 'Admin access required.';
     try {
@@ -984,6 +1022,24 @@ class Store {
     matches
       ..clear()
       ..addAll(loaded);
+    // Load league-only replacement links separately from real match history.
+    // If this migration has not been applied yet, normal app loading continues.
+    try {
+      final replacementRows = await supabase
+          .from('league_player_replacements')
+          .select('outgoing_player_id, replacement_player_id')
+          .eq('league_id', leagueId);
+      final mapping = <String, String>{};
+      for (final item in (replacementRows as List)) {
+        final row = Map<String, dynamic>.from(item as Map);
+        final outgoing = row['outgoing_player_id']?.toString();
+        final replacement = row['replacement_player_id']?.toString();
+        if (outgoing != null && replacement != null) mapping[outgoing] = replacement;
+      }
+      leagueReplacementMap[leagueId] = mapping;
+    } catch (e) {
+      debugPrint('League replacement map not available: $e');
+    }
     await loadDisciplineForLeague(leagueId);
 
     await save();
@@ -2630,8 +2686,22 @@ class Store {
       participantIds.add(match.awayId);
     }
 
+    final replacementMap = leagueReplacementMap[activeLeagueId] ?? const <String, String>{};
+    String standingsPlayerId(String id) {
+      var resolved = id;
+      final visited = <String>{};
+      while (replacementMap.containsKey(resolved) && visited.add(resolved)) {
+        resolved = replacementMap[resolved]!;
+      }
+      return resolved;
+    }
+    final replacedOutIds = replacementMap.keys.toSet();
+    for (final match in matches) {
+      participantIds.add(standingsPlayerId(match.homeId));
+      participantIds.add(standingsPlayerId(match.awayId));
+    }
     for (final player in players.where(
-      (p) => !p.admin && participantIds.contains(p.id),
+      (p) => !p.admin && participantIds.contains(p.id) && !replacedOutIds.contains(p.id),
     )) {
       table[player.id] = {
         'played': 0,
@@ -2646,8 +2716,11 @@ class Store {
     }
 
     for (final match in confirmedMatches()) {
-      final home = table[match.homeId];
-      final away = table[match.awayId];
+      final standingsHomeId = standingsPlayerId(match.homeId);
+      final standingsAwayId = standingsPlayerId(match.awayId);
+      if (standingsHomeId == standingsAwayId) continue;
+      final home = table[standingsHomeId];
+      final away = table[standingsAwayId];
 
       if (home == null || away == null) continue;
 
@@ -2680,8 +2753,11 @@ class Store {
 
     for (final entry in table.entries) {
       entry.value['gd'] = entry.value['gf']! - entry.value['ga']!;
-      entry.value['points'] =
-          entry.value['points']! + (pointAdjustments[entry.key] ?? 0);
+      var adjustment = 0;
+      for (final item in pointAdjustments.entries) {
+        if (standingsPlayerId(item.key) == entry.key) adjustment += item.value;
+      }
+      entry.value['points'] = entry.value['points']! + adjustment;
     }
 
     return table;
@@ -7258,6 +7334,59 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
     if (mounted) { setState(() => loading = false); ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? (shouldAdd ? '${player.gamerTag} added to league.' : '${player.gamerTag} removed from league.')))); }
   }
 
+  Future<void> _replacePlayer(Player outgoing) async {
+    final leagueId = selectedLeagueId;
+    if (leagueId == null || !memberIds.contains(outgoing.id)) return;
+    final candidates = store.players.where((p) =>
+      !p.admin && p.id != outgoing.id && !memberIds.contains(p.id) && p.profileComplete
+    ).toList();
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No eligible replacement players found. A replacement must not already be in this league and must have a complete profile.')));
+      return;
+    }
+    String? replacementId;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (dialogContext, setDialogState) => AlertDialog(
+        title: const Text('REPLACE PLAYER IN THIS LEAGUE'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Outgoing player: ${outgoing.gamerTag}'),
+          const SizedBox(height: 10),
+          const Text('The replacement inherits the league-table record only. Personal histories and global statistics remain attached to the original players.'),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: replacementId,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Replacement player'),
+            items: candidates.map((p) => DropdownMenuItem(value: p.id, child: Text('${p.gamerTag} • ${p.whatsappNumber}'))).toList(),
+            onChanged: (value) => setDialogState(() => replacementId = value),
+          ),
+          const SizedBox(height: 8),
+          const Text('Upcoming scheduled fixtures will be reassigned. Historical match records remain unchanged.', style: TextStyle(fontSize: 12)),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('CANCEL')),
+          FilledButton(onPressed: replacementId == null ? null : () => Navigator.pop(dialogContext, true), child: const Text('REVIEW & REPLACE')),
+        ],
+      )),
+    );
+    if (confirmed != true || replacementId == null) return;
+    final replacement = store.findPlayer(replacementId!);
+    if (replacement == null) return;
+    final finalConfirm = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
+      title: const Text('CONFIRM PLAYER REPLACEMENT'),
+      content: Text('${outgoing.gamerTag} will leave this league and ${replacement.gamerTag} will take over the league position and eligible upcoming fixtures. Their personal/global statistics will not be transferred. Historical matches remain linked to the players who played them. This action cannot be automatically undone.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('GO BACK')), FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('CONFIRM REPLACEMENT'))],
+    ));
+    if (finalConfirm != true) return;
+    setState(() => loading = true);
+    final error = await store.replaceLeaguePlayer(leagueId: leagueId, outgoingPlayerId: outgoing.id, replacementPlayerId: replacement.id);
+    if (mounted) {
+      await _load();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? '${outgoing.gamerTag} replaced by ${replacement.gamerTag} in this league.')));
+    }
+  }
+
   Future<void> _disregister(Player player) async {
     final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(title: const Text('Disregister player?'), content: Text('${player.gamerTag} will be removed from every league. The account itself will not be deleted.'), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('DISREGISTER'))]));
     if (ok != true) return;
@@ -7439,6 +7568,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                 if (value == 'unsuspend') _disciplineDialog(player, action: 'unsuspend');
                 if (value == 'deduct') _disciplineDialog(player, action: 'deduct');
                 if (value == 'fine') _disciplineDialog(player, action: 'fine');
+                if (value == 'replace') _replacePlayer(player);
                 if (value == 'delete') _deletePlayer(player);
               },
               itemBuilder: (_) => const [
@@ -7446,6 +7576,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                 PopupMenuItem(value: 'unsuspend', child: Text('Unsuspend player')),
                 PopupMenuItem(value: 'deduct', child: Text('Deduct points')),
                 PopupMenuItem(value: 'fine', child: Text('Fine player')),
+                PopupMenuItem(value: 'replace', child: Text('Replace in selected league')),
                 PopupMenuDivider(),
                 PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues')),
                 PopupMenuItem(value: 'delete', child: Text('DELETE PLAYER ACCOUNT')),
