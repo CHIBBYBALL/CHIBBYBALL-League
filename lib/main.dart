@@ -5396,7 +5396,27 @@ class _RivalChallengesPageState extends State<RivalChallengesPage> with _Feature
   @override void initState(){super.initState();_load();}
   Future<void> _load() async { if(mounted)setState(()=>loading=true); try { final id=_userId; if(id==null) throw Exception('Please sign in again.'); final a=await Store.instance.supabase.from('rival_challenges').select().order('created_at',ascending:false).limit(200); rows=(a as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList(); profiles=await _loadProfiles(); error=null; } catch(e){error=e.toString();} if(mounted)setState(()=>loading=false); }
   Future<void> _sendChallenge() async { if(profiles.isEmpty){_toast('No other players were found.');return;} String? selected; final msg=TextEditingController(text:'Let’s play an eFootball match!'); final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(title:const Text('Challenge a rival'),content:Column(mainAxisSize:MainAxisSize.min,children:[DropdownButtonFormField<String>(isExpanded:true,decoration:const InputDecoration(labelText:'Choose player'),items:profiles.map((p)=>DropdownMenuItem(value:p['id'].toString(),child:Text(_playerName(p),overflow:TextOverflow.ellipsis))).toList(),onChanged:(v)=>setD(()=>selected=v)),const SizedBox(height:10),TextField(controller:msg,maxLines:2,maxLength:160,decoration:const InputDecoration(labelText:'Message (optional)',border:OutlineInputBorder()))]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('SEND'))]))); if(ok!=true||selected==null)return; try { await Store.instance.supabase.from('rival_challenges').insert({'challenger_id':_userId,'opponent_id':selected,'message':msg.text.trim()}); _toast('Challenge sent.'); await _load(); } catch(e){_toast('Could not send challenge: $e');} finally {msg.dispose();} }
-  Future<void> _status(Map<String,dynamic> r,String status) async { try { await Store.instance.supabase.from('rival_challenges').update({'status':status,'updated_at':DateTime.now().toUtc().toIso8601String()}).eq('id',r['id']); await _load(); } catch(e){_toast('Could not update challenge: $e');} }
+  Future<void> _status(Map<String,dynamic> r,String status) async {
+    final uid = _userId;
+    if (uid == null) { _toast('Please sign in again.'); return; }
+    final incoming = r['opponent_id']?.toString() == uid;
+    if (!incoming || (r['status'] ?? 'pending').toString().toLowerCase() != 'pending') {
+      _toast('Only the recipient can respond to a pending challenge.');
+      return;
+    }
+    try {
+      final updated = await Store.instance.supabase.from('rival_challenges')
+          .update({'status': status, 'updated_at': DateTime.now().toUtc().toIso8601String()})
+          .eq('id', r['id']).eq('opponent_id', uid).ilike('status', 'pending').select('id');
+      if ((updated as List).isEmpty) {
+        _toast('Challenge was not updated. Check the database update permissions, then refresh.');
+        await _load();
+        return;
+      }
+      _toast(status == 'accepted' ? 'Challenge accepted.' : 'Challenge declined.');
+      await _load();
+    } catch (e) { _toast('Could not update challenge: $e'); }
+  }
   @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('RIVAL CHALLENGES'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),floatingActionButton:FloatingActionButton.extended(onPressed:_sendChallenge,icon:const Icon(Icons.flash_on),label:const Text('CHALLENGE')),body:loading?const Center(child:CircularProgressIndicator()):error!=null?Center(child:Text('Could not load challenges.\n$error',textAlign:TextAlign.center)):rows.isEmpty?const _FeatureEmpty(icon:Icons.flash_on,title:'No challenges yet',message:'Send your first challenge to another CHIBBYBALL player.'):ListView(padding:const EdgeInsets.all(14),children:rows.map((r){final incoming=r['opponent_id']==_userId; final person=profiles.where((p)=>p['id']==(incoming?r['challenger_id']:r['opponent_id'])).firstOrNull; final status=(r['status']??'pending').toString(); return _featureCard(_yellow,Icons.flash_on,_playerName(person??{'gamer_tag':incoming?'Your challenger':'Opponent'}), (r['message']??'eFootball challenge').toString(),status, actions: incoming&&status=='pending'?[TextButton(onPressed:()=>_status(r,'declined'),child:const Text('DECLINE')),FilledButton(onPressed:()=>_status(r,'accepted'),child:const Text('ACCEPT'))]:status=='accepted'?[TextButton(onPressed:()=>_status(r,'completed'),child:const Text('MARK COMPLETED'))]:[]);}).toList()));
 }
 
@@ -5570,7 +5590,26 @@ class _PlayerFriendsPageState extends State<PlayerFriendsPage> with _FeaturePage
   @override void dispose(){search.dispose();super.dispose();}
   Future<void> _load() async {if(mounted)setState(()=>loading=true);try{final q=await Store.instance.supabase.from('player_friends').select().order('created_at',ascending:false).limit(300);rows=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();profiles=await _loadProfiles();error=null;}catch(e){error=e.toString();}if(mounted)setState(()=>loading=false);}
   Future<void> _send(Map<String,dynamic> p) async {try{final existing=rows.where((r)=>(r['sender_id']==_userId&&r['receiver_id']==p['id'])||(r['receiver_id']==_userId&&r['sender_id']==p['id'])).firstOrNull;if(existing!=null){_toast('A friend request or friendship already exists with this player.');return;}await Store.instance.supabase.from('player_friends').insert({'sender_id':_userId,'receiver_id':p['id'],'status':'pending'});_toast('Friend request sent to ${_playerName(p)}.');await _load();}catch(e){_toast('Could not send friend request: $e');}}
-  Future<void> _status(Map<String,dynamic> r,String status) async {try{await Store.instance.supabase.from('player_friends').update({'status':status,'updated_at':DateTime.now().toUtc().toIso8601String()}).eq('id',r['id']);await _load();}catch(e){_toast('Could not update request: $e');}}
+  Future<void> _status(Map<String,dynamic> r,String status) async {
+    final uid = _userId;
+    if (uid == null) { _toast('Please sign in again.'); return; }
+    if (r['receiver_id']?.toString() != uid || (r['status'] ?? 'pending').toString().toLowerCase() != 'pending') {
+      _toast('Only the recipient can respond to a pending friend request.');
+      return;
+    }
+    try {
+      final updated = await Store.instance.supabase.from('player_friends')
+          .update({'status': status, 'updated_at': DateTime.now().toUtc().toIso8601String()})
+          .eq('id', r['id']).eq('receiver_id', uid).ilike('status', 'pending').select('id');
+      if ((updated as List).isEmpty) {
+        _toast('Request was not updated. Check the database update permissions, then refresh.');
+        await _load();
+        return;
+      }
+      _toast(status == 'accepted' ? 'Friend request accepted.' : 'Friend request declined.');
+      await _load();
+    } catch (e) { _toast('Could not update friend request: $e'); }
+  }
   @override Widget build(BuildContext context){final filtered=profiles.where((p)=>_playerName(p).toLowerCase().contains(search.text.trim().toLowerCase())).take(80).toList();return Scaffold(appBar:AppBar(title:const Text('FRIENDS SYSTEM'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),body:loading?const Center(child:CircularProgressIndicator()):error!=null?Center(child:Text('Could not load friends.\n$error',textAlign:TextAlign.center)):ListView(padding:const EdgeInsets.all(14),children:[TextField(controller:search,onChanged:(_)=>setState((){}),decoration:const InputDecoration(prefixIcon:Icon(Icons.search),labelText:'Find a player by gamer tag or name',border:OutlineInputBorder())),const SizedBox(height:16),const Text('PLAYER DIRECTORY',style:TextStyle(fontWeight:FontWeight.w900,color:_cyan)),const SizedBox(height:8),...filtered.map((p)=>Card(child:ListTile(leading:const CircleAvatar(child:Icon(Icons.person)),title:Text(_playerName(p)),trailing:OutlinedButton(onPressed:()=>_send(p),child:const Text('ADD FRIEND'))))),const SizedBox(height:16),const Text('FRIEND REQUESTS & FRIENDS',style:TextStyle(fontWeight:FontWeight.w900,color:_cyan)),const SizedBox(height:8),if(rows.isEmpty)const Text('No friend requests yet.',style:TextStyle(color:_muted)) else ...rows.map((r){final incoming=r['receiver_id']==_userId;final person=profiles.where((p)=>p['id']==(incoming?r['sender_id']:r['receiver_id'])).firstOrNull;final status=(r['status']??'pending').toString();final actions=<Widget>[];if(incoming&&status=='pending'){actions.add(TextButton(onPressed:()=>_status(r,'declined'),child:const Text('DECLINE')));actions.add(FilledButton(onPressed:()=>_status(r,'accepted'),child:const Text('ACCEPT')));}else if(!incoming&&status=='pending'){actions.add(const Chip(label:Text('SENT')));}return _featureCard(const Color(0xFF20E070),Icons.people,_playerName(person??{'gamer_tag':'CHIBBYBALL player'}),incoming?'Friend request received':'Friend request sent',status,actions:actions);})]));}
 }
 
