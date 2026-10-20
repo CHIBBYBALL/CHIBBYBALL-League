@@ -5692,125 +5692,169 @@ class _CommunityActivityPageState extends State<CommunityActivityPage> with _Fea
 
 class CommunityTournamentsPage extends StatefulWidget { const CommunityTournamentsPage({super.key}); @override State<CommunityTournamentsPage> createState()=>_CommunityTournamentsPageState(); }
 class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> with _FeaturePageHelpers<CommunityTournamentsPage> {
-  bool loading=true; String? error; List<Map<String,dynamic>> rows=[]; Set<String> joined={};
+  bool loading=true; String? error; List<Map<String,dynamic>> rows=[];
+  List<Map<String,dynamic>> entries=[];
   bool get _isAdmin => Store.instance.current?.admin == true;
   @override void initState(){super.initState();_load();}
-  Future<void> _load() async {if(mounted)setState(()=>loading=true);try{final q=await Store.instance.supabase.from('community_tournaments').select().order('created_at',ascending:false).limit(150);rows=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();final id=_userId;if(id!=null){final e=await Store.instance.supabase.from('tournament_entries').select('tournament_id,status').eq('player_id',id).limit(300);joined=(e as List).map((x)=>Map<String,dynamic>.from(x as Map)['tournament_id'].toString()).toSet();}error=null;}catch(e){error=e.toString();}if(mounted)setState(()=>loading=false);}
+
+  Future<void> _load() async {
+    if(mounted)setState(()=>loading=true);
+    try {
+      final q=await Store.instance.supabase.from('community_tournaments').select().order('created_at',ascending:false).limit(150);
+      rows=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();
+      final uid=_userId;
+      if (uid != null) {
+        final query=Store.instance.supabase.from('tournament_entries').select('id,tournament_id,player_id,status');
+        final e=_isAdmin ? await query.limit(1000) : await query.eq('player_id',uid).limit(300);
+        entries=(e as List).map((x)=>Map<String,dynamic>.from(x as Map)).toList();
+      } else { entries=[]; }
+      error=null;
+    } catch(e) { error=e.toString(); }
+    if(mounted)setState(()=>loading=false);
+  }
+
   Future<void> _create() async {
     if (!_isAdmin) { _toast('Only an administrator can create tournaments.'); return; }
-    final name = TextEditingController();
-    final desc = TextEditingController();
-    final max = TextEditingController(text: '8');
-    String format = 'knockout';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: const Text('Create tournament'),
-          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: name, maxLength: 80, decoration: const InputDecoration(labelText: 'Tournament name', border: OutlineInputBorder())),
-            const SizedBox(height: 10),
-            TextField(controller: desc, maxLines: 3, maxLength: 300, decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder())),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(value: format, decoration: const InputDecoration(labelText: 'Format'), items: const [
-              DropdownMenuItem(value: 'knockout', child: Text('Knockout')),
-              DropdownMenuItem(value: 'groups', child: Text('Groups')),
-              DropdownMenuItem(value: 'groups_knockout', child: Text('Groups + knockout')),
-              DropdownMenuItem(value: 'league', child: Text('League')),
-            ], onChanged: (v) => setD(() => format = v ?? 'knockout')),
-            TextField(controller: max, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Maximum players (2–256)', border: OutlineInputBorder())),
-          ])),
-          actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('CREATE'))],
-        ),
-      ),
-    );
-    if (ok == true) {
-      final count = int.tryParse(max.text.trim()) ?? 8;
-      if (name.text.trim().length < 3 || count < 2 || count > 256) {
-        _toast('Use a name of at least 3 characters and a player limit from 2 to 256.');
-      } else {
+    final name=TextEditingController(); final desc=TextEditingController(); final max=TextEditingController(text:'8');
+    String format='knockout';
+    final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(
+      title:const Text('Create tournament'),
+      content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+        TextField(controller:name,maxLength:80,decoration:const InputDecoration(labelText:'Tournament name',border:OutlineInputBorder())),
+        const SizedBox(height:10),
+        TextField(controller:desc,maxLines:3,maxLength:300,decoration:const InputDecoration(labelText:'Description',border:OutlineInputBorder())),
+        const SizedBox(height:10),
+        DropdownButtonFormField<String>(value:format,decoration:const InputDecoration(labelText:'Format'),items:const [
+          DropdownMenuItem(value:'knockout',child:Text('Knockout')),
+          DropdownMenuItem(value:'groups',child:Text('Groups')),
+          DropdownMenuItem(value:'groups_knockout',child:Text('Groups + knockout')),
+          DropdownMenuItem(value:'league',child:Text('League')),
+        ],onChanged:(v)=>setD(()=>format=v??'knockout')),
+        TextField(controller:max,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Maximum players (2–256)',border:OutlineInputBorder())),
+      ])),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('CREATE'))],
+    )));
+    if(ok==true) {
+      final count=int.tryParse(max.text.trim())??8;
+      if(name.text.trim().length<3||count<2||count>256) { _toast('Use a name of at least 3 characters and a player limit from 2 to 256.'); }
+      else {
         try {
           await Store.instance.supabase.from('community_tournaments').insert({
-            'created_by': _userId,
-            'name': name.text.trim(),
-            'description': desc.text.trim(),
-            'format': format,
-            'max_players': count,
-            // Set this explicitly so the database default cannot leave a new
-            // tournament in an unexpected status such as UPCOMING.
-            'status': 'registration',
+            'created_by':_userId,'name':name.text.trim(),'description':desc.text.trim(),
+            'format':format,'max_players':count,'status':'registration',
+            // The table also requires tournament_type; keep it aligned with the selected format.
+            'tournament_type':format,
           });
-          _toast('Tournament created.');
-          await _load();
-        } catch (e) {
-          _toast('Could not create tournament: $e');
-        }
+          _toast('Tournament created.'); await _load();
+        } catch(e) { _toast('Could not create tournament: $e'); }
       }
     }
     name.dispose(); desc.dispose(); max.dispose();
   }
 
-  String _tournamentStatus(Map<String, dynamic> t) => (t['status'] ?? 'registration').toString().trim().toLowerCase();
+  String _tournamentStatus(Map<String,dynamic> t)=>(t['status']??'registration').toString().trim().toLowerCase();
+  List<Map<String,dynamic>> _entriesFor(String tournamentId) => entries.where((e)=>e['tournament_id'].toString()==tournamentId).toList();
+  Map<String,dynamic>? _myEntry(String tournamentId) {
+    final uid=_userId; if(uid==null)return null;
+    for(final e in entries) { if(e['tournament_id'].toString()==tournamentId && e['player_id'].toString()==uid)return e; }
+    return null;
+  }
 
-  Future<void> _join(Map<String, dynamic> t) async {
+  Future<void> _join(Map<String,dynamic> t) async {
     try {
-      final status = _tournamentStatus(t);
-      if (status != 'registration' && status != 'upcoming') {
-        _toast('Registration is closed for this tournament.');
-        return;
-      }
-      final playerId = _userId;
-      if (playerId == null) { _toast('Please sign in before joining a tournament.'); return; }
-      final countResult = await Store.instance.supabase.from('tournament_entries').select('id').eq('tournament_id', t['id']);
-      final count = (countResult as List).length;
-      final maxPlayers = (t['max_players'] as num?)?.toInt() ?? 8;
-      if (count >= maxPlayers) { _toast('This tournament is full.'); return; }
-      await Store.instance.supabase.from('tournament_entries').insert({'tournament_id': t['id'], 'player_id': playerId});
-      _toast('You are registered for this tournament.');
-      await _load();
-    } catch (e) {
-      _toast(e.toString().toLowerCase().contains('duplicate') || e.toString().toLowerCase().contains('unique')
-          ? 'You are already registered.' : 'Could not join tournament: $e');
+      final status=_tournamentStatus(t);
+      if(status!='registration'&&status!='upcoming') { _toast('Registration is closed for this tournament.'); return; }
+      final playerId=_userId;
+      if(playerId==null) { _toast('Please sign in before requesting to join.'); return; }
+      final existing=_myEntry(t['id'].toString());
+      if(existing!=null) { _toast('You already have a request or entry for this tournament.'); return; }
+      final currentResult=await Store.instance.supabase.from('tournament_entries')
+          .select('status').eq('tournament_id',t['id']);
+      final currentEntries=(currentResult as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();
+      final maxPlayers=(t['max_players'] as num?)?.toInt()??8;
+      final activeCount=currentEntries.where((e) {
+        final entryStatus=e['status'].toString().toLowerCase();
+        return entryStatus=='approved'||entryStatus=='registered';
+      }).length;
+      if(activeCount>=maxPlayers) { _toast('This tournament has reached its entry limit, including pending requests.'); return; }
+      await Store.instance.supabase.from('tournament_entries').insert({'tournament_id':t['id'],'player_id':playerId,'status':'registered'});
+      _toast('Join request sent. The administrator must approve it.'); await _load();
+    } catch(e) {
+      _toast(e.toString().toLowerCase().contains('duplicate')||e.toString().toLowerCase().contains('unique')
+        ? 'You already requested to join this tournament.' : 'Could not send tournament request: $e');
     }
   }
 
-  Future<void> _setTournamentStatus(Map<String, dynamic> t, String status) async {
-    if (!_isAdmin) { _toast('Only an administrator can manage tournaments.'); return; }
+  Future<void> _reviewEntry(Map<String,dynamic> entry, bool approve) async {
+    if(!_isAdmin) { _toast('Only an administrator can review tournament requests.'); return; }
     try {
-      await Store.instance.supabase.from('community_tournaments').update({'status': status}).eq('id', t['id']);
-      _toast(status == 'in_progress' ? 'Tournament started.' : 'Tournament status updated.');
+      final id=entry['id'];
+      if(approve) {
+        final tournamentId=entry['tournament_id'].toString();
+        Map<String,dynamic>? tournament;
+        for(final item in rows) { if(item['id'].toString()==tournamentId) { tournament=item; break; } }
+        final maxPlayers=(tournament?['max_players'] as num?)?.toInt()??8;
+        final approved=_entriesFor(tournamentId).where((e)=>e['status'].toString().toLowerCase()=='approved').length;
+        if(approved>=maxPlayers) { _toast('The tournament is full. Reject or remove an entry before approving another player.'); return; }
+        await Store.instance.supabase.from('tournament_entries').update({'status':'approved'}).eq('id',id).eq('status','registered');
+        _toast('Tournament request approved.');
+      } else {
+        // Rejection is represented by deleting the pending request; no new database status is needed.
+        await Store.instance.supabase.from('tournament_entries').delete().eq('id',id).eq('status','registered');
+        _toast('Tournament request rejected.');
+      }
       await _load();
-    } catch (e) {
-      _toast('Could not update tournament: $e');
-    }
+    } catch(e) { _toast('Could not review tournament request: $e'); }
+  }
+
+  Future<void> _showRequests(Map<String,dynamic> t) async {
+    final tournamentId=t['id'].toString();
+    final requests=_entriesFor(tournamentId).where((e)=>e['status'].toString().toLowerCase()=='registered').toList();
+    await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+      title:Text('JOIN REQUESTS — ${(t['name']??'Tournament').toString()}'),
+      content:SizedBox(width:420,child:requests.isEmpty?const Text('There are no pending join requests.'):SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:requests.map((entry)=>Card(child:Padding(padding:const EdgeInsets.all(8),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        Text('Player ID: ${entry['player_id']}',style:const TextStyle(fontWeight:FontWeight.bold)),
+        const SizedBox(height:6),
+        Wrap(spacing:8,children:[OutlinedButton(onPressed:()=>_reviewEntry(entry,true).then((_) { if(ctx.mounted)Navigator.pop(ctx); }),child:const Text('APPROVE')),TextButton(onPressed:()=>_reviewEntry(entry,false).then((_) { if(ctx.mounted)Navigator.pop(ctx); }),child:const Text('REJECT'))]),
+      ])))).toList()))),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('CLOSE'))],
+    ));
+  }
+
+  Future<void> _setTournamentStatus(Map<String,dynamic> t,String status) async {
+    if(!_isAdmin) { _toast('Only an administrator can manage tournaments.'); return; }
+    try {
+      await Store.instance.supabase.from('community_tournaments').update({'status':status}).eq('id',t['id']);
+      _toast(status=='ongoing'?'Tournament started.':'Tournament status updated.'); await _load();
+    } catch(e) { _toast('Could not update tournament: $e'); }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('TOURNAMENT MODE'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
-    floatingActionButton: _isAdmin ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('CREATE')) : null,
-    body: loading ? const Center(child: CircularProgressIndicator())
-      : error != null ? Center(child: Text('Could not load tournaments.\n$error', textAlign: TextAlign.center))
-      : rows.isEmpty ? const _FeatureEmpty(icon: Icons.account_tree, title: 'No tournaments yet', message: 'The administrator will publish community tournaments here.')
-      : ListView(padding: const EdgeInsets.all(14), children: rows.map((t) {
-          final status = _tournamentStatus(t);
-          final id = t['id'].toString();
-          final isOpen = status == 'registration' || status == 'upcoming';
-          final canJoin = isOpen && !joined.contains(id);
-          final actions = <Widget>[];
-          if (canJoin) {
-            actions.add(FilledButton(onPressed: () => _join(t), child: const Text('JOIN TOURNAMENT')));
-          } else if (joined.contains(id)) {
-            actions.add(const Chip(label: Text('REGISTERED')));
-          }
-          // Treat legacy/capitalized UPCOMING rows as open, too.
-          if (_isAdmin && isOpen) actions.add(TextButton(onPressed: () => _setTournamentStatus(t, 'in_progress'), child: const Text('START')));
-          if (_isAdmin && status == 'in_progress') actions.add(TextButton(onPressed: () => _setTournamentStatus(t, 'completed'), child: const Text('FINISH')));
-          if (_isAdmin && status != 'completed' && status != 'cancelled') actions.add(TextButton(onPressed: () => _setTournamentStatus(t, 'cancelled'), child: const Text('CANCEL')));
-          final displayStatus = status.replaceAll('_', ' ').toUpperCase();
-          return _featureCard(_purple, Icons.account_tree, (t['name'] ?? 'Tournament').toString(),
-            '${t['description'] ?? ''}\nFormat: ${(t['format'] ?? 'knockout').toString()}  •  Max players: ${t['max_players'] ?? 8}', displayStatus, actions: actions);
-        }).toList()),
+  Widget build(BuildContext context)=>Scaffold(
+    appBar:AppBar(title:const Text('TOURNAMENT MODE'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),
+    floatingActionButton:_isAdmin?FloatingActionButton.extended(onPressed:_create,icon:const Icon(Icons.add),label:const Text('CREATE')):null,
+    body:loading?const Center(child:CircularProgressIndicator()):error!=null?Center(child:Text('Could not load tournaments.\n$error',textAlign:TextAlign.center)):
+      rows.isEmpty?const _FeatureEmpty(icon:Icons.account_tree,title:'No tournaments yet',message:'The administrator will publish community tournaments here.'):
+      ListView(padding:const EdgeInsets.all(14),children:rows.map((t){
+        final status=_tournamentStatus(t); final id=t['id'].toString(); final myEntry=_myEntry(id);
+        final isOpen=status=='registration'||status=='upcoming';
+        final myStatus=myEntry?['status']?.toString().toLowerCase();
+        final actions=<Widget>[];
+        if(isOpen&&myEntry==null) actions.add(FilledButton(onPressed:()=>_join(t),child:const Text('REQUEST TO JOIN')));
+        if(myStatus=='registered') actions.add(const Chip(label:Text('REQUEST PENDING')));
+        if(myStatus=='approved') actions.add(const Chip(label:Text('APPROVED')));
+        if(_isAdmin) {
+          final pending=_entriesFor(id).where((e)=>e['status'].toString().toLowerCase()=='registered').length;
+          actions.add(OutlinedButton(onPressed:()=>_showRequests(t),child:Text('JOIN REQUESTS ($pending)')));
+          if(isOpen) actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'ongoing'),child:const Text('START')));
+          if(status=='ongoing') actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'completed'),child:const Text('FINISH')));
+          if(status!='completed'&&status!='cancelled') actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'cancelled'),child:const Text('CANCEL')));
+        }
+        final displayStatus=status.replaceAll('_',' ').toUpperCase();
+        final approved=_entriesFor(id).where((e)=>e['status'].toString().toLowerCase()=='approved').length;
+        return _featureCard(_purple,Icons.account_tree,(t['name']??t['title']??'Tournament').toString(),
+          '${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()} • Players: $approved/${t['max_players']??8}',displayStatus,actions:actions);
+      }).toList()),
   );
 }
 
