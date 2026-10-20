@@ -5696,10 +5696,122 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
   bool get _isAdmin => Store.instance.current?.admin == true;
   @override void initState(){super.initState();_load();}
   Future<void> _load() async {if(mounted)setState(()=>loading=true);try{final q=await Store.instance.supabase.from('community_tournaments').select().order('created_at',ascending:false).limit(150);rows=(q as List).map((e)=>Map<String,dynamic>.from(e as Map)).toList();final id=_userId;if(id!=null){final e=await Store.instance.supabase.from('tournament_entries').select('tournament_id,status').eq('player_id',id).limit(300);joined=(e as List).map((x)=>Map<String,dynamic>.from(x as Map)['tournament_id'].toString()).toSet();}error=null;}catch(e){error=e.toString();}if(mounted)setState(()=>loading=false);}
-  Future<void> _create() async {if(!_isAdmin){_toast('Only an administrator can create tournaments.');return;}final name=TextEditingController();final desc=TextEditingController();final max=TextEditingController(text:'8');String format='knockout';final ok=await showDialog<bool>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(title:const Text('Create tournament'),content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:name,maxLength:80,decoration:const InputDecoration(labelText:'Tournament name',border:OutlineInputBorder())),const SizedBox(height:10),TextField(controller:desc,maxLines:3,maxLength:300,decoration:const InputDecoration(labelText:'Description',border:OutlineInputBorder())),const SizedBox(height:10),DropdownButtonFormField<String>(value:format,decoration:const InputDecoration(labelText:'Format'),items:const [DropdownMenuItem(value:'knockout',child:Text('Knockout')),DropdownMenuItem(value:'groups',child:Text('Groups')),DropdownMenuItem(value:'groups_knockout',child:Text('Groups + knockout')),DropdownMenuItem(value:'league',child:Text('League'))],onChanged:(v)=>setD(()=>format=v??'knockout')),TextField(controller:max,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Maximum players (2–256)',border:OutlineInputBorder()))])),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('CREATE'))])));if(ok==true){final count=int.tryParse(max.text.trim())??8;if(name.text.trim().length<3||count<2||count>256){_toast('Use a name of at least 3 characters and a player limit from 2 to 256.');}else{try{await Store.instance.supabase.from('community_tournaments').insert({'created_by':_userId,'name':name.text.trim(),'description':desc.text.trim(),'format':format,'max_players':count});_toast('Tournament created.');await _load();}catch(e){_toast('Could not create tournament: $e');}}}name.dispose();desc.dispose();max.dispose();}
-  Future<void> _join(Map<String,dynamic> t) async {try{if((t['status']??'registration')!='registration'){_toast('Registration is closed for this tournament.');return;}final countResult=await Store.instance.supabase.from('tournament_entries').select('id').eq('tournament_id',t['id']);final count=(countResult as List).length;final maxPlayers=(t['max_players'] as num?)?.toInt()??8;if(count>=maxPlayers){_toast('This tournament is full.');return;}await Store.instance.supabase.from('tournament_entries').insert({'tournament_id':t['id'],'player_id':_userId});_toast('You are registered for this tournament.');await _load();}catch(e){_toast(e.toString().contains('duplicate')?'You are already registered.':'Could not join tournament: $e');}}
-  Future<void> _setTournamentStatus(Map<String,dynamic> t,String status) async {if(!_isAdmin){_toast('Only an administrator can manage tournaments.');return;}try{await Store.instance.supabase.from('community_tournaments').update({'status':status}).eq('id',t['id']);_toast('Tournament status updated.');await _load();}catch(e){_toast('Could not update tournament: $e');}}
-  @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('TOURNAMENT MODE'),actions:[IconButton(onPressed:_load,icon:const Icon(Icons.refresh))]),floatingActionButton:_isAdmin?FloatingActionButton.extended(onPressed:_create,icon:const Icon(Icons.add),label:const Text('CREATE')):null,body:loading?const Center(child:CircularProgressIndicator()):error!=null?Center(child:Text('Could not load tournaments.\n$error',textAlign:TextAlign.center)):rows.isEmpty?const _FeatureEmpty(icon:Icons.account_tree,title:'No tournaments yet',message:'The administrator will publish community tournaments here.'):ListView(padding:const EdgeInsets.all(14),children:rows.map((t){final status=(t['status']??'registration').toString();final canJoin=status=='registration'&&!joined.contains(t['id'].toString());final actions=<Widget>[];if(canJoin)actions.add(FilledButton(onPressed:()=>_join(t),child:const Text('JOIN TOURNAMENT')));else if(joined.contains(t['id'].toString()))actions.add(const Chip(label:Text('REGISTERED')));if(_isAdmin&&status=='registration')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'in_progress'),child:const Text('START')));if(_isAdmin&&status=='in_progress')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'completed'),child:const Text('FINISH')));if(_isAdmin&&status!='completed'&&status!='cancelled')actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'cancelled'),child:const Text('CANCEL')));return _featureCard(_purple,Icons.account_tree,(t['name']??'Tournament').toString(),'${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()}  •  Max players: ${t['max_players']??8}',status,actions:actions);}).toList()));
+  Future<void> _create() async {
+    if (!_isAdmin) { _toast('Only an administrator can create tournaments.'); return; }
+    final name = TextEditingController();
+    final desc = TextEditingController();
+    final max = TextEditingController(text: '8');
+    String format = 'knockout';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('Create tournament'),
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: name, maxLength: 80, decoration: const InputDecoration(labelText: 'Tournament name', border: OutlineInputBorder())),
+            const SizedBox(height: 10),
+            TextField(controller: desc, maxLines: 3, maxLength: 300, decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder())),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(value: format, decoration: const InputDecoration(labelText: 'Format'), items: const [
+              DropdownMenuItem(value: 'knockout', child: Text('Knockout')),
+              DropdownMenuItem(value: 'groups', child: Text('Groups')),
+              DropdownMenuItem(value: 'groups_knockout', child: Text('Groups + knockout')),
+              DropdownMenuItem(value: 'league', child: Text('League')),
+            ], onChanged: (v) => setD(() => format = v ?? 'knockout')),
+            TextField(controller: max, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Maximum players (2–256)', border: OutlineInputBorder())),
+          ])),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('CREATE'))],
+        ),
+      ),
+    );
+    if (ok == true) {
+      final count = int.tryParse(max.text.trim()) ?? 8;
+      if (name.text.trim().length < 3 || count < 2 || count > 256) {
+        _toast('Use a name of at least 3 characters and a player limit from 2 to 256.');
+      } else {
+        try {
+          await Store.instance.supabase.from('community_tournaments').insert({
+            'created_by': _userId,
+            'name': name.text.trim(),
+            'description': desc.text.trim(),
+            'format': format,
+            'max_players': count,
+            // Set this explicitly so the database default cannot leave a new
+            // tournament in an unexpected status such as UPCOMING.
+            'status': 'registration',
+          });
+          _toast('Tournament created.');
+          await _load();
+        } catch (e) {
+          _toast('Could not create tournament: $e');
+        }
+      }
+    }
+    name.dispose(); desc.dispose(); max.dispose();
+  }
+
+  String _tournamentStatus(Map<String, dynamic> t) => (t['status'] ?? 'registration').toString().trim().toLowerCase();
+
+  Future<void> _join(Map<String, dynamic> t) async {
+    try {
+      final status = _tournamentStatus(t);
+      if (status != 'registration' && status != 'upcoming') {
+        _toast('Registration is closed for this tournament.');
+        return;
+      }
+      final playerId = _userId;
+      if (playerId == null) { _toast('Please sign in before joining a tournament.'); return; }
+      final countResult = await Store.instance.supabase.from('tournament_entries').select('id').eq('tournament_id', t['id']);
+      final count = (countResult as List).length;
+      final maxPlayers = (t['max_players'] as num?)?.toInt() ?? 8;
+      if (count >= maxPlayers) { _toast('This tournament is full.'); return; }
+      await Store.instance.supabase.from('tournament_entries').insert({'tournament_id': t['id'], 'player_id': playerId});
+      _toast('You are registered for this tournament.');
+      await _load();
+    } catch (e) {
+      _toast(e.toString().toLowerCase().contains('duplicate') || e.toString().toLowerCase().contains('unique')
+          ? 'You are already registered.' : 'Could not join tournament: $e');
+    }
+  }
+
+  Future<void> _setTournamentStatus(Map<String, dynamic> t, String status) async {
+    if (!_isAdmin) { _toast('Only an administrator can manage tournaments.'); return; }
+    try {
+      await Store.instance.supabase.from('community_tournaments').update({'status': status}).eq('id', t['id']);
+      _toast(status == 'in_progress' ? 'Tournament started.' : 'Tournament status updated.');
+      await _load();
+    } catch (e) {
+      _toast('Could not update tournament: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('TOURNAMENT MODE'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
+    floatingActionButton: _isAdmin ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('CREATE')) : null,
+    body: loading ? const Center(child: CircularProgressIndicator())
+      : error != null ? Center(child: Text('Could not load tournaments.\n$error', textAlign: TextAlign.center))
+      : rows.isEmpty ? const _FeatureEmpty(icon: Icons.account_tree, title: 'No tournaments yet', message: 'The administrator will publish community tournaments here.')
+      : ListView(padding: const EdgeInsets.all(14), children: rows.map((t) {
+          final status = _tournamentStatus(t);
+          final id = t['id'].toString();
+          final isOpen = status == 'registration' || status == 'upcoming';
+          final canJoin = isOpen && !joined.contains(id);
+          final actions = <Widget>[];
+          if (canJoin) {
+            actions.add(FilledButton(onPressed: () => _join(t), child: const Text('JOIN TOURNAMENT')));
+          } else if (joined.contains(id)) {
+            actions.add(const Chip(label: Text('REGISTERED')));
+          }
+          // Treat legacy/capitalized UPCOMING rows as open, too.
+          if (_isAdmin && isOpen) actions.add(TextButton(onPressed: () => _setTournamentStatus(t, 'in_progress'), child: const Text('START')));
+          if (_isAdmin && status == 'in_progress') actions.add(TextButton(onPressed: () => _setTournamentStatus(t, 'completed'), child: const Text('FINISH')));
+          if (_isAdmin && status != 'completed' && status != 'cancelled') actions.add(TextButton(onPressed: () => _setTournamentStatus(t, 'cancelled'), child: const Text('CANCEL')));
+          final displayStatus = status.replaceAll('_', ' ').toUpperCase();
+          return _featureCard(_purple, Icons.account_tree, (t['name'] ?? 'Tournament').toString(),
+            '${t['description'] ?? ''}\nFormat: ${(t['format'] ?? 'knockout').toString()}  •  Max players: ${t['max_players'] ?? 8}', displayStatus, actions: actions);
+        }).toList()),
+  );
 }
 
 class PlayerMissionsPage extends StatefulWidget { const PlayerMissionsPage({super.key}); @override State<PlayerMissionsPage> createState()=>_PlayerMissionsPageState(); }
