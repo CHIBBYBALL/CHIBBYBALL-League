@@ -5951,6 +5951,99 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
     ));
   }
 
+  Widget _buildTournamentBracket(List<Map<String,dynamic>> matches) {
+    if (matches.isEmpty) return const SizedBox.shrink();
+    final knockout = matches.where((m) => (m['stage'] ?? '').toString().toLowerCase() == 'knockout').toList();
+    final grouped = <int, List<Map<String,dynamic>>>{};
+    for (final m in knockout) {
+      final round = (m['round_number'] as num?)?.toInt() ?? 1;
+      (grouped[round] ??= <Map<String,dynamic>>[]).add(m);
+    }
+    for (final list in grouped.values) {
+      list.sort((a,b) => ((a['match_number'] as num?)?.toInt() ?? 0).compareTo((b['match_number'] as num?)?.toInt() ?? 0));
+    }
+    String roundName(int round, int maxRound) {
+      if (round == maxRound && maxRound > 1) return 'FINAL';
+      if (round == maxRound - 1 && maxRound >= 3) return 'SEMI-FINALS';
+      if (round == maxRound - 2 && maxRound >= 4) return 'QUARTER-FINALS';
+      return 'ROUND $round';
+    }
+    final maxRound = grouped.keys.isEmpty ? 0 : grouped.keys.reduce((a,b) => a > b ? a : b);
+    Widget matchCard(Map<String,dynamic> m) {
+      final p1 = _playerTag(m['player_one_id']?.toString());
+      final p2 = _playerTag(m['player_two_id']?.toString());
+      final winner = m['winner_id']?.toString();
+      Widget playerLine(String id, String tag, dynamic score) {
+        final isWinner = winner != null && winner == id;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          decoration: BoxDecoration(
+            color: isWinner ? _cyan.withOpacity(.13) : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(children: [
+            Expanded(child: Text(tag, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, fontWeight: isWinner ? FontWeight.w900 : FontWeight.w700,
+                color: isWinner ? _cyan : null))),
+            Text(score?.toString() ?? '—', style: TextStyle(fontWeight: FontWeight.w900,
+              color: isWinner ? _cyan : null)),
+          ]),
+        );
+      }
+      return Container(
+        width: 205, margin: const EdgeInsets.symmetric(vertical: 8), padding: const EdgeInsets.all(8),
+        decoration: _neonBox(_purple, radius: 10),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('MATCH ${m['match_number'] ?? ''}', style: const TextStyle(color: _cyan, fontSize: 10, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 5),
+          playerLine(m['player_one_id']?.toString() ?? '', p1, m['player_one_score']),
+          const Divider(height: 1),
+          playerLine(m['player_two_id']?.toString() ?? '', p2, m['player_two_score']),
+          const SizedBox(height: 4),
+          Row(children: [
+            Expanded(child: Text((m['status'] ?? 'scheduled').toString().toUpperCase(), style: const TextStyle(color: _muted, fontSize: 9))),
+            if (_isAdmin) IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: () => _enterScore(m), icon: const Icon(Icons.edit_note, color: _cyan, size: 20), tooltip: 'Enter score'),
+          ]),
+        ]),
+      );
+    }
+    return Container(
+      margin: const EdgeInsets.only(top: 10), padding: const EdgeInsets.all(12),
+      decoration: _neonBox(_cyan, radius: 14),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('TOURNAMENT BRACKET • ${matches.length} MATCHES', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        if (grouped.isNotEmpty)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              for (final round in (grouped.keys.toList()..sort()))
+                Container(
+                  width: 220, margin: const EdgeInsets.only(right: 14),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                    Container(width: double.infinity, padding: const EdgeInsets.all(8),
+                      decoration: _neonBox(_cyan, radius: 8),
+                      child: Text(roundName(round, maxRound), textAlign: TextAlign.center,
+                        style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900, fontSize: 12))),
+                    const SizedBox(height: 6),
+                    ...grouped[round]!.map(matchCard),
+                  ]),
+                ),
+            ]),
+          ),
+        if (grouped.isEmpty)
+          ...matches.map((m) => matchCard(m)),
+        if (grouped.isNotEmpty && grouped[maxRound]!.length == 1 && (grouped[maxRound]!.first['status'] ?? '').toString() == 'completed') ...[
+          const SizedBox(height: 10),
+          Container(width: double.infinity, padding: const EdgeInsets.all(12), decoration: _neonBox(_yellow, radius: 10),
+            child: Text('🏆 CHAMPION: ${_playerTag(grouped[maxRound]!.first['winner_id']?.toString())}',
+              textAlign: TextAlign.center, style: const TextStyle(color: _yellow, fontWeight: FontWeight.w900))),
+        ],
+      ]),
+    );
+  }
+
   Future<void> _setTournamentStatus(Map<String,dynamic> t,String status) async {
     if(!_isAdmin) { _toast('Only an administrator can manage tournaments.'); return; }
     try {
@@ -5986,7 +6079,7 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
         final approved=_entriesFor(id).where((e)=>e['status'].toString().toLowerCase()=='approved').length;
         final matchRows=_matchesFor(id);
         final orderedMatches=List<Map<String,dynamic>>.from(matchRows)..sort((a,b){ final stage=(a['stage']??'').toString().compareTo((b['stage']??'').toString()); if(stage!=0)return stage; final round=((a['round_number']??1) as num).compareTo((b['round_number']??1) as num); if(round!=0)return round; return ((a['match_number']??0) as num).compareTo((b['match_number']??0) as num); });
-        final matchesPanel=orderedMatches.isEmpty?const SizedBox.shrink():Container(margin:const EdgeInsets.only(top:10),padding:const EdgeInsets.all(12),decoration:_neonBox(_cyan,radius:14),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('BRACKET & RESULTS • ${orderedMatches.length}',style:const TextStyle(color:_cyan,fontWeight:FontWeight.w900)),const SizedBox(height:8),...orderedMatches.map((m){ final stage=(m['stage']??'match').toString().toUpperCase(); final round=(m['round_number']??1).toString(); final winner=m['winner_id']?.toString(); return Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.all(8),decoration:_neonBox(_purple,radius:10),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('$stage • ROUND $round • MATCH ${m['match_number']??''}',style:const TextStyle(color:_cyan,fontSize:11,fontWeight:FontWeight.w900)),ListTile(dense:true,contentPadding:EdgeInsets.zero,title:Text('${_playerTag(m['player_one_id']?.toString())}  ${m['player_one_score']??'—'} : ${m['player_two_score']??'—'}  ${_playerTag(m['player_two_id']?.toString())}',style:const TextStyle(fontWeight:FontWeight.w800)),subtitle:Text(winner!=null?'Winner: ${_playerTag(winner)} • ${(m['status']??'scheduled').toString()}':'${(m['status']??'scheduled').toString()}'),trailing:_isAdmin?IconButton(onPressed:()=>_enterScore(m),icon:const Icon(Icons.edit_note,color:_cyan),tooltip:'Enter score'):null)])); })]));
+        final matchesPanel=_buildTournamentBracket(orderedMatches);
         return Column(children:[_featureCard(_purple,Icons.account_tree,(t['name']??t['title']??'Tournament').toString(),
           '${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()} • Players: $approved/${t['max_players']??8}',displayStatus,actions:actions),matchesPanel]);
       }).toList()),
