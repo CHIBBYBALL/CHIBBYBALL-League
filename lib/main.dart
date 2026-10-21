@@ -4272,6 +4272,57 @@ class Store {
     }
   }
 
+  /// Admin-only score override. The database RPC records the reason and audit data.
+  Future<String?> adminCorrectMatchScore({
+    required String matchId,
+    required int homeScore,
+    required int awayScore,
+    required String reason,
+    required bool evidenceReviewed,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    if (homeScore < 0 || awayScore < 0) return 'Scores cannot be negative.';
+    if (reason.trim().isEmpty) return 'Enter a reason for the correction.';
+    try {
+      await supabase.rpc('admin_correct_match_score', params: {
+        'p_match_id': matchId,
+        'p_home_score': homeScore,
+        'p_away_score': awayScore,
+        'p_reason': reason.trim(),
+        'p_evidence_reviewed': evidenceReviewed,
+      });
+      await loadMatchesFromSupabase();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not correct score: ${e.message}';
+    } catch (e) {
+      return 'Could not correct score: $e';
+    }
+  }
+
+  /// Cancel only one player's submission; the fixture and opponent submission remain.
+  Future<String?> adminCancelMatchSubmission({
+    required String matchId,
+    required String playerId,
+    required String reason,
+  }) async {
+    if (current?.admin != true) return 'Admin access required.';
+    if (reason.trim().isEmpty) return 'Enter a reason for cancelling the submission.';
+    try {
+      await supabase.rpc('admin_cancel_match_submission', params: {
+        'p_match_id': matchId,
+        'p_player_id': playerId,
+        'p_reason': reason.trim(),
+      });
+      await loadMatchesFromSupabase();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not cancel submission: ${e.message}';
+    } catch (e) {
+      return 'Could not cancel submission: $e';
+    }
+  }
+
   Future<String?> adminForfeitMatch({
     required String matchId,
     required String action,
@@ -9651,8 +9702,84 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
             ),
           ),
         ],
+        if (Store.instance.current?.admin == true) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: loading ? null : () => _correctScore(m),
+              icon: const Icon(Icons.edit_note),
+              label: const Text('SCORE CORRECTION / RESOLVE MATCH'),
+            ),
+          ),
+          if (m.homeProof != null || m.homeClaimHome != null || m.homeClaimAway != null)
+            Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+              onPressed: loading ? null : () => _cancelSubmission(m, m.homeId, homeName),
+              icon: const Icon(Icons.cancel_outlined),
+              label: Text('Cancel $homeName submission'),
+            )),
+          if (m.awayProof != null || m.awayClaimHome != null || m.awayClaimAway != null)
+            Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+              onPressed: loading ? null : () => _cancelSubmission(m, m.awayId, awayName),
+              icon: const Icon(Icons.cancel_outlined),
+              label: Text('Cancel $awayName submission'),
+            )),
+        ],
       ],
     ));
+  }
+
+  Future<void> _correctScore(MatchItem match) async {
+    final homeController = TextEditingController(text: match.homeScore?.toString() ?? match.homeClaimHome?.toString() ?? '');
+    final awayController = TextEditingController(text: match.awayScore?.toString() ?? match.homeClaimAway?.toString() ?? '');
+    final reasonController = TextEditingController();
+    bool evidenceReviewed = true;
+    final formKey = GlobalKey<FormState>();
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(builder: (context, setDialogState) => AlertDialog(
+        title: const Text('Admin score correction'),
+        content: SingleChildScrollView(child: Form(key: formKey, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Enter the final score. You may confirm after reviewing evidence or resolve the match manually. A reason is required.'),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: TextFormField(controller: homeController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: _playerName(match.homeId), border: const OutlineInputBorder()), validator: (v) => int.tryParse(v ?? '') == null || int.parse(v!) < 0 ? 'Enter 0 or more' : null)),
+            const SizedBox(width: 10),
+            Expanded(child: TextFormField(controller: awayController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: _playerName(match.awayId), border: const OutlineInputBorder()), validator: (v) => int.tryParse(v ?? '') == null || int.parse(v!) < 0 ? 'Enter 0 or more' : null)),
+          ]),
+          const SizedBox(height: 12),
+          TextFormField(controller: reasonController, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: 'Reason for correction', hintText: 'e.g. Wrong opponent screenshot; verified from match evidence', border: OutlineInputBorder()), validator: (v) => (v ?? '').trim().isEmpty ? 'A reason is required' : null),
+          CheckboxListTile(contentPadding: EdgeInsets.zero, value: evidenceReviewed, onChanged: (v) => setDialogState(() => evidenceReviewed = v ?? false), title: const Text('I reviewed the available evidence'), controlAffinity: ListTileControlAffinity.leading),
+        ]))),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('CANCEL')), FilledButton(onPressed: () { if (formKey.currentState?.validate() != true) return; Navigator.pop(dialogContext, {'home': int.parse(homeController.text.trim()), 'away': int.parse(awayController.text.trim()), 'reason': reasonController.text.trim(), 'evidence': evidenceReviewed}); }, child: const Text('SAVE & CONFIRM'))],
+      )),
+    );
+    homeController.dispose(); awayController.dispose(); reasonController.dispose();
+    if (result == null || !mounted) return;
+    setState(() => loading = true);
+    final error = await store.adminCorrectMatchScore(matchId: match.id, homeScore: result['home'] as int, awayScore: result['away'] as int, reason: result['reason'] as String, evidenceReviewed: result['evidence'] as bool);
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Score corrected and result confirmed.')));
+  }
+
+  Future<void> _cancelSubmission(MatchItem match, String playerId, String playerName) async {
+    final reasonController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final reason = await showDialog<String>(context: context, builder: (dialogContext) => AlertDialog(
+      title: Text('Cancel $playerName submission?'),
+      content: Form(key: formKey, child: TextFormField(controller: reasonController, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: 'Cancellation reason', border: OutlineInputBorder()), validator: (v) => (v ?? '').trim().isEmpty ? 'Enter a reason' : null)),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('KEEP SUBMISSION')), FilledButton(onPressed: () { if (formKey.currentState?.validate() != true) return; Navigator.pop(dialogContext, reasonController.text.trim()); }, child: const Text('CANCEL SUBMISSION'))],
+    ));
+    reasonController.dispose();
+    if (reason == null || !mounted) return;
+    setState(() => loading = true);
+    final error = await store.adminCancelMatchSubmission(matchId: match.id, playerId: playerId, reason: reason);
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? '$playerName submission cancelled. The fixture remains in place.')));
   }
 
   Widget _claimBox(String player, String score, String? proof) {
