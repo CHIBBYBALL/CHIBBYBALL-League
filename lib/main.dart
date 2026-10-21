@@ -6015,30 +6015,60 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
         Text('KNOCKOUT BRACKET  •  ${grouped.isEmpty ? 'FIXTURES' : '${grouped.length} ROUNDS'}  •  ${matches.length} MATCHES', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
         if (grouped.isNotEmpty)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-              for (var roundIndex = 0; roundIndex < (grouped.keys.toList()..sort()).length; roundIndex++) ...[
-                Container(
-                  width: 220,
-                  margin: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                    Container(width: double.infinity, padding: const EdgeInsets.all(10),
-                      decoration: _neonBox(_cyan, radius: 8),
-                      child: Text(roundName((grouped.keys.toList()..sort())[roundIndex], maxRound), textAlign: TextAlign.center,
-                        style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900, fontSize: 12))),
-                    const SizedBox(height: 8),
-                    ...grouped[(grouped.keys.toList()..sort())[roundIndex]]!.map(matchCard),
-                  ]),
-                ),
-                if (roundIndex < (grouped.keys.toList()..sort()).length - 1)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 3),
-                    child: Icon(Icons.double_arrow_rounded, color: _cyan, size: 26),
-                  ),
-              ],
-            ]),
-          ),
+          Builder(builder: (context) {
+            final firstRound = grouped.keys.reduce((a,b) => a < b ? a : b);
+            final firstCount = grouped[firstRound]!.length;
+            // Reserve every stage from the opening round to the final, including
+            // future stages that have not yet been written to Supabase.
+            final stageCount = firstCount <= 1 ? 1 : firstCount.bitLength;
+            const cardWidth = 190.0, cardHeight = 116.0;
+            const gap = 66.0, rowHeight = 140.0;
+            final width = stageCount * (cardWidth + gap) - gap;
+            final height = firstCount * rowHeight;
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(width: width, height: height + 38,
+                child: Stack(children: [
+                  Positioned(top: 35, left: 0,
+                    child: CustomPaint(size: Size(width, height),
+                      painter: _TournamentTreePainter(firstCount, stageCount,
+                        cardWidth, gap, rowHeight))),
+                  for (var stage = 0; stage < stageCount; stage++) ...[
+                    Positioned(left: stage * (cardWidth + gap), top: 0,
+                      width: cardWidth,
+                      child: Text(stage == stageCount - 1 ? 'FINAL' :
+                        stage == stageCount - 2 ? 'SEMI-FINALS' :
+                        stage == stageCount - 3 ? 'QUARTER-FINALS' : 'ROUND ${stage+1}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900))),
+                    for (var index = 0; index < (firstCount >> stage); index++)
+                      Positioned(
+                        left: stage * (cardWidth + gap),
+                        top: 35 + ((1 << stage) * (index + .5) - .5) * rowHeight + (rowHeight-cardHeight)/2,
+                        width: cardWidth, height: cardHeight,
+                        child: Builder(builder: (_) {
+                          final roundMatches = grouped[firstRound + stage] ?? [];
+                          if (index < roundMatches.length) {
+                            return FittedBox(fit: BoxFit.fill,
+                              child: SizedBox(width: 205, height: 130,
+                                child: matchCard(roundMatches[index])));
+                          }
+                          return Container(padding: const EdgeInsets.all(10),
+                            decoration: _neonBox(_purple, radius: 10),
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center, children: [
+                                Text('MATCH ${index+1}', style: const TextStyle(color: _cyan, fontSize: 10)),
+                                const SizedBox(height: 8),
+                                const Text('Awaiting winner', style: TextStyle(color: _muted)),
+                                const Divider(),
+                                const Text('Awaiting winner', style: TextStyle(color: _muted)),
+                              ]));
+                        }),
+                      ),
+                  ],
+                ])),
+            );
+          }),
         if (grouped.isEmpty)
           ...matches.map((m) => matchCard(m)),
         if (grouped.isNotEmpty && grouped[maxRound]!.length == 1 && (grouped[maxRound]!.first['status'] ?? '').toString() == 'completed') ...[
@@ -8949,4 +8979,35 @@ class _LeagueRulesPageState extends State<LeagueRulesPage> {
       if (_error != null) ...[const SizedBox(height: 12), Text(_error!, style: const TextStyle(color: Colors.redAccent))],
     ]),
   );
+}
+
+// Draws actual branching connections between knockout rounds.
+class _TournamentTreePainter extends CustomPainter {
+  final int firstCount, stages;
+  final double cardWidth, gap, rowHeight;
+  const _TournamentTreePainter(this.firstCount, this.stages,
+      this.cardWidth, this.gap, this.rowHeight);
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = const Color(0xFF00D9FF)
+      ..strokeWidth = 2..style = PaintingStyle.stroke;
+    for (var stage = 0; stage < stages - 1; stage++) {
+      final count = firstCount >> stage;
+      final x1 = stage * (cardWidth + gap) + cardWidth;
+      final x2 = (stage + 1) * (cardWidth + gap);
+      for (var i = 0; i + 1 < count; i += 2) {
+        final y1 = ((1 << stage) * (i + .5) - .5) * rowHeight + rowHeight / 2;
+        final y2 = ((1 << stage) * (i + 1.5) - .5) * rowHeight + rowHeight / 2;
+        final midX = (x1 + x2) / 2;
+        final midY = (y1 + y2) / 2;
+        canvas.drawLine(Offset(x1, y1), Offset(midX, y1), paint);
+        canvas.drawLine(Offset(x1, y2), Offset(midX, y2), paint);
+        canvas.drawLine(Offset(midX, y1), Offset(midX, y2), paint);
+        canvas.drawLine(Offset(midX, midY), Offset(x2, midY), paint);
+      }
+    }
+  }
+  @override
+  bool shouldRepaint(covariant _TournamentTreePainter oldDelegate) =>
+      firstCount != oldDelegate.firstCount || stages != oldDelegate.stages;
 }
