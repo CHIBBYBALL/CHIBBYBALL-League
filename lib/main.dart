@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:image_picker/image_picker.dart';
@@ -6099,12 +6100,62 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
     } catch(e) { _toast('Could not restart tournament: $e'); }
   }
 
-  void _openFullBracket(Map<String,dynamic> t, List<Map<String,dynamic>> matches) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(
-      appBar: AppBar(title: Text('${t['name'] ?? 'TOURNAMENT'} • BRACKET')),
-      body: SafeArea(child: SingleChildScrollView(padding: const EdgeInsets.all(12), child:
-        _buildTournamentBracket(matches))),
-    )));
+  Future<void> _openFullBracket(Map<String,dynamic> t, List<Map<String,dynamic>> matches) async {
+    // A bracket is much easier to read in landscape. Restore the normal phone
+    // orientation when the player leaves this route, including on navigation back.
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    try {
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (routeContext) => Scaffold(
+          appBar: AppBar(
+            title: Text('${t['name'] ?? 'TOURNAMENT'} • BRACKET'),
+          ),
+          body: SafeArea(
+            child: LayoutBuilder(builder: (context, constraints) {
+              final knockout = matches.where((m) => (m['stage'] ?? '').toString().toLowerCase() == 'knockout').toList();
+              final rounds = <int, int>{};
+              for (final match in knockout) {
+                final round = (match['round_number'] as num?)?.toInt() ?? 1;
+                rounds[round] = (rounds[round] ?? 0) + 1;
+              }
+              final firstCount = rounds.isEmpty ? matches.length : rounds[rounds.keys.reduce((a,b) => a < b ? a : b)] ?? 1;
+              final stages = firstCount <= 1 ? 1 : firstCount.bitLength;
+              const cardWidth = 190.0;
+              const gap = 66.0;
+              const rowHeight = 140.0;
+              final contentWidth = (stages * (cardWidth + gap) - gap + 48).clamp(300.0, 100000.0).toDouble();
+              final contentHeight = (firstCount * rowHeight + 100).clamp(220.0, 100000.0).toDouble();
+              final fitScale = (constraints.maxWidth / contentWidth).clamp(0.1, 1.0).toDouble();
+              final heightScale = (constraints.maxHeight / contentHeight).clamp(0.1, 1.0).toDouble();
+              final initialScale = fitScale < heightScale ? fitScale : heightScale;
+              return InteractiveViewer(
+                constrained: false,
+                minScale: 0.1,
+                maxScale: 2.5,
+                boundaryMargin: const EdgeInsets.all(80),
+                child: Transform.scale(
+                  alignment: Alignment.topLeft,
+                  scale: initialScale,
+                  child: SizedBox(
+                    width: contentWidth,
+                    height: contentHeight,
+                    child: _buildTournamentBracket(matches),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      ));
+    } finally {
+      await SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+      ]);
+    }
   }
 
   Future<void> _setTournamentStatus(Map<String,dynamic> t,String status) async {
@@ -6143,7 +6194,18 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
         final approved=_entriesFor(id).where((e)=>e['status'].toString().toLowerCase()=='approved').length;
         final matchRows=_matchesFor(id);
         final orderedMatches=List<Map<String,dynamic>>.from(matchRows)..sort((a,b){ final stage=(a['stage']??'').toString().compareTo((b['stage']??'').toString()); if(stage!=0)return stage; final round=((a['round_number']??1) as num).compareTo((b['round_number']??1) as num); if(round!=0)return round; return ((a['match_number']??0) as num).compareTo((b['match_number']??0) as num); });
-        final matchesPanel=matchRows.isEmpty ? const SizedBox.shrink() : Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[Align(alignment:Alignment.centerRight,child:TextButton.icon(onPressed:()=>_openFullBracket(t,orderedMatches),icon:const Icon(Icons.fullscreen),label:const Text('OPEN FULL-SCREEN BRACKET'))),_buildTournamentBracket(orderedMatches)]);
+        // Keep the tournament list compact. The actual bracket opens on its
+        // own screen so it is not clipped inside a tournament card.
+        final matchesPanel = matchRows.isEmpty
+            ? const SizedBox.shrink()
+            : Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => _openFullBracket(t, orderedMatches),
+                  icon: const Icon(Icons.fullscreen),
+                  label: const Text('OPEN FULL-SCREEN BRACKET'),
+                ),
+              );
         return Column(children:[_featureCard(_purple,Icons.account_tree,(t['name']??t['title']??'Tournament').toString(),
           '${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()} • Players: $approved/${t['max_players']??8}',displayStatus,actions:actions),matchesPanel]);
       }).toList()),
