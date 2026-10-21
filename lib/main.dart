@@ -6081,6 +6081,32 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
     );
   }
 
+  Future<void> _reuseTournament(Map<String,dynamic> t) async {
+    if (!_isAdmin) { _toast('Only an administrator can restart a tournament.'); return; }
+    final tid=t['id'].toString();
+    final existing=_matchesFor(tid);
+    final confirm=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(
+      title:const Text('RESTART THIS TOURNAMENT?'),
+      content:Text('This reuses “${t['name'] ?? 'Tournament'}” and keeps its approved players. The current fixture results will be deleted so a fresh run can begin. This database version has no tournament-history archive, so previous match results will not remain available.'),
+      actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('RESTART'))],
+    ));
+    if(confirm!=true) return;
+    try {
+      if(existing.isNotEmpty) await Store.instance.supabase.from('tournament_matches').delete().eq('tournament_id',tid);
+      await Store.instance.supabase.from('community_tournaments').update({'status':'ongoing'}).eq('id',tid);
+      await _load();
+      _toast('Tournament restarted. Tap GENERATE FIXTURES to begin the new run.');
+    } catch(e) { _toast('Could not restart tournament: $e'); }
+  }
+
+  void _openFullBracket(Map<String,dynamic> t, List<Map<String,dynamic>> matches) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(
+      appBar: AppBar(title: Text('${t['name'] ?? 'TOURNAMENT'} • BRACKET')),
+      body: SafeArea(child: SingleChildScrollView(padding: const EdgeInsets.all(12), child:
+        _buildTournamentBracket(matches))),
+    )));
+  }
+
   Future<void> _setTournamentStatus(Map<String,dynamic> t,String status) async {
     if(!_isAdmin) { _toast('Only an administrator can manage tournaments.'); return; }
     try {
@@ -6108,6 +6134,7 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
           actions.add(OutlinedButton(onPressed:()=>_showRequests(t),child:Text('JOIN REQUESTS ($pending)')));
           if(isOpen) actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'ongoing'),child:const Text('START')));
           if(status=='ongoing' && _matchesFor(id).isEmpty) actions.add(TextButton(onPressed:()=>_generateFixtures(t),child:const Text('GENERATE FIXTURES')));
+          if(status=='completed' || status=='cancelled') actions.add(TextButton(onPressed:()=>_reuseTournament(t),child:const Text('REUSE TOURNAMENT'));
           if(status=='ongoing' && _matchesFor(id).any((m)=>(m['stage']??'').toString()=='knockout')) actions.add(TextButton(onPressed:()=>_generateNextKnockoutRound(t),child:const Text('NEXT KNOCKOUT ROUND')));
           if(status=='ongoing') actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'completed'),child:const Text('FINISH')));
           if(status!='completed'&&status!='cancelled') actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'cancelled'),child:const Text('CANCEL')));
@@ -6116,7 +6143,7 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
         final approved=_entriesFor(id).where((e)=>e['status'].toString().toLowerCase()=='approved').length;
         final matchRows=_matchesFor(id);
         final orderedMatches=List<Map<String,dynamic>>.from(matchRows)..sort((a,b){ final stage=(a['stage']??'').toString().compareTo((b['stage']??'').toString()); if(stage!=0)return stage; final round=((a['round_number']??1) as num).compareTo((b['round_number']??1) as num); if(round!=0)return round; return ((a['match_number']??0) as num).compareTo((b['match_number']??0) as num); });
-        final matchesPanel=_buildTournamentBracket(orderedMatches);
+        final matchesPanel=matchRows.isEmpty ? const SizedBox.shrink() : Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[Align(alignment:Alignment.centerRight,child:TextButton.icon(onPressed:()=>_openFullBracket(t,orderedMatches),icon:const Icon(Icons.fullscreen),label:const Text('OPEN FULL-SCREEN BRACKET'))),_buildTournamentBracket(orderedMatches)]);
         return Column(children:[_featureCard(_purple,Icons.account_tree,(t['name']??t['title']??'Tournament').toString(),
           '${t['description']??''}\nFormat: ${(t['format']??'knockout').toString()} • Players: $approved/${t['max_players']??8}',displayStatus,actions:actions),matchesPanel]);
       }).toList()),
