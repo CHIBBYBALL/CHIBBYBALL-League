@@ -5821,7 +5821,7 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
       }
       if(winners.length==1) { await _setTournamentStatus(t,'completed'); _toast('Champion: ${_playerTag(winners.single)}'); return; }
       final nextRound=currentRound+1;
-      final existing=matches.any((m)=>(m['round_number'] as num).toInt()==nextRound);
+      final existing=_matchesFor(tid).any((m)=>(m['stage']??'').toString()=='knockout' && ((m['round_number'] as num?)?.toInt() ?? 0)==nextRound);
       if(existing) { _toast('The next round already exists.'); return; }
       final fixtures=<Map<String,dynamic>>[];
       for(var i=0;i<winners.length;i+=2) {
@@ -6012,24 +6012,31 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
       margin: const EdgeInsets.only(top: 10), padding: const EdgeInsets.all(12),
       decoration: _neonBox(_cyan, radius: 14),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('TOURNAMENT BRACKET • ${matches.length} MATCHES', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900)),
+        Text('KNOCKOUT BRACKET  •  ${grouped.isEmpty ? 'FIXTURES' : '${grouped.length} ROUNDS'}  •  ${matches.length} MATCHES', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
         if (grouped.isNotEmpty)
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              for (final round in (grouped.keys.toList()..sort()))
+            child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+              for (var roundIndex = 0; roundIndex < (grouped.keys.toList()..sort()).length; roundIndex++) ...[
                 Container(
-                  width: 220, margin: const EdgeInsets.only(right: 14),
+                  width: 220,
+                  margin: const EdgeInsets.symmetric(vertical: 8),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                    Container(width: double.infinity, padding: const EdgeInsets.all(8),
+                    Container(width: double.infinity, padding: const EdgeInsets.all(10),
                       decoration: _neonBox(_cyan, radius: 8),
-                      child: Text(roundName(round, maxRound), textAlign: TextAlign.center,
+                      child: Text(roundName((grouped.keys.toList()..sort())[roundIndex], maxRound), textAlign: TextAlign.center,
                         style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900, fontSize: 12))),
-                    const SizedBox(height: 6),
-                    ...grouped[round]!.map(matchCard),
+                    const SizedBox(height: 8),
+                    ...grouped[(grouped.keys.toList()..sort())[roundIndex]]!.map(matchCard),
                   ]),
                 ),
+                if (roundIndex < (grouped.keys.toList()..sort()).length - 1)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 3),
+                    child: Icon(Icons.double_arrow_rounded, color: _cyan, size: 26),
+                  ),
+              ],
             ]),
           ),
         if (grouped.isEmpty)
