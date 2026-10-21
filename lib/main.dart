@@ -6101,8 +6101,7 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
   }
 
   Future<void> _openFullBracket(Map<String,dynamic> t, List<Map<String,dynamic>> matches) async {
-    // A bracket is much easier to read in landscape. Restore the normal phone
-    // orientation when the player leaves this route, including on navigation back.
+    // Force landscape while the full bracket is open, then restore portrait on exit.
     await SystemChrome.setPreferredOrientations(const [
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -6116,37 +6115,49 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
           ),
           body: SafeArea(
             child: LayoutBuilder(builder: (context, constraints) {
-              final knockout = matches.where((m) => (m['stage'] ?? '').toString().toLowerCase() == 'knockout').toList();
-              final rounds = <int, int>{};
-              for (final match in knockout) {
-                final round = (match['round_number'] as num?)?.toInt() ?? 1;
-                rounds[round] = (rounds[round] ?? 0) + 1;
-              }
-              final firstCount = rounds.isEmpty ? matches.length : rounds[rounds.keys.reduce((a,b) => a < b ? a : b)] ?? 1;
+              final knockout = matches.where((m) =>
+                (m['stage'] ?? '').toString().toLowerCase() == 'knockout').toList();
+              final roundNumbers = knockout.map((m) =>
+                (m['round_number'] as num?)?.toInt() ?? 1).toList()..sort();
+              final firstRound = roundNumbers.isEmpty ? 1 : roundNumbers.first;
+              final firstCount = knockout.where((m) =>
+                ((m['round_number'] as num?)?.toInt() ?? 1) == firstRound).length;
               final stages = firstCount <= 1 ? 1 : firstCount.bitLength;
               const cardWidth = 190.0;
               const gap = 66.0;
               const rowHeight = 140.0;
-              final contentWidth = (stages * (cardWidth + gap) - gap + 48).clamp(300.0, 100000.0).toDouble();
-              final contentHeight = (firstCount * rowHeight + 100).clamp(220.0, 100000.0).toDouble();
-              final fitScale = (constraints.maxWidth / contentWidth).clamp(0.1, 1.0).toDouble();
+              final contentWidth = (stages * (cardWidth + gap) - gap + 48)
+                .clamp(300.0, 100000.0).toDouble();
+              final contentHeight = ((firstCount > 0 ? firstCount : 1) * rowHeight + 100)
+                .clamp(220.0, 100000.0).toDouble();
+              final widthScale = (constraints.maxWidth / contentWidth).clamp(0.1, 1.0).toDouble();
               final heightScale = (constraints.maxHeight / contentHeight).clamp(0.1, 1.0).toDouble();
-              final initialScale = fitScale < heightScale ? fitScale : heightScale;
-              return InteractiveViewer(
+              final initialScale = widthScale < heightScale ? widthScale : heightScale;
+
+              // Give the bracket its real content dimensions. Without this, the
+              // horizontal scroll view sizes itself to the viewport and clips later rounds.
+              return Center(child: InteractiveViewer(
                 constrained: false,
-                minScale: 0.1,
+                minScale: 0.08,
                 maxScale: 2.5,
-                boundaryMargin: const EdgeInsets.all(80),
+                boundaryMargin: const EdgeInsets.all(100),
                 child: Transform.scale(
                   alignment: Alignment.topLeft,
                   scale: initialScale,
                   child: SizedBox(
                     width: contentWidth,
                     height: contentHeight,
-                    child: _buildTournamentBracket(matches),
+                    child: OverflowBox(
+                      alignment: Alignment.topLeft,
+                      minWidth: contentWidth,
+                      maxWidth: contentWidth,
+                      minHeight: contentHeight,
+                      maxHeight: contentHeight,
+                      child: _buildTournamentBracket(matches),
+                    ),
                   ),
                 ),
-              );
+              ));
             }),
           ),
         ),
