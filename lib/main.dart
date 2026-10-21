@@ -174,16 +174,16 @@ class _ChibbyballBackgroundPainter extends CustomPainter {
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          Color(0xFF07111F),
-          Color(0xFF0A1626),
-          Color(0xFF050B14),
+          Color(0xFF100B05),
+          Color(0xFF171006),
+          Color(0xFF080603),
         ],
       ).createShader(rect);
     canvas.drawRect(rect, bg);
 
-    // Clean football-pitch inspired background. No large neon streaks.
+    // Mythic gold-and-blue football arena background. Keep the existing layout and behavior.
     final line = Paint()
-      ..color = const Color(0x1426D9FF)
+      ..color = const Color(0x14FFC928)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2;
 
@@ -212,7 +212,7 @@ class _ChibbyballBackgroundPainter extends CustomPainter {
     );
 
     final glow = Paint()
-      ..color = const Color(0x0B00D9FF)
+      ..color = const Color(0x0BFFC928)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 55);
     canvas.drawCircle(Offset(size.width * .12, size.height * .18), 90, glow);
     canvas.drawCircle(Offset(size.width * .86, size.height * .82), 100, glow);
@@ -227,8 +227,8 @@ class ChibbyballApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const cyan = Color(0xFF00D9FF);
-    const purple = Color(0xFF8B3DFF);
+    const cyan = Color(0xFFFFC928);
+    const purple = Color(0xFFB779FF);
     const yellow = Color(0xFFFFD21F);
     final base = ThemeData.dark(useMaterial3: true);
 
@@ -244,34 +244,34 @@ class ChibbyballApp extends StatelessWidget {
           primary: cyan,
           secondary: purple,
           tertiary: yellow,
-          surface: const Color(0xFF09101E),
+          surface: const Color(0xFF100B05),
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xCC02050B),
+          backgroundColor: Color(0xCC080603),
           foregroundColor: Colors.white,
           elevation: 0,
           titleTextStyle: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: .6),
         ),
         cardTheme: CardThemeData(
-          color: const Color(0xE6091221),
+          color: const Color(0xE6120D05),
           elevation: 10,
-          shadowColor: Color(0x6600C8FF),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: Color(0x6600C8FF))),
+          shadowColor: Color(0x66FFC928),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: Color(0x66FFC928))),
           margin: EdgeInsets.symmetric(vertical: 7),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xE6091221),
-          labelStyle: const TextStyle(color: Color(0xFFB9C7DA)),
+          fillColor: const Color(0xE6120D05),
+          labelStyle: const TextStyle(color: Color(0xFFFFE9B0)),
           prefixIconColor: cyan,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0x6600C8FF))),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0x6600C8FF))),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0x66FFC928))),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0x66FFC928))),
           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: cyan, width: 2)),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             backgroundColor: cyan,
-            foregroundColor: const Color(0xFF001018),
+            foregroundColor: const Color(0xFF211500),
             minimumSize: const Size.fromHeight(54),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             textStyle: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: .7),
@@ -281,11 +281,11 @@ class ChibbyballApp extends StatelessWidget {
           style: OutlinedButton.styleFrom(foregroundColor: cyan, side: const BorderSide(color: cyan, width: 1.4), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
         ),
         navigationBarTheme: const NavigationBarThemeData(
-          backgroundColor: Color(0xF2080D17),
-          indicatorColor: Color(0x4428DFFF),
+          backgroundColor: Color(0xF20E0903),
+          indicatorColor: Color(0x44FFD34A),
           labelTextStyle: WidgetStatePropertyAll(TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
         ),
-        dividerTheme: const DividerThemeData(color: Color(0x3322BFFF)),
+        dividerTheme: const DividerThemeData(color: Color(0x33FFC928)),
         snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFF101C2D)),
       ),
       builder: (context, child) => Stack(
@@ -2949,12 +2949,103 @@ class _AuthSessionGateState extends State<AuthSessionGate> {
     if (_checkingSession) {
       return const Scaffold(
         body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF00D9FF)),
+          child: CircularProgressIndicator(color: Color(0xFFFFC928)),
         ),
       );
     }
     return _hasSession ? const HomePage() : const LoginPage();
   }
+}
+
+// Premium mythic arena artwork drawn directly in Dart (no extra asset files required).
+class _MythicArenaPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawRect(rect, Paint()..shader = const LinearGradient(
+      begin: Alignment.topCenter, end: Alignment.bottomCenter,
+      colors: [Color(0xFF071426), Color(0xFF080806), Color(0xFF030407)],
+    ).createShader(rect));
+    final gold = Paint()..color = const Color(0xFFFFC928)..style = PaintingStyle.stroke..strokeWidth = 1.4;
+    final blue = Paint()..color = const Color(0xFF168DFF)..style = PaintingStyle.stroke..strokeWidth = 1.2;
+    final cx = size.width * .48;
+    // Stadium roof beams and light rays.
+    for (int i = 0; i < 13; i++) {
+      final x = size.width * i / 12;
+      canvas.drawLine(Offset(cx, size.height * .04), Offset(x, size.height * .56), i.isEven ? gold : blue);
+    }
+    for (int i = 0; i < 7; i++) {
+      final y = size.height * (.16 + i * .055);
+      canvas.drawArc(Rect.fromCenter(center: Offset(cx, y), width: size.width * (.58 + i * .08), height: size.height * (.12 + i * .025)), 3.14, 3.14, false, gold);
+    }
+    // Stadium floor rings.
+    for (int i = 0; i < 5; i++) {
+      canvas.drawOval(Rect.fromCenter(center: Offset(cx, size.height * .91), width: size.width * (.34 + i * .17), height: size.height * (.05 + i * .012)), i.isEven ? gold : blue);
+    }
+    // Crowned football.
+    final ballCenter = Offset(size.width * .42, size.height * .28);
+    final ballR = size.width * .145;
+    canvas.drawCircle(ballCenter, ballR + 5, Paint()..color = const Color(0x66FFC928)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18));
+    canvas.drawCircle(ballCenter, ballR, Paint()..shader = const RadialGradient(colors: [Color(0xFFFFF2B0), Color(0xFFFFC928), Color(0xFF76500B)]).createShader(Rect.fromCircle(center: ballCenter, radius: ballR)));
+    final pentagon = Path();
+    for (int i = 0; i < 5; i++) {
+      final a = -1.5708 + i * 1.2566;
+      final pt = Offset(ballCenter.dx + ballR * .42 * _cos(a), ballCenter.dy + ballR * .42 * _sin(a));
+      if (i == 0) pentagon.moveTo(pt.dx, pt.dy); else pentagon.lineTo(pt.dx, pt.dy);
+    }
+    pentagon.close();
+    canvas.drawPath(pentagon, Paint()..color = const Color(0xFF10131A));
+    for (int i = 0; i < 5; i++) {
+      final a = -1.5708 + i * 1.2566;
+      final p1 = Offset(ballCenter.dx + ballR * .42 * _cos(a), ballCenter.dy + ballR * .42 * _sin(a));
+      final p2 = Offset(ballCenter.dx + ballR * .9 * _cos(a + .35), ballCenter.dy + ballR * .9 * _sin(a + .35));
+      canvas.drawLine(p1, p2, Paint()..color = const Color(0xFF17191E)..strokeWidth = 3);
+    }
+    final crown = Path()
+      ..moveTo(ballCenter.dx - ballR * .68, ballCenter.dy - ballR * .72)
+      ..lineTo(ballCenter.dx - ballR * .55, ballCenter.dy - ballR * 1.27)
+      ..lineTo(ballCenter.dx - ballR * .18, ballCenter.dy - ballR * .91)
+      ..lineTo(ballCenter.dx, ballCenter.dy - ballR * 1.42)
+      ..lineTo(ballCenter.dx + ballR * .22, ballCenter.dy - ballR * .91)
+      ..lineTo(ballCenter.dx + ballR * .58, ballCenter.dy - ballR * 1.25)
+      ..lineTo(ballCenter.dx + ballR * .68, ballCenter.dy - ballR * .72)
+      ..close();
+    canvas.drawPath(crown, Paint()..color = const Color(0xFFFFD34A));
+    canvas.drawPath(crown, Paint()..color = const Color(0xFF8D5A08)..style = PaintingStyle.stroke..strokeWidth = 2);
+    // Trophy silhouettes at the sides.
+    for (final side in [-1.0, 1.0]) {
+      final tx = size.width * (side < 0 ? .11 : .86);
+      final ty = size.height * .72;
+      final cup = Path()..moveTo(tx - size.width*.035, ty)..lineTo(tx + size.width*.035, ty)..lineTo(tx + size.width*.025, ty + size.height*.055)..lineTo(tx - size.width*.025, ty + size.height*.055)..close();
+      canvas.drawPath(cup, Paint()..color = const Color(0xFFFFC928));
+      canvas.drawArc(Rect.fromLTWH(tx-size.width*.055,ty-size.height*.005,size.width*.035,size.height*.05), -1.57, 3.14, false, gold);
+      canvas.drawArc(Rect.fromLTWH(tx+size.width*.02,ty-size.height*.005,size.width*.035,size.height*.05), -1.57, 3.14, false, gold);
+      canvas.drawRect(Rect.fromLTWH(tx-size.width*.012,ty+size.height*.055,size.width*.024,size.height*.035), Paint()..color=const Color(0xFFFFC928));
+      canvas.drawRect(Rect.fromLTWH(tx-size.width*.045,ty+size.height*.088,size.width*.09,size.height*.012), Paint()..color=const Color(0xFFFFC928));
+    }
+    // Back-view footballer wearing number 10, kept on the right so content remains readable.
+    final px = size.width * .79;
+    final py = size.height * .59;
+    final playerPaint = Paint()..color = const Color(0xFF05080D);
+    canvas.drawCircle(Offset(px, py - size.height*.11), size.width*.045, playerPaint);
+    final body = Path()..moveTo(px-size.width*.065,py-size.height*.07)..quadraticBezierTo(px-size.width*.09,py+size.height*.04,px-size.width*.075,py+size.height*.17)..lineTo(px+size.width*.075,py+size.height*.17)..quadraticBezierTo(px+size.width*.09,py+size.height*.04,px+size.width*.065,py-size.height*.07)..close();
+    canvas.drawPath(body, playerPaint);
+    canvas.drawPath(body, Paint()..color=const Color(0xFFFFC928)..style=PaintingStyle.stroke..strokeWidth=1.2);
+    final tp = TextPainter(text: const TextSpan(text:'10',style:TextStyle(color:Color(0xFFFFC928),fontSize:22,fontWeight:FontWeight.w900)),textDirection:TextDirection.ltr)..layout();
+    tp.paint(canvas, Offset(px-tp.width/2, py+size.height*.015));
+    final crownMark = Path()..moveTo(px-size.width*.027,py-size.height*.025)..lineTo(px-size.width*.02,py-size.height*.05)..lineTo(px,py-size.height*.033)..lineTo(px+size.width*.02,py-size.height*.05)..lineTo(px+size.width*.027,py-size.height*.025)..close();
+    canvas.drawPath(crownMark, Paint()..color=const Color(0xFFFFC928));
+  }
+  double _cos(double a) => a == 0 ? 1 : _trig(a, true);
+  double _sin(double a) => _trig(a, false);
+  double _trig(double a, bool cosine) { // compact helpers avoid extra dependencies
+    // Dart's dart:math is imported below through the local approximation.
+    return cosine ? _cosApprox(a) : _sinApprox(a);
+  }
+  double _cosApprox(double x) { while (x > 3.14159265) { x -= 6.2831853; } while (x < -3.14159265) { x += 6.2831853; } final x2=x*x; return 1-x2/2+x2*x2/24-x2*x2*x2/720; }
+  double _sinApprox(double x) { while (x > 3.14159265) { x -= 6.2831853; } while (x < -3.14159265) { x += 6.2831853; } final x2=x*x; return x*(1-x2/6+x2*x2/120-x2*x2*x2/5040); }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 // ============================================================
@@ -3024,19 +3115,26 @@ class _LoginPageState extends State<LoginPage> {
             child: Column(
               children: [
                 Container(
-                  width: 112,
-                  height: 112,
+                  height: 300,
+                  width: double.infinity,
                   decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(colors: [Color(0xFF00D9FF), Color(0xFF6B36FF)]),
-                    boxShadow: const [BoxShadow(color: Color(0x6600D9FF), blurRadius: 28, spreadRadius: 4)],
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: const Color(0xAAFFC928), width: 1.3),
+                    boxShadow: const [BoxShadow(color: Color(0x44FFC928), blurRadius: 26, spreadRadius: 1)],
                   ),
-                  child: const Center(child: Icon(Icons.sports_soccer, size: 64, color: Colors.white)),
+                  clipBehavior: Clip.antiAlias,
+                  child: Stack(fit: StackFit.expand, children: [
+                    CustomPaint(painter: _MythicArenaPainter()),
+                    const Positioned(left: 12, right: 12, top: 145, child: Column(children: [
+                      Text('CHIBBY', style: TextStyle(fontSize: 38, height: 1, fontWeight: FontWeight.w900, letterSpacing: -1.2, color: Colors.white, shadows: [Shadow(color: Color(0xFFFFC928), blurRadius: 16)])),
+                      Text('BALL', style: TextStyle(fontSize: 43, height: .98, fontWeight: FontWeight.w900, fontStyle: FontStyle.italic, color: Color(0xFFFFC928), shadows: [Shadow(color: Color(0xFFFFC928), blurRadius: 16)])),
+                      Text('eFOOTBALL', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.5, color: Color(0xFF26BFFF))),
+                      SizedBox(height: 8),
+                      Text('eFOOTBALL  •  LEAGUE  •  COMPETE  •  WIN', textAlign: TextAlign.center, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2, color: Color(0xFFFFE6A0))),
+                    ])),
+                  ]),
                 ),
-                const SizedBox(height: 18),
-                const Text('CHIBBYBALL', style: TextStyle(fontSize: 38, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-                const Text('eFOOTBALL • LEAGUE • COMPETE', style: TextStyle(color: Color(0xFFFFD21F), fontWeight: FontWeight.w800, letterSpacing: 1.2)),
-                const SizedBox(height: 32),
+                const SizedBox(height: 22),
                 TextField(
                   controller: tagController,
                   decoration: const InputDecoration(
@@ -3352,9 +3450,9 @@ class _MessagePlayerTile extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: const Color(0xDD081426),
+        color: const Color(0xDD171006),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: online ? const Color(0xFF00D9FF) : const Color(0x443A5575)),
+        border: Border.all(color: online ? const Color(0xFFFFC928) : const Color(0x443A5575)),
         boxShadow: [BoxShadow(color: online ? const Color(0x2200D9FF) : Colors.transparent, blurRadius: 18)],
       ),
       child: ListTile(
@@ -3366,12 +3464,12 @@ class _MessagePlayerTile extends StatelessWidget {
               backgroundImage: player.avatarUrl.isNotEmpty ? NetworkImage(player.avatarUrl) : null,
               child: player.avatarUrl.isEmpty ? const Icon(Icons.person) : null,
             ),
-            Positioned(right: 0, bottom: 0, child: Container(width: 13, height: 13, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: const Color(0xFF081426), width: 2)))),
+            Positioned(right: 0, bottom: 0, child: Container(width: 13, height: 13, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFFB7A77C), border: Border.all(color: const Color(0xFF171006), width: 2)))),
           ],
         ),
         title: Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)),
         subtitle: Text(online ? 'Online' : (player.lastSeen == null ? 'Offline' : 'Last seen ${_shortLastSeen(player.lastSeen!)}')),
-        trailing: const Icon(Icons.chat_bubble_outline, color: Color(0xFF00D9FF)),
+        trailing: const Icon(Icons.chat_bubble_outline, color: Color(0xFFFFC928)),
         onTap: onTap,
       ),
     );
@@ -3470,13 +3568,13 @@ class _ChatPageState extends State<ChatPage> {
               return Align(alignment: mine ? Alignment.centerRight : Alignment.centerLeft, child: Container(
                 constraints: const BoxConstraints(maxWidth: 300), margin: const EdgeInsets.only(bottom: 9), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(color: mine ? const Color(0xFF00BFEA) : const Color(0xFF111F33), borderRadius: BorderRadius.circular(18), border: Border.all(color: mine ? const Color(0x6600E5FF) : const Color(0x443D5878))),
-                child: Text(m.body, style: TextStyle(color: mine ? const Color(0xFF001018) : Colors.white, fontWeight: FontWeight.w600)),
+                child: Text(m.body, style: TextStyle(color: mine ? const Color(0xFF211500) : Colors.white, fontWeight: FontWeight.w600)),
               ));
             },
           ),
         ),
         SafeArea(top: false, child: Container(
-          padding: const EdgeInsets.fromLTRB(10, 8, 10, 10), color: const Color(0xF2080D17),
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 10), color: const Color(0xF20E0903),
           child: Row(children: [
             Expanded(child: TextField(controller: controller, textInputAction: TextInputAction.send, onSubmitted: (_) => _send(), decoration: const InputDecoration(hintText: 'Write a message...', prefixIcon: Icon(Icons.chat_bubble_outline)))),
             const SizedBox(width: 8),
@@ -3733,11 +3831,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
 // CHIBBYBALL NEON UI HELPERS
 // ============================================================
 
-const _cyan = Color(0xFF00D9FF);
+const _cyan = Color(0xFFFFC928);
 const _yellow = Color(0xFFFFD21F);
 const _purple = Color(0xFF9B4DFF);
 const _blue = Color(0xFF278BFF);
-const _panel = Color(0xE9081426);
+const _panel = Color(0xE9171006);
 const _muted = Color(0xFFAAB8CB);
 
 BoxDecoration _neonBox(Color accent, {double radius = 20}) => BoxDecoration(
@@ -3873,7 +3971,9 @@ class DashboardPage extends StatelessWidget {
             border: Border.all(color: _cyan.withOpacity(.75)),
             boxShadow: [BoxShadow(color: _cyan.withOpacity(.12), blurRadius: 25, offset: const Offset(0, 8))],
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child: Stack(children: [
+            Positioned.fill(child: ClipRRect(borderRadius: BorderRadius.circular(24), child: Opacity(opacity: .42, child: CustomPaint(painter: _MythicArenaPainter())))),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Text('WELCOME BACK', style: TextStyle(color: _cyan, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.6)),
@@ -3895,6 +3995,7 @@ class DashboardPage extends StatelessWidget {
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FixturesPage())),
               icon: const Icon(Icons.sports_soccer), label: const Text('OPEN MY MATCHES', style: TextStyle(fontWeight: FontWeight.w900)),
             )),
+          ]),
           ]),
         ),
         const SizedBox(height: 22),
@@ -4818,13 +4919,13 @@ class _TablePageState extends State<TablePage> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
           decoration: BoxDecoration(
-            color: const Color(0xE9081426),
+            color: const Color(0xE9171006),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: _cyan.withOpacity(.55)),
           ),
           child: DropdownButtonFormField<String>(
             value: selected?.id,
-            dropdownColor: const Color(0xFF081426),
+            dropdownColor: const Color(0xFF171006),
             decoration: const InputDecoration(
               labelText: 'SELECT LEAGUE',
               border: InputBorder.none,
@@ -4905,7 +5006,7 @@ class _TablePageState extends State<TablePage> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0D2139),
+                    color: const Color(0xFF241907),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
@@ -5174,7 +5275,7 @@ class _GlobalLeaderboardPageState extends State<GlobalLeaderboardPage> {
               _neonSectionTitle('WORLD RANKING', accent: _cyan),
               const SizedBox(height: 8),
               Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 8), decoration: _neonBox(_blue, radius: 17), child: Column(children: [
-                Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8), decoration: BoxDecoration(color: const Color(0xFF0D2139), borderRadius: BorderRadius.circular(11)), child: const Row(children: [
+                Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8), decoration: BoxDecoration(color: const Color(0xFF241907), borderRadius: BorderRadius.circular(11)), child: const Row(children: [
                   SizedBox(width: 30, child: Center(child: Text('#', style: TextStyle(color: _yellow, fontSize: 8, fontWeight: FontWeight.w900)))),
                   SizedBox(width: 39, child: Center(child: Text('PLAYER', style: TextStyle(color: _muted, fontSize: 8, fontWeight: FontWeight.w900)))),
                   Expanded(child: Text('LEAGUES', style: TextStyle(color: _muted, fontSize: 8, fontWeight: FontWeight.w900))),
@@ -5183,7 +5284,7 @@ class _GlobalLeaderboardPageState extends State<GlobalLeaderboardPage> {
                 const SizedBox(height: 6),
                 for (int i=0;i<stats.length;i++) Builder(builder: (_) {
                   final s = stats[i]; final accent = rankColor(i+1);
-                  return Container(margin: const EdgeInsets.only(bottom: 6), decoration: BoxDecoration(color: const Color(0xDD081426), borderRadius: BorderRadius.circular(14), border: Border.all(color: accent.withOpacity(i<3 ? .8 : .35))), child: InkWell(borderRadius: BorderRadius.circular(14), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerStatsPageFor(player: s.player))), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8), child: Row(children: [
+                  return Container(margin: const EdgeInsets.only(bottom: 6), decoration: BoxDecoration(color: const Color(0xDD171006), borderRadius: BorderRadius.circular(14), border: Border.all(color: accent.withOpacity(i<3 ? .8 : .35))), child: InkWell(borderRadius: BorderRadius.circular(14), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => PlayerStatsPageFor(player: s.player))), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8), child: Row(children: [
                     Container(width: 30, height: 30, decoration: BoxDecoration(shape: BoxShape.circle, color: accent.withOpacity(.13), border: Border.all(color: accent)), child: Center(child: Text('${i+1}', style: TextStyle(color: accent, fontSize: 10, fontWeight: FontWeight.w900)))),
                     const SizedBox(width: 8), _playerAvatar(s.player, radius: 19, accent: accent), const SizedBox(width: 8),
                     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(s.player.gamerTag, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900)), Text('${s.played} matches • ${s.gd >= 0 ? '+' : ''}${s.gd} GD', style: const TextStyle(color: _muted, fontSize: 9))])),
@@ -5234,7 +5335,7 @@ class _AchievementsPageState extends State<AchievementsPage> {
             (title: 'FIVE-STAR WINNER', description: 'Win 5 confirmed matches', icon: Icons.stars, color: const Color(0xFFFFB547), earned: mine.won >= 5, tier: 'GOLD'),
             (title: 'GOAL MACHINE', description: 'Score 10 goals across confirmed matches', icon: Icons.bolt, color: const Color(0xFF28BFFF), earned: mine.goals >= 10, tier: 'SILVER'),
             (title: 'CLINICAL FINISHER', description: 'Score 25 goals across confirmed matches', icon: Icons.gps_fixed, color: const Color(0xFFFF4658), earned: mine.goals >= 25, tier: 'GOLD'),
-            (title: 'THE WALL', description: 'Record 5 clean sheets', icon: Icons.shield, color: const Color(0xFF31C9FF), earned: mine.cleanSheets >= 5, tier: 'GOLD'),
+            (title: 'THE WALL', description: 'Record 5 clean sheets', icon: Icons.shield, color: const Color(0xFFFFD34A), earned: mine.cleanSheets >= 5, tier: 'GOLD'),
             (title: 'VETERAN', description: 'Play 25 confirmed matches', icon: Icons.workspace_premium, color: const Color(0xFFB45CFF), earned: mine.played >= 25, tier: 'GOLD'),
             (title: 'CENTURION', description: 'Play 100 confirmed matches', icon: Icons.workspace_premium, color: const Color(0xFFFFC928), earned: mine.played >= 100, tier: 'LEGENDARY'),
             (title: 'UNBEATEN RUN', description: 'Finish 5 matches without a loss', icon: Icons.security, color: const Color(0xFF31E69A), earned: mine.played >= 5 && mine.lost == 0, tier: 'LEGENDARY'),
@@ -5242,7 +5343,7 @@ class _AchievementsPageState extends State<AchievementsPage> {
           ];
           final earnedCount = achievements.where((a) => a.earned).length;
           return RefreshIndicator(onRefresh: _refresh, child: ListView(padding: const EdgeInsets.fromLTRB(14, 14, 14, 30), children: [
-            Container(padding: const EdgeInsets.all(18), decoration: BoxDecoration(borderRadius: BorderRadius.circular(22), border: Border.all(color: _yellow, width: 1.4), gradient: const LinearGradient(colors: [Color(0xFF07162B), Color(0xFF102C55), Color(0xFF081426)]), boxShadow: [BoxShadow(color: _blue.withOpacity(.2), blurRadius: 25)]), child: Row(children: [
+            Container(padding: const EdgeInsets.all(18), decoration: BoxDecoration(borderRadius: BorderRadius.circular(22), border: Border.all(color: _yellow, width: 1.4), gradient: const LinearGradient(colors: [Color(0xFF1B1307), Color(0xFF102C55), Color(0xFF171006)]), boxShadow: [BoxShadow(color: _blue.withOpacity(.2), blurRadius: 25)]), child: Row(children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Text('YOUR TROPHY CABINET', style: TextStyle(color: _yellow, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
                 const SizedBox(height: 8), Text('$earnedCount / ${achievements.length}', style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w900)),
@@ -5278,12 +5379,12 @@ class _CustomAchievementBadge extends StatelessWidget {
     return Container(
       constraints: const BoxConstraints(minHeight: 180),
       padding: const EdgeInsets.fromLTRB(9, 11, 9, 10),
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(17), border: Border.all(color: accent.withOpacity(earned ? .98 : .55), width: earned ? 1.5 : 1), gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color.lerp(const Color(0xFF07162B), accent, earned ? .18 : .07)!, const Color(0xFF061020), const Color(0xFF091A31)]), boxShadow: earned ? [BoxShadow(color: accent.withOpacity(.18), blurRadius: 17)] : []),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(17), border: Border.all(color: accent.withOpacity(earned ? .98 : .55), width: earned ? 1.5 : 1), gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color.lerp(const Color(0xFF1B1307), accent, earned ? .18 : .07)!, const Color(0xFF100B05), const Color(0xFF091A31)]), boxShadow: earned ? [BoxShadow(color: accent.withOpacity(.18), blurRadius: 17)] : []),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Center(child: SizedBox(width: 86, height: 84, child: Stack(alignment: Alignment.center, children: [
           Container(width: 76, height: 76, decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [accent.withOpacity(earned ? .42 : .16), accent.withOpacity(.02)]), border: Border.all(color: accent.withOpacity(earned ? .95 : .45), width: 2), boxShadow: [if (earned) BoxShadow(color: accent.withOpacity(.35), blurRadius: 17)])),
           Icon(Icons.stars, size: 82, color: accent.withOpacity(earned ? .9 : .3)),
-          Container(width: 47, height: 47, decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [Color.lerp(accent, Colors.white, .35)!, accent, Color.lerp(accent, Colors.black, .5)!]), border: Border.all(color: Colors.white.withOpacity(.7), width: 1.4), boxShadow: [BoxShadow(color: accent.withOpacity(.3), blurRadius: 9)]), child: Icon(icon, color: const Color(0xFF061020), size: 27)),
+          Container(width: 47, height: 47, decoration: BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [Color.lerp(accent, Colors.white, .35)!, accent, Color.lerp(accent, Colors.black, .5)!]), border: Border.all(color: Colors.white.withOpacity(.7), width: 1.4), boxShadow: [BoxShadow(color: accent.withOpacity(.3), blurRadius: 9)]), child: Icon(icon, color: const Color(0xFF100B05), size: 27)),
           if (!earned) Positioned(right: 0, bottom: 0, child: Container(padding: const EdgeInsets.all(5), decoration: const BoxDecoration(color: Color(0xFF172A42), shape: BoxShape.circle), child: const Icon(Icons.lock, size: 16, color: Color(0xFF9DAFC5)))),
           if (earned) Positioned(right: 0, bottom: 0, child: Container(padding: const EdgeInsets.all(3), decoration: const BoxDecoration(color: Color(0xFF0DE0A0), shape: BoxShape.circle), child: const Icon(Icons.check, size: 15, color: Color(0xFF04211D)))),
         ]))),
@@ -5322,7 +5423,7 @@ class _HallOfFamePageState extends State<HallOfFamePage> {
       final clean = [...stats]..sort((a,b) => b.cleanSheets.compareTo(a.cleanSheets));
       Widget legend(String title, IconData icon, Color color, List<GlobalPlayerStat> list, int Function(GlobalPlayerStat) value, String suffix) => Container(
         margin: const EdgeInsets.only(bottom: 13), padding: const EdgeInsets.fromLTRB(13, 13, 13, 10),
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(19), border: Border.all(color: color, width: 1.3), gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [color.withOpacity(.14), const Color(0xFF061020), const Color(0xFF091A30)]), boxShadow: [BoxShadow(color: color.withOpacity(.12), blurRadius: 18)]),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(19), border: Border.all(color: color, width: 1.3), gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [color.withOpacity(.14), const Color(0xFF100B05), const Color(0xFF091A30)]), boxShadow: [BoxShadow(color: color.withOpacity(.12), blurRadius: 18)]),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [Icon(icon, color: color, size: 23), const SizedBox(width: 9), Expanded(child: Text(title, style: TextStyle(color: color, fontWeight: FontWeight.w900, letterSpacing: .45, fontSize: 13))), Text('TOP 3', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w900))]),
           const SizedBox(height: 8),
@@ -5437,7 +5538,7 @@ class _PlayerAchievementShowcaseState extends State<PlayerAchievementShowcase> {
           (title: 'FIVE-STAR WINNER', detail: '5 wins', icon: Icons.stars, color: const Color(0xFFFFB547), earned: stat.won >= 5),
           (title: 'GOAL MACHINE', detail: '10 goals', icon: Icons.bolt, color: _cyan, earned: stat.goals >= 10),
           (title: 'CLINICAL FINISHER', detail: '25 goals', icon: Icons.gps_fixed, color: const Color(0xFFFF4658), earned: stat.goals >= 25),
-          (title: 'THE WALL', detail: '5 clean sheets', icon: Icons.shield, color: const Color(0xFF31C9FF), earned: stat.cleanSheets >= 5),
+          (title: 'THE WALL', detail: '5 clean sheets', icon: Icons.shield, color: const Color(0xFFFFD34A), earned: stat.cleanSheets >= 5),
           (title: 'VETERAN', detail: '25 matches', icon: Icons.workspace_premium, color: _purple, earned: stat.played >= 25),
           (title: 'CENTURION', detail: '100 matches', icon: Icons.workspace_premium, color: _yellow, earned: stat.played >= 100),
           (title: 'UNBEATEN RUN', detail: '5 matches unbeaten', icon: Icons.security, color: const Color(0xFF31E69A), earned: stat.played >= 5 && stat.lost == 0),
@@ -6446,7 +6547,7 @@ class _ProfilePageState extends State<ProfilePage> {
           ],
         ),
         const SizedBox(height: 12), Text(p?.gamerTag ?? 'PLAYER', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900)), Text(p?.name ?? '', style: const TextStyle(color: _muted)), const SizedBox(height: 8),
-        Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: (online ? const Color(0xFF20E070) : const Color(0xFF667085)).withOpacity(.12), borderRadius: BorderRadius.circular(30), border: Border.all(color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085))), const SizedBox(width: 7), Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11, fontWeight: FontWeight.w900))])),
+        Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: (online ? const Color(0xFF20E070) : const Color(0xFFB7A77C)).withOpacity(.12), borderRadius: BorderRadius.circular(30), border: Border.all(color: online ? const Color(0xFF20E070) : const Color(0xFFB7A77C))), child: Row(mainAxisSize: MainAxisSize.min, children: [Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFFB7A77C))), const SizedBox(width: 7), Text(online ? 'ONLINE' : 'OFFLINE', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11, fontWeight: FontWeight.w900))])),
       ])),
       const SizedBox(height: 16),
       if (p != null) PlayerAchievementShowcase(playerId: p.id),
@@ -6480,7 +6581,7 @@ class _ProfilePageState extends State<ProfilePage> {
         Row(children: [Expanded(child: FilledButton.icon(onPressed: saving ? null : saveProfile, icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save), label: Text(saving ? 'SAVING...' : 'SAVE PROFILE'))), const SizedBox(width: 8), if (_hasSavedDetails(p)) IconButton(onPressed: saving ? null : () => setState(() => editing = false), icon: const Icon(Icons.close, color: _muted))]),
       ],
       const SizedBox(height: 8),
-      Container(decoration: _neonBox(_purple, radius: 18), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 4), leading: Stack(children: [const Icon(Icons.chat_bubble_outline, color: _purple, size: 29), Positioned(right: -2, bottom: -2, child: Container(width: 9, height: 9, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]), title: const Text('PLAYERS & MESSAGES', style: TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'You are online • chat with other players' : 'Chat with other players and see their status'), trailing: const Icon(Icons.chevron_right, color: _purple), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())))),
+      Container(decoration: _neonBox(_purple, radius: 18), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 4), leading: Stack(children: [const Icon(Icons.chat_bubble_outline, color: _purple, size: 29), Positioned(right: -2, bottom: -2, child: Container(width: 9, height: 9, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFFB7A77C), border: Border.all(color: _panel, width: 2))))]), title: const Text('PLAYERS & MESSAGES', style: TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'You are online • chat with other players' : 'Chat with other players and see their status'), trailing: const Icon(Icons.chevron_right, color: _purple), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())))),
       const SizedBox(height: 10),
       _neonAction(context, Icons.bar_chart, 'MY STATS & HISTORY', 'Confirmed results and league statistics', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerStatsPage()))),
       const SizedBox(height: 9),
@@ -6828,17 +6929,17 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
               decoration: const InputDecoration(
                 labelText: 'League name',
                 hintText: 'e.g. CHIBBYBALL Season 1',
-                labelStyle: TextStyle(color: Color(0xFFB9C7DA)),
+                labelStyle: TextStyle(color: Color(0xFFFFE9B0)),
                 hintStyle: TextStyle(color: Color(0xFF8193AA)),
                 prefixIcon: Icon(Icons.emoji_events_outlined),
                 filled: true,
-                fillColor: Color(0xE6091221),
+                fillColor: Color(0xE6120D05),
                 border: OutlineInputBorder(),
                 enabledBorder: OutlineInputBorder(
                   borderSide: BorderSide(color: Color(0xFF14728B)),
                 ),
                 focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Color(0xFF00D9FF), width: 2),
+                  borderSide: BorderSide(color: Color(0xFFFFC928), width: 2),
                 ),
               ),
             ),
@@ -6990,7 +7091,7 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                           ),
                         )
                       else
-                        const Text('Home & Away is already enabled.', style: TextStyle(color: Color(0xFF00D9FF), fontWeight: FontWeight.w800)),
+                        const Text('Home & Away is already enabled.', style: TextStyle(color: Color(0xFFFFC928), fontWeight: FontWeight.w800)),
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 8,
@@ -8095,7 +8196,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
           final isMember = memberIds.contains(player.id);
           final online = player.isOnline && (player.lastSeen == null || DateTime.now().toUtc().difference(player.lastSeen!.toUtc()).inMinutes < 3);
           return Container(margin: const EdgeInsets.only(bottom: 9), decoration: _neonBox(isMember ? _cyan : _blue, radius: 17), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8), child: Row(children: [
-            Stack(children: [_playerAvatar(player, radius: 23, accent: isMember ? _cyan : _blue), Positioned(right: 0, bottom: 0, child: Container(width: 11, height: 11, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]),
+            Stack(children: [_playerAvatar(player, radius: 23, accent: isMember ? _cyan : _blue), Positioned(right: 0, bottom: 0, child: Container(width: 11, height: 11, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFFB7A77C), border: Border.all(color: _panel, width: 2))))]),
             const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)), Text(online ? 'Online' : 'Offline', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11)), const SizedBox(height: 2), Text(isMember ? 'Registered in selected league' : 'Not in selected league', style: const TextStyle(color: _muted, fontSize: 10)),
              if (isMember && store.isSuspended(player.id))
                const Padding(
@@ -8879,7 +8980,7 @@ class _AdminPageState extends State<AdminPage> {
         const SizedBox(height: 10),
         ...players.take(20).map((player) {
           final online = player.isOnline && (player.lastSeen == null || DateTime.now().toUtc().difference(player.lastSeen!.toUtc()).inMinutes < 3);
-          return Container(margin: const EdgeInsets.only(bottom: 8), decoration: _neonBox(online ? _cyan : _blue, radius: 16), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2), leading: Stack(children: [_playerAvatar(player, radius: 22, accent: online ? _cyan : _blue), Positioned(right: 0, bottom: 0, child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFF667085), border: Border.all(color: _panel, width: 2))))]), title: Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'Online' : 'Offline', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11)), trailing: IconButton(tooltip: 'Message', onPressed: () => open(ChatPage(player: player)), icon: const Icon(Icons.chat_bubble_outline, color: _purple))));
+          return Container(margin: const EdgeInsets.only(bottom: 8), decoration: _neonBox(online ? _cyan : _blue, radius: 16), child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2), leading: Stack(children: [_playerAvatar(player, radius: 22, accent: online ? _cyan : _blue), Positioned(right: 0, bottom: 0, child: Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFFB7A77C), border: Border.all(color: _panel, width: 2))))]), title: Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(online ? 'Online' : 'Offline', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted, fontSize: 11)), trailing: IconButton(tooltip: 'Message', onPressed: () => open(ChatPage(player: player)), icon: const Icon(Icons.chat_bubble_outline, color: _purple))));
         }),
       ])),
     );
@@ -9089,7 +9190,7 @@ class _TournamentTreePainter extends CustomPainter {
       this.cardWidth, this.gap, this.rowHeight);
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = const Color(0xFF00D9FF)
+    final paint = Paint()..color = const Color(0xFFFFC928)
       ..strokeWidth = 2..style = PaintingStyle.stroke;
     for (var stage = 0; stage < stages - 1; stage++) {
       final count = firstCount >> stage;
