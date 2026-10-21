@@ -6134,7 +6134,7 @@ class _CommunityTournamentsPageState extends State<CommunityTournamentsPage> wit
           actions.add(OutlinedButton(onPressed:()=>_showRequests(t),child:Text('JOIN REQUESTS ($pending)')));
           if(isOpen) actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'ongoing'),child:const Text('START')));
           if(status=='ongoing' && _matchesFor(id).isEmpty) actions.add(TextButton(onPressed:()=>_generateFixtures(t),child:const Text('GENERATE FIXTURES')));
-          if(status=='completed' || status=='cancelled') actions.add(TextButton(onPressed:()=>_reuseTournament(t),child:const Text('REUSE TOURNAMENT'));
+          if(status=='completed' || status=='cancelled') actions.add(TextButton(onPressed:()=>_reuseTournament(t),child:const Text('REUSE TOURNAMENT')));
           if(status=='ongoing' && _matchesFor(id).any((m)=>(m['stage']??'').toString()=='knockout')) actions.add(TextButton(onPressed:()=>_generateNextKnockoutRound(t),child:const Text('NEXT KNOCKOUT ROUND')));
           if(status=='ongoing') actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'completed'),child:const Text('FINISH')));
           if(status!='completed'&&status!='cancelled') actions.add(TextButton(onPressed:()=>_setTournamentStatus(t,'cancelled'),child:const Text('CANCEL')));
