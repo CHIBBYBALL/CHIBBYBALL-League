@@ -2524,14 +2524,55 @@ class Store {
     }
   }
 
+  Future<bool> isLeagueManager(String leagueId) async {
+    final me = current;
+    if (me == null) return false;
+    if (me.admin) return true;
+    try {
+      final row = await supabase
+          .from('league_managers')
+          .select('league_id')
+          .eq('league_id', leagueId)
+          .eq('player_id', me.id)
+          .maybeSingle();
+      return row != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<Set<String>> myManagedLeagueIds() async {
+    final me = current;
+    if (me == null) return <String>{};
+    if (me.admin) return leagues.map((l) => l.id).toSet();
+    final rows = await supabase
+        .from('league_managers')
+        .select('league_id')
+        .eq('player_id', me.id);
+    return (rows as List)
+        .map((r) => r['league_id'].toString())
+        .toSet();
+  }
+
   Future<String?> createLeague(String name, {required bool isPaid, required double entryFee, String currency = 'NGN', String fixtureMode = 'single_round'}) async {
     final clean = name.trim();
     if (clean.isEmpty) return 'League name is required.';
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
     if (isPaid && entryFee <= 0) return 'Enter a valid entry fee for a paid league.';
     if (!isPaid) entryFee = 0;
     try {
-      await supabase.from('leagues').insert({'name': clean, 'status': 'open', 'is_paid': isPaid, 'entry_fee': entryFee, 'currency': currency, 'fixture_mode': fixtureMode});
+      final me = current;
+      if (me == null) return 'Please log in again.';
+      if (me.admin) {
+        await supabase.from('leagues').insert({'name': clean, 'status': 'open', 'is_paid': isPaid, 'entry_fee': entryFee, 'currency': currency, 'fixture_mode': fixtureMode});
+      } else {
+        await supabase.rpc('creator_create_league', params: {
+          'p_name': clean,
+          'p_is_paid': isPaid,
+          'p_entry_fee': entryFee,
+          'p_currency': currency,
+          'p_fixture_mode': fixtureMode,
+        });
+      }
       await refreshLeagues();
       return null;
     } on PostgrestException catch (e) { return 'Could not create league: ${e.message}'; }
@@ -2539,7 +2580,7 @@ class Store {
   }
 
   Future<String?> setLeagueStatus(String leagueId, String status) async {
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    if (!await isLeagueManager(leagueId)) return 'You do not manage this league.';
     try {
       // Multiple leagues are allowed to be ACTIVE at the same time.
       // Activating this league must never deactivate another league.
@@ -2565,7 +2606,7 @@ class Store {
   }
 
   Future<String?> addLeagueMember(String leagueId, String playerId) async {
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    if (!await isLeagueManager(leagueId)) return 'You do not manage this league.';
     final target = players.where((p) => p.id == playerId).firstOrNull;
     if (target != null && !target.profileComplete) {
       return 'Player must complete phone, country, country code and WhatsApp before joining a league.';
@@ -2584,7 +2625,7 @@ class Store {
   }
 
   Future<String?> removeLeagueMember(String leagueId, String playerId) async {
-    if (Store.instance.current?.admin != true) return 'Admin access required.';
+    if (!await isLeagueManager(leagueId)) return 'You do not manage this league.';
     try {
       await supabase
           .from('league_members')
@@ -3039,7 +3080,7 @@ class Store {
   }
 
   Future<List<LeagueJoinRequest>> fetchLeagueJoinRequests({bool pendingOnly = false}) async {
-    if (current?.admin != true) return [];
+    if (current == null) return [];
     try {
       final data = await supabase.rpc('list_my_league_join_requests');
       final rows = (data as List)
@@ -3053,12 +3094,19 @@ class Store {
   }
 
   Future<String?> adminReviewLeagueJoinRequest({required String requestId, required String decision}) async {
-    if (current?.admin != true) return 'Admin access required.';
+    if (current == null) return 'Please log in again.';
     try {
-      await supabase.rpc('admin_review_league_join_request', params: {
-        'p_request_id': requestId,
-        'p_decision': decision,
-      });
+      if (current?.admin == true) {
+        await supabase.rpc('admin_review_league_join_request', params: {
+          'p_request_id': requestId,
+          'p_decision': decision,
+        });
+      } else {
+        await supabase.rpc('review_creator_league_join_request', params: {
+          'p_request_id': requestId,
+          'p_decision': decision,
+        });
+      }
       return null;
     } on PostgrestException catch (e) {
       return e.message;
@@ -3628,7 +3676,7 @@ class Store {
   /// changing any existing fixture, result, proof, or submission.
   /// Missing reverse fixtures are appended in rounds after the current rounds.
   Future<String?> convertLeagueToHomeAway(String leagueId) async {
-    if (current?.admin != true) return 'Admin access required.';
+    if (!await isLeagueManager(leagueId)) return 'You do not manage this league.';
 
     try {
       final leagueRow = await supabase
@@ -3730,9 +3778,7 @@ class Store {
     required String startTime,
     required String endTime,
   }) async {
-    if (Store.instance.current?.admin != true) {
-      return 'Admin access required.';
-    }
+    if (current?.admin != true) return 'Admin access required.';
 
     try {
       await supabase.from('matches').update({
@@ -4103,7 +4149,7 @@ class Store {
     DateTime? startDate,
     DateTime? endDate,
   }) async {
-    if (current?.admin != true) return 'Admin access required.';
+    if (!await isLeagueManager(leagueId)) return 'You do not manage this league.';
     if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
       return 'End date cannot be before start date.';
     }
@@ -4127,7 +4173,7 @@ class Store {
     bool? graceEnabled,
     bool? dateControlsEnabled,
   }) async {
-    if (current?.admin != true) return 'Admin access required.';
+    if (!await isLeagueManager(leagueId)) return 'You do not manage this league.';
     final payload = <String, dynamic>{};
     if (sequentialLockEnabled != null) payload['sequential_match_day_lock_enabled'] = sequentialLockEnabled;
     if (graceEnabled != null) payload['grace_period_enabled'] = graceEnabled;
@@ -5810,6 +5856,7 @@ class DashboardPage extends StatelessWidget {
             quickAction(Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
             quickAction(Icons.group_add, 'JOIN A LEAGUE', 'Find a competition to enter', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const JoinLeaguePage()))),
             quickAction(Icons.verified, 'CREATOR HUB', 'Explore creator leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
+            quickAction(Icons.dashboard_customize, 'CREATOR DASHBOARD', 'Create and manage your own leagues', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueManagementPage(creatorMode: true)))),
             quickAction(Icons.emoji_events, 'CHAMPIONS LEAGUE', 'Follow the championship', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChampionsLeaguePage()))),
             quickAction(Icons.military_tech, 'ACHIEVEMENTS', 'Unlock badges from confirmed results', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AchievementsPage()))),
             quickAction(Icons.workspace_premium, 'HALL OF FAME', 'Celebrate CHIBBYBALL top performers', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HallOfFamePage()))),
@@ -8550,7 +8597,8 @@ class PlayerStatsPage extends StatelessWidget {
 // ============================================================
 
 class LeagueManagementPage extends StatefulWidget {
-  const LeagueManagementPage({super.key});
+  final bool creatorMode;
+  const LeagueManagementPage({super.key, this.creatorMode = false});
 
   @override
   State<LeagueManagementPage> createState() => _LeagueManagementPageState();
@@ -8562,8 +8610,10 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
   bool isPaidLeague = false;
   String fixtureMode = 'single_round';
   bool loading = false;
+  bool canCreate = false;
   String? selectedLeagueId;
   Set<String> memberIds = {};
+  List<LeagueInfo> visibleLeagues = [];
 
   Store get store => Store.instance;
 
@@ -8585,12 +8635,24 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
     try {
       await store.refreshPlayers();
       await store.refreshLeagues();
-      if (store.leagues.isNotEmpty) {
-        selectedLeagueId ??= store.leagues.first.id;
-        if (!store.leagues.any((l) => l.id == selectedLeagueId)) {
-          selectedLeagueId = store.leagues.first.id;
+      if (widget.creatorMode && store.current?.admin != true) {
+        final permission = await store.myLeagueCreatorPermission();
+        canCreate = permission?['can_create'] == true;
+        final managedIds = await store.myManagedLeagueIds();
+        visibleLeagues = store.leagues.where((l) => managedIds.contains(l.id)).toList();
+      } else {
+        canCreate = store.current?.admin == true;
+        visibleLeagues = List<LeagueInfo>.from(store.leagues);
+      }
+      if (visibleLeagues.isNotEmpty) {
+        selectedLeagueId ??= visibleLeagues.first.id;
+        if (!visibleLeagues.any((l) => l.id == selectedLeagueId)) {
+          selectedLeagueId = visibleLeagues.first.id;
         }
         memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet();
+      } else {
+        selectedLeagueId = null;
+        memberIds = {};
       }
     } catch (e) {
       if (mounted) {
@@ -8682,21 +8744,26 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
 
   @override
   Widget build(BuildContext context) {
-    final selectedList = store.leagues.where((l) => l.id == selectedLeagueId).toList();
+    final selectedList = visibleLeagues.where((l) => l.id == selectedLeagueId).toList();
     final selected = selectedList.isEmpty ? null : selectedList.first;
     final playerList = store.players.where((p) => !p.admin).toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('League Management')),
+      appBar: AppBar(title: Text(widget.creatorMode ? 'Creator Dashboard' : 'League Management')),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text(
-              'CREATE NEW LEAGUE',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            Text(
+              widget.creatorMode ? 'CREATE A NEW LEAGUE' : 'CREATE NEW LEAGUE',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
+            if (widget.creatorMode && !canCreate)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text('Your Creator Badge or creator access is not currently enabled. You can still manage leagues assigned to you.', style: TextStyle(color: _muted)),
+              ),
             const SizedBox(height: 10),
             // Keep the league name field and CREATE action in a vertical layout.
             // This is more reliable on narrow mobile screens than squeezing both
@@ -8730,7 +8797,7 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
               height: 54,
               child: FilledButton.icon(
                 key: const ValueKey('create-league-button'),
-                onPressed: loading ? null : _createLeague,
+                onPressed: loading || !canCreate ? null : _createLeague,
                 icon: const Icon(Icons.add),
                 label: Text(loading ? 'PLEASE WAIT...' : 'CREATE LEAGUE'),
               ),
@@ -8790,15 +8857,15 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            if (store.leagues.isEmpty)
-              const Card(
+            if (visibleLeagues.isEmpty)
+              Card(
                 child: Padding(
-                  padding: EdgeInsets.all(18),
-                  child: Text('No leagues created yet.'),
+                  padding: const EdgeInsets.all(18),
+                  child: Text(widget.creatorMode ? 'You have not created or been assigned any leagues yet.' : 'No leagues created yet.'),
                 ),
               )
             else
-              ...store.leagues.map(
+              ...visibleLeagues.map(
                 (league) => Card(
                   child: ListTile(
                     selected: league.id == selectedLeagueId,
@@ -8839,6 +8906,48 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                       Text(selected.feeLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
                       const SizedBox(height: 8),
                       Text('Fixture format: ${selected.fixtureModeLabel}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                      if (widget.creatorMode) ...[
+                        const SizedBox(height: 12),
+                        Wrap(spacing: 8, runSpacing: 8, children: [
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                                return;
+                              }
+                              final result = await store.generateFixtures();
+                              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result ?? 'Fixtures generated successfully.')));
+                            },
+                            icon: const Icon(Icons.auto_awesome),
+                            label: const Text('GENERATE FIXTURES'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                                return;
+                              }
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()));
+                            },
+                            icon: const Icon(Icons.leaderboard),
+                            label: const Text('VIEW STANDINGS'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueJoinRequestsAdminPage(creatorMode: true))),
+                            icon: const Icon(Icons.person_add_alt_1),
+                            label: const Text('JOIN REQUESTS'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CreatorLeagueSettingsPage(league: selected))),
+                            icon: const Icon(Icons.settings),
+                            label: const Text('LEAGUE SETTINGS'),
+                          ),
+                        ]),
+                      ],
                       const SizedBox(height: 12),
                       if (!selected.isHomeAway)
                         SizedBox(
@@ -8946,6 +9055,108 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
 }
 
 
+
+// ============================================================
+// CREATOR LEAGUE SETTINGS
+// ============================================================
+
+class CreatorLeagueSettingsPage extends StatefulWidget {
+  final LeagueInfo league;
+  const CreatorLeagueSettingsPage({super.key, required this.league});
+
+  @override
+  State<CreatorLeagueSettingsPage> createState() => _CreatorLeagueSettingsPageState();
+}
+
+class _CreatorLeagueSettingsPageState extends State<CreatorLeagueSettingsPage> {
+  DateTime? startDate;
+  DateTime? endDate;
+  late bool dateControlsEnabled;
+  late bool sequentialLockEnabled;
+  late bool graceEnabled;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    startDate = widget.league.startDate;
+    endDate = widget.league.endDate;
+    dateControlsEnabled = widget.league.matchDayDateControlsEnabled;
+    sequentialLockEnabled = widget.league.sequentialMatchDayLockEnabled;
+    graceEnabled = widget.league.gracePeriodEnabled;
+  }
+
+  String _dateLabel(DateTime? date) => date == null
+      ? 'Not set'
+      : '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  Future<DateTime?> _pickDate(DateTime? initial) async {
+    final now = DateTime.now();
+    return showDatePicker(
+      context: context,
+      initialDate: initial ?? now,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+  }
+
+  Future<void> _save() async {
+    if (startDate != null && endDate != null && endDate!.isBefore(startDate!)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('End date cannot be before start date.')));
+      return;
+    }
+    setState(() => saving = true);
+    final store = Store.instance;
+    final dateError = await store.updateLeagueDates(
+      leagueId: widget.league.id,
+      startDate: startDate,
+      endDate: endDate,
+    );
+    if (dateError != null) {
+      if (mounted) setState(() => saving = false);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(dateError)));
+      return;
+    }
+    final controlError = await store.updateMatchDayControls(
+      leagueId: widget.league.id,
+      dateControlsEnabled: dateControlsEnabled,
+      sequentialLockEnabled: sequentialLockEnabled,
+      graceEnabled: graceEnabled,
+    );
+    if (!mounted) return;
+    setState(() => saving = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(controlError ?? 'League settings saved.')));
+    if (controlError == null) Navigator.pop(context, true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('LEAGUE SETTINGS')),
+      body: ListView(padding: const EdgeInsets.all(16), children: [
+        Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(widget.league.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 12),
+          ListTile(contentPadding: EdgeInsets.zero, title: const Text('LEAGUE START DATE'), subtitle: Text(_dateLabel(startDate)), trailing: Wrap(children: [
+            IconButton(onPressed: saving ? null : () async { final d = await _pickDate(startDate); if (d != null && mounted) setState(() => startDate = d); }, icon: const Icon(Icons.calendar_month)),
+            IconButton(onPressed: saving ? null : () => setState(() => startDate = null), icon: const Icon(Icons.clear)),
+          ])),
+          ListTile(contentPadding: EdgeInsets.zero, title: const Text('LEAGUE END DATE'), subtitle: Text(_dateLabel(endDate)), trailing: Wrap(children: [
+            IconButton(onPressed: saving ? null : () async { final d = await _pickDate(endDate ?? startDate); if (d != null && mounted) setState(() => endDate = d); }, icon: const Icon(Icons.calendar_month)),
+            IconButton(onPressed: saving ? null : () => setState(() => endDate = null), icon: const Icon(Icons.clear)),
+          ])),
+        ]))),
+        Card(child: Column(children: [
+          SwitchListTile(title: const Text('Match Day date controls'), subtitle: const Text('Require scheduled dates for Match Day access.'), value: dateControlsEnabled, onChanged: saving ? null : (v) => setState(() => dateControlsEnabled = v)),
+          SwitchListTile(title: const Text('Sequential Match Day lock'), subtitle: const Text('Players must complete earlier Match Days first.'), value: sequentialLockEnabled, onChanged: saving ? null : (v) => setState(() => sequentialLockEnabled = v)),
+          SwitchListTile(title: const Text('Grace period'), subtitle: const Text('Allow the configured grace period after a Match Day closes.'), value: graceEnabled, onChanged: saving ? null : (v) => setState(() => graceEnabled = v)),
+        ])),
+        const SizedBox(height: 14),
+        FilledButton.icon(onPressed: saving ? null : _save, icon: saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save), label: Text(saving ? 'SAVING...' : 'SAVE SETTINGS')),
+      ]),
+    );
+  }
+}
 
 // ============================================================
 // PLAYER LEAGUE REQUEST
@@ -10456,7 +10667,8 @@ class _ChampionsLeaguePageState extends State<ChampionsLeaguePage> {
 // ============================================================
 
 class LeagueJoinRequestsAdminPage extends StatefulWidget {
-  const LeagueJoinRequestsAdminPage({super.key});
+  final bool creatorMode;
+  const LeagueJoinRequestsAdminPage({super.key, this.creatorMode = false});
   @override State<LeagueJoinRequestsAdminPage> createState() => _LeagueJoinRequestsAdminPageState();
 }
 
@@ -10488,7 +10700,7 @@ class _LeagueJoinRequestsAdminPageState extends State<LeagueJoinRequestsAdminPag
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('PLAYER JOIN REQUESTS'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
+      appBar: AppBar(title: Text(widget.creatorMode ? 'MY LEAGUE JOIN REQUESTS' : 'PLAYER JOIN REQUESTS'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
