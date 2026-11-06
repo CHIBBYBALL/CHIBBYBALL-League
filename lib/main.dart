@@ -8597,6 +8597,147 @@ class PlayerStatsPage extends StatelessWidget {
 }
 
 // ============================================================
+// CREATOR COMMUNICATION CENTRE — creator-facing inbox
+// Reads official admin notifications and private admin messages.
+// ============================================================
+class CreatorCommunicationPage extends StatefulWidget {
+  const CreatorCommunicationPage({super.key});
+  @override
+  State<CreatorCommunicationPage> createState() => _CreatorCommunicationPageState();
+}
+
+class _CreatorCommunicationPageState extends State<CreatorCommunicationPage> {
+  final Store _store = Store.instance;
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _notifications = [];
+  List<Map<String, dynamic>> _messages = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final me = _store.current?.id;
+    if (me == null) {
+      setState(() { _loading = false; _error = 'Please sign in again.'; });
+      return;
+    }
+    if (mounted) setState(() { _loading = true; _error = null; });
+    try {
+      final notifications = await _store.supabase
+          .from('creator_notifications')
+          .select('id, notification_type, title, body, created_at, read_at')
+          .eq('creator_id', me)
+          .order('created_at', ascending: false);
+      final messages = await _store.supabase
+          .from('creator_messages')
+          .select('id, sender_id, message, created_at, read_at')
+          .eq('creator_id', me)
+          .eq('recipient_id', me)
+          .order('created_at', ascending: false);
+      _notifications = (notifications as List)
+          .map((e) => Map<String, dynamic>.from(e)).toList();
+      _messages = (messages as List)
+          .map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (e) {
+      _error = e.toString();
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _markRead(String id) async {
+    try {
+      await _store.supabase.rpc('mark_creator_notification_read', params: {
+        'p_notification_id': id,
+      });
+      await _load();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not mark notification as read: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_store.current == null || _store.current!.admin) {
+      return const Scaffold(body: Center(child: Text('Creator access required.')));
+    }
+    final unread = _notifications.where((n) => n['read_at'] == null).length;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('ADMIN COMMUNICATIONS'),
+        actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text('Could not load communications:\n$_error', textAlign: TextAlign.center),
+                ))
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView(
+                    padding: const EdgeInsets.all(14),
+                    children: [
+                      _neonSectionTitle('OFFICIAL ADMIN NOTIFICATIONS', accent: _yellow),
+                      const SizedBox(height: 6),
+                      Text('$unread unread notifications', style: const TextStyle(color: _muted)),
+                      const SizedBox(height: 8),
+                      if (_notifications.isEmpty)
+                        const Text('You have no official admin notifications yet.'),
+                      ..._notifications.map((n) {
+                        final isUnread = n['read_at'] == null;
+                        return Card(
+                          color: _panel,
+                          child: ListTile(
+                            leading: Icon(
+                              isUnread ? Icons.mark_email_unread_outlined : Icons.mark_email_read_outlined,
+                              color: isUnread ? _yellow : _muted,
+                            ),
+                            title: Text(n['title']?.toString() ?? 'Admin notification',
+                                style: TextStyle(fontWeight: isUnread ? FontWeight.w900 : FontWeight.w600)),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text('${n['body'] ?? ''}\n${n['created_at'] ?? ''}'),
+                            ),
+                            isThreeLine: true,
+                            trailing: isUnread
+                                ? IconButton(
+                                    tooltip: 'Mark as read',
+                                    icon: const Icon(Icons.done, color: _cyan),
+                                    onPressed: () => _markRead(n['id'].toString()),
+                                  )
+                                : const Icon(Icons.check_circle_outline, color: _muted),
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 18),
+                      _neonSectionTitle('PRIVATE ADMIN MESSAGES', accent: _cyan),
+                      const SizedBox(height: 8),
+                      if (_messages.isEmpty)
+                        const Text('No private admin messages yet.'),
+                      ..._messages.map((m) => Card(
+                        color: _panel,
+                        child: ListTile(
+                          leading: const Icon(Icons.mail_outline, color: _cyan),
+                          title: const Text('Message from CHIBBYBALL Admin'),
+                          subtitle: Text('${m['message'] ?? ''}\n${m['created_at'] ?? ''}'),
+                          isThreeLine: true,
+                        ),
+                      )),
+                    ],
+                  ),
+                ),
+    );
+  }
+}
+
+// ============================================================
 // LEAGUE MANAGEMENT
 // ============================================================
 
@@ -8753,7 +8894,19 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
     final playerList = store.players.where((p) => !p.admin).toList();
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.creatorMode ? 'Creator Dashboard' : 'League Management')),
+      appBar: AppBar(
+        title: Text(widget.creatorMode ? 'Creator Dashboard' : 'League Management'),
+        actions: [
+          if (widget.creatorMode && store.current?.admin != true)
+            IconButton(
+              tooltip: 'Admin notifications and messages',
+              icon: const Icon(Icons.notifications_active_outlined),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(
+                builder: (_) => const CreatorCommunicationPage(),
+              )),
+            ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
