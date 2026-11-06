@@ -8597,6 +8597,20 @@ class PlayerStatsPage extends StatelessWidget {
 }
 
 // ============================================================
+// Format Supabase UTC timestamps in the device's local timezone.
+String _formatCommunicationTimestamp(dynamic raw) {
+  if (raw == null) return '';
+  final parsed = DateTime.tryParse(raw.toString());
+  if (parsed == null) return raw.toString();
+  final local = parsed.toLocal();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  final hour24 = local.hour;
+  final hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12;
+  final minute = local.minute.toString().padLeft(2, '0');
+  final suffix = hour24 >= 12 ? 'PM' : 'AM';
+  return '${local.day} ${months[local.month - 1]} ${local.year} • $hour12:$minute $suffix';
+}
+
 // CREATOR COMMUNICATION CENTRE — creator-facing inbox
 // Reads official admin notifications and private admin messages.
 // ============================================================
@@ -8642,6 +8656,25 @@ class _CreatorCommunicationPageState extends State<CreatorCommunicationPage> {
           .map((e) => Map<String, dynamic>.from(e)).toList();
       _messages = (messages as List)
           .map((e) => Map<String, dynamic>.from(e)).toList();
+
+      // Opening the inbox marks every unread admin message as read. The RPC
+      // verifies the signed-in creator is the intended recipient.
+      final unreadMessageIds = _messages
+          .where((m) => m['read_at'] == null)
+          .map((m) => m['id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList();
+      for (final messageId in unreadMessageIds) {
+        try {
+          await _store.supabase.rpc('mark_creator_message_read', params: {
+            'p_message_id': messageId,
+          });
+          final row = _messages.firstWhere((m) => m['id'].toString() == messageId);
+          row['read_at'] = DateTime.now().toUtc().toIso8601String();
+        } catch (readError) {
+          debugPrint('Could not mark creator message $messageId as read: $readError');
+        }
+      }
     } catch (e) {
       _error = e.toString();
     }
@@ -8703,7 +8736,7 @@ class _CreatorCommunicationPageState extends State<CreatorCommunicationPage> {
                                 style: TextStyle(fontWeight: isUnread ? FontWeight.w900 : FontWeight.w600)),
                             subtitle: Padding(
                               padding: const EdgeInsets.only(top: 6),
-                              child: Text('${n['body'] ?? ''}\n${n['created_at'] ?? ''}'),
+                              child: Text('${n['body'] ?? ''}\n${_formatCommunicationTimestamp(n['created_at'])}'),
                             ),
                             isThreeLine: true,
                             trailing: isUnread
@@ -8724,9 +8757,14 @@ class _CreatorCommunicationPageState extends State<CreatorCommunicationPage> {
                       ..._messages.map((m) => Card(
                         color: _panel,
                         child: ListTile(
-                          leading: const Icon(Icons.mail_outline, color: _cyan),
+                          leading: Icon(
+                            m['read_at'] == null ? Icons.mark_email_unread_outlined : Icons.mark_email_read_outlined,
+                            color: m['read_at'] == null ? _yellow : _cyan,
+                          ),
                           title: const Text('Message from CHIBBYBALL Admin'),
-                          subtitle: Text('${m['message'] ?? ''}\n${m['created_at'] ?? ''}'),
+                          subtitle: Text(
+                            '${m['message'] ?? ''}\n${_formatCommunicationTimestamp(m['created_at'])}\n${m['read_at'] == null ? 'DELIVERED' : 'READ'}',
+                          ),
                           isThreeLine: true,
                         ),
                       )),
@@ -11304,6 +11342,23 @@ class _CreatorManagementPageState extends State<CreatorManagementPage> {
       final managers = await _store.supabase
           .from('league_managers')
           .select('player_id, league_id');
+      final adminId = _store.current?.id;
+      final sentMessages = ids.isEmpty || adminId == null
+          ? <dynamic>[]
+          : await _store.supabase
+              .from('creator_messages')
+              .select('creator_id, created_at, read_at')
+              .eq('sender_id', adminId)
+              .inFilter('creator_id', ids)
+              .order('created_at', ascending: false);
+      final latestMessageByCreator = <String, Map<String, dynamic>>{};
+      for (final message in sentMessages as List) {
+        final row = Map<String, dynamic>.from(message);
+        final creatorId = row['creator_id']?.toString() ?? '';
+        if (creatorId.isNotEmpty && !latestMessageByCreator.containsKey(creatorId)) {
+          latestMessageByCreator[creatorId] = row;
+        }
+      }
 
       final statusById = <String, Map<String, dynamic>>{};
       for (final row in statuses as List) {
@@ -11331,6 +11386,7 @@ class _CreatorManagementPageState extends State<CreatorManagementPage> {
           'reason': status['reason'],
           'league_count': leagueCounts[id] ?? 0,
           'sanction_count': sanctionCounts[id] ?? 0,
+          'latest_admin_message': latestMessageByCreator[id],
         };
       }).toList()
         ..sort((a, b) => (a['gamer_tag'] ?? '').toString().toLowerCase()
@@ -11524,6 +11580,20 @@ class _CreatorManagementPageState extends State<CreatorManagementPage> {
                   Text('$label • ${c['league_count']} leagues • ${c['sanction_count']} recorded actions', style: TextStyle(color: accent, fontSize: 11, fontWeight: FontWeight.w800)),
                   if (until != null && status == 'temporary_suspended') Text('Until: $until', style: const TextStyle(color: _muted, fontSize: 11)),
                   if ((c['reason'] ?? '').toString().isNotEmpty) Text('Latest reason: ${c['reason']}', style: const TextStyle(color: _muted, fontSize: 11)),
+                  if (c['latest_admin_message'] is Map) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Last admin message: ${(c['latest_admin_message'] as Map)['read_at'] == null ? 'SENT • NOT READ' : 'READ'}',
+                      style: TextStyle(
+                        color: (c['latest_admin_message'] as Map)['read_at'] == null ? _yellow : _cyan,
+                        fontSize: 11, fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      _formatCommunicationTimestamp((c['latest_admin_message'] as Map)['created_at']),
+                      style: const TextStyle(color: _muted, fontSize: 10),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Wrap(spacing: 8, children: [
                     OutlinedButton.icon(onPressed: () => _messageCreator(c), icon: const Icon(Icons.mail_outline), label: const Text('MESSAGE')),
