@@ -11050,6 +11050,8 @@ class _AdminPageState extends State<AdminPage> {
         _neonAction(context, Icons.emoji_events, 'MANAGE LEAGUES', 'Create and activate multiple leagues', _yellow, () => open(const LeagueManagementPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.fact_check_outlined, 'LEAGUE REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueRequestsAdminPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.admin_panel_settings, 'CREATOR MANAGEMENT', 'Review creators, complaints, private messages and sanctions', _yellow, () => open(const CreatorManagementPage())),
          _neonAction(context, Icons.person_add_alt_1, 'PLAYER JOIN REQUESTS', 'Approve or reject requests to join admin and creator leagues', _cyan, () => open(const LeagueJoinRequestsAdminPage())),
          const SizedBox(height: 9),
         const SizedBox(height: 9),
@@ -11093,6 +11095,307 @@ class _AdminPageState extends State<AdminPage> {
 }
 
 
+
+
+// ============================================================
+// CREATOR ACCOUNTABILITY — admin-only management interface
+// Uses creator_disciplinary_status, creator_sanctions,
+// creator_complaints, creator_messages and admin RPCs.
+// ============================================================
+class CreatorManagementPage extends StatefulWidget {
+  const CreatorManagementPage({super.key});
+  @override
+  State<CreatorManagementPage> createState() => _CreatorManagementPageState();
+}
+
+class _CreatorManagementPageState extends State<CreatorManagementPage> {
+  final _store = Store.instance;
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _creators = [];
+  List<Map<String, dynamic>> _complaints = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final badgeRows = await _store.supabase
+          .from('player_badges')
+          .select('player_id, badge_type')
+          .ilike('badge_type', 'creator');
+      final ids = (badgeRows as List)
+          .map((e) => e['player_id']?.toString() ?? '')
+          .where((e) => e.isNotEmpty)
+          .toSet()
+          .toList();
+
+      final profiles = ids.isEmpty
+          ? <dynamic>[]
+          : await _store.supabase
+              .from('profiles')
+              .select('id, full_name, gamer_tag, role, avatar_url')
+              .inFilter('id', ids);
+      final statuses = await _store.supabase
+          .from('creator_disciplinary_status')
+          .select('creator_id, status, suspension_until, reason, updated_at');
+      final sanctions = await _store.supabase
+          .from('creator_sanctions')
+          .select('creator_id, action, reason, created_at')
+          .order('created_at', ascending: false);
+      final managers = await _store.supabase
+          .from('league_managers')
+          .select('player_id, league_id');
+
+      final statusById = <String, Map<String, dynamic>>{};
+      for (final row in statuses as List) {
+        final m = Map<String, dynamic>.from(row);
+        statusById[m['creator_id'].toString()] = m;
+      }
+      final leagueCounts = <String, int>{};
+      for (final row in managers as List) {
+        final id = row['player_id']?.toString() ?? '';
+        leagueCounts[id] = (leagueCounts[id] ?? 0) + 1;
+      }
+      final sanctionCounts = <String, int>{};
+      for (final row in sanctions as List) {
+        final id = row['creator_id']?.toString() ?? '';
+        sanctionCounts[id] = (sanctionCounts[id] ?? 0) + 1;
+      }
+      _creators = (profiles as List).map((row) {
+        final m = Map<String, dynamic>.from(row);
+        final id = m['id'].toString();
+        final status = statusById[id] ?? <String, dynamic>{'status': 'active'};
+        return <String, dynamic>{
+          ...m,
+          'status': status['status'] ?? 'active',
+          'suspension_until': status['suspension_until'],
+          'reason': status['reason'],
+          'league_count': leagueCounts[id] ?? 0,
+          'sanction_count': sanctionCounts[id] ?? 0,
+        };
+      }).toList()
+        ..sort((a, b) => (a['gamer_tag'] ?? '').toString().toLowerCase()
+            .compareTo((b['gamer_tag'] ?? '').toString().toLowerCase()));
+
+      final complaints = await _store.supabase
+          .from('creator_complaints')
+          .select('id, creator_id, player_id, league_id, category, details, status, creator_response, admin_notes, created_at')
+          .order('created_at', ascending: false);
+      _complaints = (complaints as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (e) {
+      _error = e.toString();
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  String _tag(String id) {
+    final p = _store.findPlayer(id);
+    if (p != null) return p.gamerTag;
+    final row = _creators.where((e) => e['id'].toString() == id).firstOrNull;
+    return row?['gamer_tag']?.toString() ?? id;
+  }
+
+  Future<void> _sanction(Map<String, dynamic> creator) async {
+    final id = creator['id'].toString();
+    final reasonController = TextEditingController();
+    String action = 'warning';
+    int hours = 24;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Manage ${creator['gamer_tag'] ?? 'creator'}'),
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            DropdownButtonFormField<String>(
+              value: action,
+              decoration: const InputDecoration(labelText: 'Admin action'),
+              items: const [
+                DropdownMenuItem(value: 'warning', child: Text('Issue warning')),
+                DropdownMenuItem(value: 'temporary_suspension', child: Text('Temporary suspension')),
+                DropdownMenuItem(value: 'permanent_suspension', child: Text('Permanent suspension')),
+                DropdownMenuItem(value: 'restore', child: Text('Restore access')),
+                DropdownMenuItem(value: 'remove_badge', child: Text('Remove Creator Badge')),
+              ],
+              onChanged: (v) { if (v != null) setDialogState(() => action = v); },
+            ),
+            if (action == 'temporary_suspension') ...[
+              const SizedBox(height: 10),
+              DropdownButtonFormField<int>(
+                value: hours,
+                decoration: const InputDecoration(labelText: 'Suspension duration'),
+                items: const [24, 72, 168, 720, 2160, 8760]
+                    .map((v) => DropdownMenuItem(value: v, child: Text(v == 24 ? '24 hours' : v == 168 ? '7 days' : v == 720 ? '30 days' : v == 2160 ? '90 days' : v == 8760 ? '1 year' : '3 days')))
+                    .toList(),
+                onChanged: (v) { if (v != null) setDialogState(() => hours = v); },
+              ),
+            ],
+            const SizedBox(height: 10),
+            TextField(controller: reasonController, minLines: 2, maxLines: 4,
+              decoration: const InputDecoration(labelText: 'Reason (required)', border: OutlineInputBorder())),
+          ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('CANCEL')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('CONFIRM')),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) { reasonController.dispose(); return; }
+    if (reasonController.text.trim().isEmpty) {
+      reasonController.dispose();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a reason.')));
+      return;
+    }
+    try {
+      await _store.supabase.rpc('admin_set_creator_sanction', params: {
+        'p_creator_id': id,
+        'p_action': action,
+        'p_reason': reasonController.text.trim(),
+        'p_duration_hours': action == 'temporary_suspension' ? hours : null,
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Creator action saved.')));
+      await _load();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save action: $e')));
+    } finally {
+      reasonController.dispose();
+    }
+  }
+
+  Future<void> _messageCreator(Map<String, dynamic> creator) async {
+    final controller = TextEditingController();
+    final send = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: Text('Message ${creator['gamer_tag'] ?? 'creator'}'),
+        content: TextField(controller: controller, minLines: 3, maxLines: 6,
+          decoration: const InputDecoration(hintText: 'Write a private admin message...', border: OutlineInputBorder())),
+        actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('CANCEL')),
+          FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('SEND'))],
+      ),
+    );
+    if (send == true && controller.text.trim().isNotEmpty) {
+      try {
+        final me = _store.current?.id;
+        if (me == null) throw Exception('Admin session not found.');
+        await _store.supabase.from('creator_messages').insert({
+          'creator_id': creator['id'],
+          'sender_id': me,
+          'recipient_id': creator['id'],
+          'message': controller.text.trim(),
+        });
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Private message sent.')));
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Message failed: $e')));
+      }
+    }
+    controller.dispose();
+  }
+
+  Future<void> _reviewComplaint(Map<String, dynamic> complaint) async {
+    String status = complaint['status']?.toString() ?? 'submitted';
+    final notes = TextEditingController(text: complaint['admin_notes']?.toString() ?? '');
+    final save = await showDialog<bool>(context: context, builder: (d) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text('Review player complaint'),
+        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Creator: ${_tag(complaint['creator_id'].toString())}'),
+          Text('Player: ${_tag(complaint['player_id'].toString())}'),
+          const SizedBox(height: 8), Text('Category: ${complaint['category']}'),
+          const SizedBox(height: 8), Text(complaint['details']?.toString() ?? ''),
+          if ((complaint['creator_response'] ?? '').toString().isNotEmpty) ...[
+            const SizedBox(height: 10), const Text('Creator response', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text(complaint['creator_response'].toString()),
+          ],
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(value: status,
+            items: const [
+              DropdownMenuItem(value: 'under_review', child: Text('Under review')),
+              DropdownMenuItem(value: 'resolved', child: Text('Resolved')),
+              DropdownMenuItem(value: 'dismissed', child: Text('Dismissed')),
+            ], onChanged: (v) { if (v != null) setDialogState(() => status = v); }),
+          const SizedBox(height: 10),
+          TextField(controller: notes, minLines: 2, maxLines: 4,
+            decoration: const InputDecoration(labelText: 'Private admin notes', border: OutlineInputBorder())),
+        ])),
+        actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('CANCEL')),
+          FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('SAVE REVIEW'))],
+      ),
+    ));
+    if (save == true) {
+      try {
+        await _store.supabase.rpc('admin_review_creator_complaint', params: {
+          'p_complaint_id': complaint['id'], 'p_status': status,
+          'p_admin_notes': notes.text.trim(),
+        });
+        await _load();
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Review failed: $e')));
+      }
+    }
+    notes.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_store.current?.admin != true) {
+      return const Scaffold(body: Center(child: Text('Admin access required.')));
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('CREATOR MANAGEMENT'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
+      body: _loading ? const Center(child: CircularProgressIndicator()) : _error != null
+          ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Text('Could not load creator management data:\n$_error', textAlign: TextAlign.center)))
+          : RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(14), children: [
+              _neonSectionTitle('CREATOR ACCOUNTS', accent: _cyan),
+              const SizedBox(height: 8),
+              Text('${_creators.length} Creator Badge holders', style: const TextStyle(color: _muted)),
+              const SizedBox(height: 10),
+              if (_creators.isEmpty) const Text('No Creator Badge holders found.'),
+              ..._creators.map((c) {
+                final status = c['status'].toString();
+                final until = c['suspension_until']?.toString();
+                final label = status == 'temporary_suspended' ? 'TEMPORARILY SUSPENDED'
+                    : status == 'permanently_suspended' ? 'PERMANENTLY SUSPENDED' : 'ACTIVE';
+                final accent = status == 'active' ? _cyan : _yellow;
+                return Container(margin: const EdgeInsets.only(bottom: 9), padding: const EdgeInsets.all(12), decoration: _neonBox(accent, radius: 16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(c['gamer_tag']?.toString() ?? c['full_name']?.toString() ?? 'Creator', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                  const SizedBox(height: 4),
+                  Text('$label • ${c['league_count']} leagues • ${c['sanction_count']} recorded actions', style: TextStyle(color: accent, fontSize: 11, fontWeight: FontWeight.w800)),
+                  if (until != null && status == 'temporary_suspended') Text('Until: $until', style: const TextStyle(color: _muted, fontSize: 11)),
+                  if ((c['reason'] ?? '').toString().isNotEmpty) Text('Latest reason: ${c['reason']}', style: const TextStyle(color: _muted, fontSize: 11)),
+                  const SizedBox(height: 8),
+                  Wrap(spacing: 8, children: [
+                    OutlinedButton.icon(onPressed: () => _messageCreator(c), icon: const Icon(Icons.mail_outline), label: const Text('MESSAGE')),
+                    FilledButton.tonalIcon(onPressed: () => _sanction(c), icon: const Icon(Icons.gavel), label: const Text('MANAGE ACCESS')),
+                  ]),
+                ]));
+              }),
+              const SizedBox(height: 16),
+              _neonSectionTitle('PLAYER COMPLAINTS', accent: _yellow),
+              const SizedBox(height: 8),
+              Text('${_complaints.length} submitted complaints', style: const TextStyle(color: _muted)),
+              const SizedBox(height: 8),
+              if (_complaints.isEmpty) const Text('No player complaints submitted yet.'),
+              ..._complaints.map((c) => Card(color: _panel, child: ListTile(
+                leading: const Icon(Icons.flag_outlined, color: _yellow),
+                title: Text('${_tag(c['creator_id'].toString())} • ${c['category'] ?? 'Report'}'),
+                subtitle: Text('From ${_tag(c['player_id'].toString())} • ${c['status']}\n${c['details'] ?? ''}', maxLines: 3, overflow: TextOverflow.ellipsis),
+                isThreeLine: true,
+                trailing: IconButton(icon: const Icon(Icons.rate_review_outlined), onPressed: () => _reviewComplaint(c)),
+                onTap: () => _reviewComplaint(c),
+              ))),
+            ])),
+    );
+  }
+}
 
 // ============================================================
 // GENERAL APP RULES — editable by admins, readable by players
