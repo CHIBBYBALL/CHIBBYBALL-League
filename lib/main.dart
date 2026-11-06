@@ -4285,11 +4285,15 @@ class Store {
         return 'Screenshots did not pass Full Time, score, or same-match verification. Match marked DISPUTED.';
       }
 
-      // Both screenshots passed verification, but confirmation is now
-      // intentionally left to an admin. This prevents the result from
-      // entering the league table until an admin approves it.
+      // Both players submitted matching scores and both screenshots passed
+      // the existing Full Time, score, and same-match OCR checks.
+      // The database function confirms the match so it can enter standings.
+      await supabase.rpc(
+        'finalize_match_after_screenshot_check',
+        params: {'p_match_id': match.id, 'p_verified': true},
+      );
       await loadMatchesFromSupabase();
-      return 'Both screenshots verified. Match is awaiting ADMIN confirmation.';
+      return 'Both screenshots verified. Match automatically CONFIRMED and added to the league table.';
     } on StorageException catch (e) {
       return 'Could not read proof screenshots: ${e.message}';
     } on PostgrestException catch (e) {
@@ -10529,17 +10533,49 @@ class _CreatorPageState extends State<CreatorPage> {
             const Icon(Icons.verified, color: _yellow, size: 52),
             const SizedBox(height: 8),
             Text(c['gamer_tag']?.toString() ?? 'Creator', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
-            Text('${c['league_count'] ?? 0} leagues created', style: const TextStyle(color: _muted)),
+            Text(
+              '${c['league_count'] ?? 0} ${c['league_count'] == 1 ? 'league' : 'leagues'} created',
+              style: const TextStyle(color: _muted),
+            ),
           ])),
           const SizedBox(height: 16),
           const Text('ACTIVE CREATOR LEAGUES', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
           const SizedBox(height: 8),
           if (leagues.isEmpty) const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('This creator has no active leagues available right now.'))),
-          ...leagues.map((l) => Card(child: ListTile(
-            title: Text(l['league_name']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w900)),
-            subtitle: Text('${l['status']?.toString().toUpperCase() ?? 'OPEN'} • ${l['member_count'] ?? 0} players'),
-            trailing: FilledButton(onPressed: l['status']?.toString() == 'completed' ? null : () => _join(l['league_id'].toString()), child: const Text('JOIN')),
-          ))),
+          ...leagues.map((l) => Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    l['league_name']?.toString() ?? '',
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${l['status']?.toString().toUpperCase() ?? 'OPEN'} • ${l['member_count'] ?? 0} players',
+                    style: const TextStyle(color: _muted),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: 150,
+                    child: FilledButton(
+                      onPressed: l['status']?.toString() == 'completed'
+                          ? null
+                          : () => _join(l['league_id'].toString()),
+                      child: const Text('JOIN'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )),
           if (Store.instance.current?.id == widget.creator['player_id']?.toString()) ...[
             const SizedBox(height: 16),
             const Text('JOIN REQUESTS', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
