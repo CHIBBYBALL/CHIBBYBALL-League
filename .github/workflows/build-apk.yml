@@ -26,6 +26,45 @@ jobs:
       - name: Generate Android project
         run: flutter create --platforms=android --org com.chibbyball --project-name leaguecreator .
 
+      # FIX: Use the direct Gradle distribution host and bin package.
+      - name: Configure Gradle distribution download
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          wrapper = Path("android/gradle/wrapper/gradle-wrapper.properties")
+
+          if not wrapper.exists():
+              raise SystemExit("Gradle wrapper properties not found")
+
+          text = wrapper.read_text()
+
+          text, count = re.subn(
+              r"^distributionUrl=.*$",
+              r"distributionUrl=https\://downloads.gradle.org/distributions/gradle-9.3.1-bin.zip",
+              text,
+              count=1,
+              flags=re.MULTILINE
+          )
+
+          if count != 1:
+              raise SystemExit("Could not update Gradle distribution URL")
+
+          if re.search(r"^networkTimeout=", text, re.MULTILINE):
+              text = re.sub(
+                  r"^networkTimeout=.*$",
+                  "networkTimeout=120000",
+                  text,
+                  flags=re.MULTILINE
+              )
+          else:
+              text += "\nnetworkTimeout=120000\n"
+
+          wrapper.write_text(text)
+          print("Gradle distribution configured successfully.")
+          PY
+
       - name: Configure application ID
         run: |
           python3 - <<'PY'
@@ -65,18 +104,14 @@ jobs:
               )
 
           gradle.write_text(text)
-
           print(f"Application ID configured: {package_name}")
           PY
 
       - name: Restore upload keystore
         run: |
           mkdir -p android/app
-
           echo "${{ secrets.UPLOAD_KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
-
           test -s android/app/upload-keystore.jks
-
           echo "Upload keystore restored successfully."
 
       - name: Create Android signing properties
@@ -87,9 +122,7 @@ jobs:
           keyAlias=upload
           storeFile=upload-keystore.jks
           EOF
-
           test -s android/key.properties
-
           echo "Android signing properties created."
 
       - name: Add Play package verification file
@@ -98,11 +131,8 @@ jobs:
         run: |
           test -n "$PLAY_ADI_REGISTRATION"
           mkdir -p assets
-
           printf '%s\n' "$PLAY_ADI_REGISTRATION" > assets/adi-registration.properties
-
           test -s assets/adi-registration.properties
-
           echo "Play verification file created."
 
       - name: Add verification file to Flutter assets
@@ -153,7 +183,6 @@ jobs:
               lines.insert(flutter_index + 2, asset_line)
 
           pubspec.write_text("\n".join(lines) + "\n")
-
           print("Play verification asset added.")
           PY
 
@@ -313,7 +342,6 @@ jobs:
 
           for density in "${!SIZES[@]}"; do
             size="${SIZES[$density]}"
-
             mkdir -p "android/app/src/main/res/mipmap-$density"
 
             convert "$ICON" \
@@ -330,7 +358,6 @@ jobs:
 
           rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-
           echo "CHIBBYBALL launcher icon applied."
 
       - name: Add Firebase configuration
@@ -388,7 +415,6 @@ jobs:
 
           settings.write_text(s)
           app.write_text(a)
-
           print("Google Services plugin configured.")
           PY
 
@@ -512,7 +538,6 @@ jobs:
             -noprompt
 
           test -s /tmp/chibby-test.p12
-
           echo "Signing setup verified."
 
       - name: Get dependencies
@@ -523,9 +548,6 @@ jobs:
           flutter clean
           rm -rf android/.gradle android/app/build build
 
-      # The installed APK reported a SharedPreferencesApiRegistrar.getAll
-      # NoSuchMethodError. Clear Gradle's cached compiled plugin artifacts so
-      # the next build uses one consistent set of resolved plugin classes.
       - name: Clear Gradle build cache
         run: |
           rm -rf "$HOME/.gradle/caches" "$HOME/.gradle/daemon"
