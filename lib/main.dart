@@ -4361,6 +4361,56 @@ class Store {
     }
   }
 
+  Future<String?> creatorConfirmMatch(MatchItem match) async {
+    final leagueId = activeLeagueId;
+    if (leagueId == null || !await isLeagueManager(leagueId)) {
+      return 'You do not manage this league.';
+    }
+    try {
+      await supabase.rpc(
+        'creator_confirm_match',
+        params: {'p_match_id': match.id},
+      );
+      await loadMatchesFromSupabase();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not confirm match: ${e.message}';
+    } catch (e) {
+      return 'Could not confirm match: $e';
+    }
+  }
+
+  Future<String?> creatorCorrectMatchScore({
+    required String matchId,
+    required int homeScore,
+    required int awayScore,
+    required String reason,
+    required bool evidenceReviewed,
+  }) async {
+    final leagueId = activeLeagueId;
+    if (leagueId == null || !await isLeagueManager(leagueId)) {
+      return 'You do not manage this league.';
+    }
+    if (homeScore < 0 || awayScore < 0) return 'Scores cannot be negative.';
+    if (reason.trim().isEmpty) return 'Enter a reason for the correction.';
+    if (!evidenceReviewed) return 'Review the available evidence before correcting the score.';
+    try {
+      await supabase.rpc('creator_correct_match_score', params: {
+        'p_match_id': matchId,
+        'p_home_score': homeScore,
+        'p_away_score': awayScore,
+        'p_reason': reason.trim(),
+        'p_evidence_reviewed': evidenceReviewed,
+      });
+      await loadMatchesFromSupabase();
+      return null;
+    } on PostgrestException catch (e) {
+      return 'Could not correct score: ${e.message}';
+    } catch (e) {
+      return 'Could not correct score: $e';
+    }
+  }
+
   /// Admin-only score override. The database RPC records the reason and audit data.
   Future<String?> adminCorrectMatchScore({
     required String matchId,
@@ -10180,7 +10230,7 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
         onRefresh: _refresh,
         child: ListView(padding: const EdgeInsets.all(12), children: [
           Card(child: Padding(padding: const EdgeInsets.all(14), child: Text(widget.creatorMode
-              ? 'Creator review is limited to this selected league. Inspect submitted scores and screenshot evidence here. Final confirmation and score overrides remain admin-controlled until the creator-authorized database workflow is installed.'
+              ? 'Creator review is limited to this selected league. Inspect both players’ scores and screenshot evidence. You can confirm matching submissions or resolve an unconfirmed dispute after reviewing the evidence.'
               : 'Admin result review. Both players must submit their scores and screenshots. Automatic screenshot checking verifies the evidence, then an admin must confirm the result before it counts in the league table.'))),
           const SizedBox(height: 8),
           SingleChildScrollView(
@@ -10244,6 +10294,31 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
     );
   }
 
+  Future<void> _creatorConfirm(MatchItem match) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm this result?'),
+        content: const Text(
+          'The server will check that both players submitted matching scores and screenshot files. Please inspect both screenshots above yourself before confirming. The match will then count in the league table.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('CANCEL')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('CHECK & CONFIRM')),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => loading = true);
+    final error = await store.creatorConfirmMatch(match);
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error ?? 'Match confirmed successfully.')),
+    );
+  }
+
   Widget _reviewCard(BuildContext context, MatchItem m) {
     final homeName = _playerName(m.homeId), awayName = _playerName(m.awayId);
     final homeScore = m.homeClaimHome != null && m.homeClaimAway != null ? '${m.homeClaimHome}-${m.homeClaimAway}' : 'Not submitted';
@@ -10262,6 +10337,26 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
               onPressed: loading ? null : () => _adminConfirm(m),
               icon: const Icon(Icons.admin_panel_settings),
               label: const Text('ADMIN CONFIRM MATCH'),
+            ),
+          ),
+        ],
+        if (widget.creatorMode && m.status != 'Confirmed') ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: loading ? null : () => _creatorConfirm(m),
+              icon: const Icon(Icons.verified_outlined),
+              label: const Text('CONFIRM MATCH'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: loading ? null : () => _correctScore(m),
+              icon: const Icon(Icons.edit_note),
+              label: const Text('RESOLVE DISPUTE / CORRECT SCORE'),
             ),
           ),
         ],
@@ -10296,14 +10391,14 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
     final homeController = TextEditingController(text: match.homeScore?.toString() ?? match.homeClaimHome?.toString() ?? '');
     final awayController = TextEditingController(text: match.awayScore?.toString() ?? match.homeClaimAway?.toString() ?? '');
     final reasonController = TextEditingController();
-    bool evidenceReviewed = true;
+    bool evidenceReviewed = false;
     final formKey = GlobalKey<FormState>();
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Admin score correction'),
+        title: Text(widget.creatorMode ? 'Creator dispute resolution' : 'Admin score correction'),
         content: SingleChildScrollView(child: Form(key: formKey, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Enter the final score. You may confirm after reviewing evidence or resolve the match manually. A reason is required.'),
+          const Text('Inspect the screenshots above, enter the correct final score, confirm that you reviewed the evidence, and provide a reason. The match will be confirmed after correction.'),
           const SizedBox(height: 12),
           Row(children: [
             Expanded(child: TextFormField(controller: homeController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: _playerName(match.homeId), border: const OutlineInputBorder()), validator: (v) => int.tryParse(v ?? '') == null || int.parse(v!) < 0 ? 'Enter 0 or more' : null)),
@@ -10320,11 +10415,13 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
     homeController.dispose(); awayController.dispose(); reasonController.dispose();
     if (result == null || !mounted) return;
     setState(() => loading = true);
-    final error = await store.adminCorrectMatchScore(matchId: match.id, homeScore: result['home'] as int, awayScore: result['away'] as int, reason: result['reason'] as String, evidenceReviewed: result['evidence'] as bool);
+    final error = widget.creatorMode
+        ? await store.creatorCorrectMatchScore(matchId: match.id, homeScore: result['home'] as int, awayScore: result['away'] as int, reason: result['reason'] as String, evidenceReviewed: result['evidence'] as bool)
+        : await store.adminCorrectMatchScore(matchId: match.id, homeScore: result['home'] as int, awayScore: result['away'] as int, reason: result['reason'] as String, evidenceReviewed: result['evidence'] as bool);
     if (!mounted) return;
     await _refresh();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? 'Score corrected and result confirmed.')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error ?? (widget.creatorMode ? 'Dispute resolved and result confirmed.' : 'Score corrected and result confirmed.'))));
   }
 
   Future<void> _cancelSubmission(MatchItem match, String playerId, String playerName) async {
