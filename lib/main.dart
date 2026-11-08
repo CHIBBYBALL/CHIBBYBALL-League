@@ -9195,6 +9195,46 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                             icon: const Icon(Icons.settings),
                             label: const Text('LEAGUE SETTINGS'),
                           ),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error))); return; }
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerManagementPage(creatorMode: true)));
+                            },
+                            icon: const Icon(Icons.groups_outlined),
+                            label: const Text('MANAGE PLAYERS'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error))); return; }
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => const ResultReviewPage(creatorMode: true)));
+                            },
+                            icon: const Icon(Icons.fact_check_outlined),
+                            label: const Text('RESULTS & DISPUTES'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error))); return; }
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => NoShowReportsAdminPage(creatorMode: true, leagueId: selected.id)));
+                            },
+                            icon: const Icon(Icons.flag_outlined),
+                            label: const Text('NO-SHOW MANAGEMENT'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error))); return; }
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerManagementPage(creatorMode: true, disciplineOnly: true)));
+                            },
+                            icon: const Icon(Icons.gavel),
+                            label: const Text('DISCIPLINARY MANAGEMENT'),
+                          ),
                         ]),
                       ],
                       const SizedBox(height: 12),
@@ -10083,7 +10123,8 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
 // ============================================================
 
 class ResultReviewPage extends StatefulWidget {
-  const ResultReviewPage({super.key});
+  final bool creatorMode;
+  const ResultReviewPage({super.key, this.creatorMode = false});
   @override
   State<ResultReviewPage> createState() => _ResultReviewPageState();
 }
@@ -10129,14 +10170,18 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Creator entry point calls selectLeague() before opening this page;
+    // Store.matches therefore contains the selected league's fixtures.
     final all = [...store.matches]..sort((a, b) => b.round.compareTo(a.round));
     final visible = filter == 'All' ? all : all.where((m) => m.status == filter).toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('Result Review'), actions: [IconButton(onPressed: loading ? null : _refresh, icon: const Icon(Icons.refresh))]),
+      appBar: AppBar(title: Text(widget.creatorMode ? 'Creator Results & Disputes' : 'Result Review'), actions: [IconButton(onPressed: loading ? null : _refresh, icon: const Icon(Icons.refresh))]),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(padding: const EdgeInsets.all(12), children: [
-          const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('Admin result review. Both players must submit their scores and screenshots. Automatic screenshot checking verifies the evidence, then an admin must confirm the result before it counts in the league table.'))),
+          Card(child: Padding(padding: const EdgeInsets.all(14), child: Text(widget.creatorMode
+              ? 'Creator review is limited to this selected league. Inspect submitted scores and screenshot evidence here. Final confirmation and score overrides remain admin-controlled until the creator-authorized database workflow is installed.'
+              : 'Admin result review. Both players must submit their scores and screenshots. Automatic screenshot checking verifies the evidence, then an admin must confirm the result before it counts in the league table.'))),
           const SizedBox(height: 8),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -10209,7 +10254,7 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
         Align(alignment: Alignment.centerLeft, child: Text(_verificationLabel(m), style: TextStyle(fontWeight: FontWeight.bold, color: _statusColor(context, m.status)))),
         const SizedBox(height: 8),
         Row(children: [Expanded(child: _claimBox(homeName, homeScore, m.homeProof)), const SizedBox(width: 8), Expanded(child: _claimBox(awayName, awayScore, m.awayProof))]),
-        if (m.status != 'Confirmed') ...[
+        if (m.status != 'Confirmed' && !widget.creatorMode) ...[
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -10320,7 +10365,9 @@ class _ResultReviewPageState extends State<ResultReviewPage> {
 // ============================================================
 
 class PlayerManagementPage extends StatefulWidget {
-  const PlayerManagementPage({super.key});
+  final bool creatorMode;
+  final bool disciplineOnly;
+  const PlayerManagementPage({super.key, this.creatorMode = false, this.disciplineOnly = false});
   @override State<PlayerManagementPage> createState() => _PlayerManagementPageState();
 }
 
@@ -10328,6 +10375,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
   final searchController = TextEditingController();
   String? selectedLeagueId;
   Set<String> memberIds = {};
+  Set<String> managedLeagueIds = {};
   bool loading = false;
   Store get store => Store.instance;
 
@@ -10335,13 +10383,28 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
 
   Future<void> _load() async {
     setState(() => loading = true);
-    try { await store.refreshPlayers(); await store.refreshLeagues(); if (store.leagues.isNotEmpty) { selectedLeagueId ??= store.leagues.first.id; memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet(); await store.loadDisciplineForLeague(selectedLeagueId!); } }
+    try {
+      await store.refreshPlayers();
+      await store.refreshLeagues();
+      managedLeagueIds = widget.creatorMode ? await store.myManagedLeagueIds() : store.leagues.map((l) => l.id).toSet();
+      final availableLeagues = store.leagues.where((l) => managedLeagueIds.contains(l.id)).toList();
+      if (availableLeagues.isNotEmpty) {
+        if (selectedLeagueId == null || !managedLeagueIds.contains(selectedLeagueId)) selectedLeagueId = availableLeagues.first.id;
+        memberIds = (await store.leagueMemberIds(selectedLeagueId!)).toSet();
+        await store.loadDisciplineForLeague(selectedLeagueId!);
+      }
+    }
     catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load player management: $e'))); }
     if (mounted) setState(() => loading = false);
   }
 
   Future<void> _selectLeague(String? id) async {
-    if (id == null) return; setState(() { selectedLeagueId = id; loading = true; });
+    if (id == null) return;
+    if (widget.creatorMode && !await store.isLeagueManager(id)) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You do not manage this league.')));
+      return;
+    }
+    setState(() { selectedLeagueId = id; loading = true; });
     try { memberIds = (await store.leagueMemberIds(id)).toSet(); await store.loadDisciplineForLeague(id); } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not load league members: $e'))); }
     if (mounted) setState(() => loading = false);
   }
@@ -10555,16 +10618,17 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
   @override
   Widget build(BuildContext context) {
     final query = searchController.text.trim().toLowerCase();
-    final players = store.players.where((p) => !p.admin && (query.isEmpty || p.gamerTag.toLowerCase().contains(query) || p.name.toLowerCase().contains(query))).toList();
+    final players = store.players.where((p) => !p.admin && (!widget.creatorMode || memberIds.contains(p.id)) && (query.isEmpty || p.gamerTag.toLowerCase().contains(query) || p.name.toLowerCase().contains(query))).toList();
+    final availableLeagues = store.leagues.where((l) => !widget.creatorMode || managedLeagueIds.contains(l.id)).toList();
     final league = store.leagues.where((l) => l.id == selectedLeagueId).firstOrNull;
     return Scaffold(
-      appBar: AppBar(title: const Text('Manage Players')),
+      appBar: AppBar(title: Text(widget.disciplineOnly ? 'Disciplinary Management' : widget.creatorMode ? 'Manage League Players' : 'Manage Players')),
       body: RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.fromLTRB(14, 14, 14, 28), children: [
         Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_blue, radius: 20), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('REGISTERED PLAYERS', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)), SizedBox(height: 4), Text('Assign, remove or disregister players while keeping their account safe.', style: TextStyle(color: _muted, fontSize: 12))])),
         const SizedBox(height: 12),
         TextField(controller: searchController, onChanged: (_) => setState(() {}), decoration: const InputDecoration(labelText: 'Search player or gamer tag', prefixIcon: Icon(Icons.search))),
         const SizedBox(height: 10),
-        if (store.leagues.isNotEmpty) Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), decoration: _neonBox(_cyan, radius: 16), child: DropdownButtonFormField<String>(value: selectedLeagueId, decoration: const InputDecoration(labelText: 'LEAGUE', border: InputBorder.none), items: store.leagues.map((l) => DropdownMenuItem(value: l.id, child: Text(l.name))).toList(), onChanged: loading ? null : _selectLeague)),
+        if (availableLeagues.isNotEmpty) Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), decoration: _neonBox(_cyan, radius: 16), child: DropdownButtonFormField<String>(value: selectedLeagueId, decoration: const InputDecoration(labelText: 'LEAGUE', border: InputBorder.none), items: availableLeagues.map((l) => DropdownMenuItem(value: l.id, child: Text(l.name))).toList(), onChanged: loading ? null : _selectLeague)),
         if (league != null) Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text('${memberIds.length} players in ${league.name}', style: const TextStyle(color: _muted, fontWeight: FontWeight.w700))),
         if (players.isEmpty) Container(padding: const EdgeInsets.all(18), decoration: _neonBox(_cyan, radius: 16), child: const Text('No matching players found.')),
         ...players.map((player) {
@@ -10579,8 +10643,8 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                  child: Text('SUSPENDED', style: TextStyle(color: Color(0xFFFF4D7D), fontSize: 10, fontWeight: FontWeight.w900)),
                ),
            ])),
-            IconButton(tooltip: 'Message', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: player))), icon: const Icon(Icons.chat_bubble_outline, color: _purple)),
-            if (selectedLeagueId != null) IconButton(tooltip: isMember ? 'Remove from league' : 'Add to league', onPressed: loading ? null : () => _toggleMember(player, !isMember), icon: Icon(isMember ? Icons.remove_circle_outline : Icons.add_circle_outline, color: isMember ? const Color(0xFFFF4D7D) : _cyan)),
+            if (!widget.creatorMode) IconButton(tooltip: 'Message', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: player))), icon: const Icon(Icons.chat_bubble_outline, color: _purple)),
+            if (!widget.creatorMode && selectedLeagueId != null) IconButton(tooltip: isMember ? 'Remove from league' : 'Add to league', onPressed: loading ? null : () => _toggleMember(player, !isMember), icon: Icon(isMember ? Icons.remove_circle_outline : Icons.add_circle_outline, color: isMember ? const Color(0xFFFF4D7D) : _cyan)),
             PopupMenuButton<String>(
               onSelected: (value) {
                 if (value == 'disregister') _disregister(player);
@@ -10591,16 +10655,22 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                 if (value == 'replace') _replacePlayer(player);
                 if (value == 'delete') _deletePlayer(player);
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'suspend', child: Text('Suspend player')),
-                PopupMenuItem(value: 'unsuspend', child: Text('Unsuspend player')),
-                PopupMenuItem(value: 'deduct', child: Text('Deduct points')),
-                PopupMenuItem(value: 'fine', child: Text('Fine player')),
-                PopupMenuItem(value: 'replace', child: Text('Replace in selected league')),
-                PopupMenuDivider(),
-                PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues')),
-                PopupMenuItem(value: 'delete', child: Text('DELETE PLAYER ACCOUNT')),
-              ],
+              itemBuilder: (_) => widget.creatorMode
+                  ? <PopupMenuEntry<String>>[
+                      const PopupMenuItem(value: 'suspend', child: Text('Suspend player')),
+                      const PopupMenuItem(value: 'unsuspend', child: Text('Reinstate player')),
+                      const PopupMenuItem(value: 'deduct', child: Text('Deduct league points')),
+                    ]
+                  : const <PopupMenuEntry<String>>[
+                      PopupMenuItem(value: 'suspend', child: Text('Suspend player')),
+                      PopupMenuItem(value: 'unsuspend', child: Text('Unsuspend player')),
+                      PopupMenuItem(value: 'deduct', child: Text('Deduct points')),
+                      PopupMenuItem(value: 'fine', child: Text('Fine player')),
+                      PopupMenuItem(value: 'replace', child: Text('Replace in selected league')),
+                      PopupMenuDivider(),
+                      PopupMenuItem(value: 'disregister', child: Text('Disregister from all leagues')),
+                      PopupMenuItem(value: 'delete', child: Text('DELETE PLAYER ACCOUNT')),
+                    ],
             ),
           ])));
         }),
@@ -11186,7 +11256,9 @@ class _AdminForfeitMatchesPageState extends State<AdminForfeitMatchesPage> {
 }
 
 class NoShowReportsAdminPage extends StatefulWidget {
-  const NoShowReportsAdminPage({super.key});
+  final bool creatorMode;
+  final String? leagueId;
+  const NoShowReportsAdminPage({super.key, this.creatorMode = false, this.leagueId});
   @override State<NoShowReportsAdminPage> createState() => _NoShowReportsAdminPageState();
 }
 
@@ -11198,10 +11270,17 @@ class _NoShowReportsAdminPageState extends State<NoShowReportsAdminPage> {
   Future<void> load() async {
     setState(() { loading = true; error = null; });
     try {
-      final data = await Store.instance.supabase
+      var query = Store.instance.supabase
           .from('no_show_reports')
-          .select('id, match_id, league_id, reporter_id, reported_player_id, reason, status, response_deadline, admin_decision, admin_note, created_at')
-          .order('created_at', ascending: false);
+          .select('id, match_id, league_id, reporter_id, reported_player_id, reason, status, response_deadline, admin_decision, admin_note, created_at');
+      if (widget.creatorMode) {
+        final leagueId = widget.leagueId;
+        if (leagueId == null || !await Store.instance.isLeagueManager(leagueId)) {
+          throw Exception('You do not manage this league.');
+        }
+        query = query.eq('league_id', leagueId);
+      }
+      final data = await query.order('created_at', ascending: false);
       reports = (data as List).map((e) => Map<String, dynamic>.from(e)).toList();
     } catch (e) { error = e.toString(); }
     if (mounted) setState(() => loading = false);
@@ -11238,11 +11317,13 @@ class _NoShowReportsAdminPageState extends State<NoShowReportsAdminPage> {
     return p.isEmpty ? (id?.toString() ?? 'Unknown player') : p.first.gamerTag;
   }
   @override Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('No-show Reports'), actions: [IconButton(onPressed: loading ? null : load, icon: const Icon(Icons.refresh))]),
+    appBar: AppBar(title: Text(widget.creatorMode ? 'Creator No-show Reports' : 'No-show Reports'), actions: [IconButton(onPressed: loading ? null : load, icon: const Icon(Icons.refresh))]),
     body: loading ? const Center(child: CircularProgressIndicator()) : error != null
       ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Text('Could not load reports:\n$error')))
       : reports.isEmpty ? const Center(child: Text('No no-show reports yet.'))
-      : ListView(padding: const EdgeInsets.all(14), children: reports.map((r) {
+      : ListView(padding: const EdgeInsets.all(14), children: [
+          if (widget.creatorMode) const Card(child: Padding(padding: EdgeInsets.all(12), child: Text('Read-only creator view for this league. Resolution controls remain admin-only until the creator-scoped decision RPC is installed.'))),
+          ...reports.map((r) {
           final status = r['status']?.toString() ?? 'unknown';
           final deadline = DateTime.tryParse(r['response_deadline']?.toString() ?? '')?.toLocal().toString() ?? 'Not set';
           final pending = !['resolved', 'rejected'].contains(status);
@@ -11251,7 +11332,7 @@ class _NoShowReportsAdminPageState extends State<NoShowReportsAdminPage> {
             const SizedBox(height: 6), Text('Reason: ${r['reason']}'),
             Text('Status: $status'), Text('Response deadline: $deadline'),
             if ((r['admin_note'] ?? '').toString().isNotEmpty) Text('Admin note: ${r['admin_note']}'),
-            if (pending) Wrap(spacing: 6, runSpacing: 4, children: [
+            if (pending && !widget.creatorMode) Wrap(spacing: 6, runSpacing: 4, children: [
               TextButton(onPressed: () => resolve(r, 'award_reporter'), child: const Text('Award reporter')),
               TextButton(onPressed: () => resolve(r, 'award_reported_player'), child: const Text('Award opponent')),
               TextButton(onPressed: () => resolve(r, 'extend_deadline'), child: const Text('Extend deadline')),
