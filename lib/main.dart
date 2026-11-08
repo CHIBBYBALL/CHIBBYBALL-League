@@ -3834,7 +3834,47 @@ class Store {
     double fineAmount = 0,
     bool? suspended,
   }) async {
-    if (current?.admin != true) return 'Admin access required.';
+    final me = current;
+    if (me == null) return 'Please sign in again.';
+    if (reason.trim().isEmpty) return 'A reason is required.';
+
+    // The database RPC is the trusted permission boundary for creator actions.
+    // isLeagueManager also returns true for global admins.
+    if (!await isLeagueManager(leagueId)) {
+      return 'You do not manage this league.';
+    }
+
+    // Fines remain an admin-only legacy operation. The new RPC intentionally
+    // supports only suspension, reinstatement and points deductions.
+    if (actionType == 'fine') {
+      if (!me.admin) return 'Only a global admin can apply fines.';
+      if (fineAmount <= 0) return 'Enter a valid fine amount.';
+    } else {
+      if (actionType == 'points_deduction' && pointsDelta >= 0) {
+        return 'Points deduction must be greater than zero.';
+      }
+      try {
+        await supabase.rpc(
+          'creator_apply_player_discipline',
+          params: {
+            'p_league_id': leagueId,
+            'p_player_id': playerId,
+            'p_action_type': actionType,
+            'p_reason': reason.trim(),
+            'p_points_delta': pointsDelta,
+          },
+        );
+        await loadDisciplineForLeague(leagueId);
+        return null;
+      } on PostgrestException catch (e) {
+        return 'Could not apply disciplinary action: ${e.message}';
+      } catch (e) {
+        return 'Could not apply disciplinary action: $e';
+      }
+    }
+
+    // Preserve the existing global-admin fine workflow until a separate,
+    // admin-only transactional fine RPC is introduced.
     try {
       final existing = await supabase
           .from('league_player_status')
@@ -3846,16 +3886,13 @@ class Store {
       final oldPoints = (existing?['points_adjustment'] as num?)?.toInt() ?? 0;
       final oldFine = (existing?['fine_total'] as num?)?.toDouble() ?? 0;
       final oldSuspended = existing?['is_suspended'] == true;
-
       final newSuspended = suspended ?? oldSuspended;
-      final newPoints = oldPoints + pointsDelta;
-      final newFine = oldFine + fineAmount;
 
       await supabase.from('league_player_status').upsert({
         'league_id': leagueId,
         'player_id': playerId,
-        'points_adjustment': newPoints,
-        'fine_total': newFine,
+        'points_adjustment': oldPoints + pointsDelta,
+        'fine_total': oldFine + fineAmount,
         'is_suspended': newSuspended,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'league_id,player_id');
@@ -3863,7 +3900,7 @@ class Store {
       await supabase.from('disciplinary_actions').insert({
         'league_id': leagueId,
         'player_id': playerId,
-        'admin_id': current!.id,
+        'admin_id': me.id,
         'action_type': actionType,
         'reason': reason.trim(),
         'points_delta': pointsDelta,
