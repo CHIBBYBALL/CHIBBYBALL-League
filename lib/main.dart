@@ -4467,8 +4467,17 @@ class Store {
     required String action,
     required String note,
   }) async {
-    if (current?.admin != true) return 'Admin access required.';
+    if (current == null) return 'Please sign in first.';
     try {
+      // The RPC enforces global-admin OR league-manager permission server-side.
+      // Resolve the fixture's league first so the client can fail early for creators.
+      if (current?.admin != true) {
+        final row = await supabase.from('matches').select('league_id').eq('id', matchId).maybeSingle();
+        final leagueId = row?['league_id']?.toString();
+        if (leagueId == null || !await isLeagueManager(leagueId)) {
+          return 'You do not manage this match league.';
+        }
+      }
       await supabase.rpc('admin_forfeit_match', params: {
         'p_match_id': matchId,
         'p_action': action,
@@ -4477,9 +4486,9 @@ class Store {
       await loadMatchesFromSupabase();
       return null;
     } on PostgrestException catch (e) {
-      return 'Could not apply admin match decision: ${e.message}';
+      return 'Could not apply match decision: ${e.message}';
     } catch (e) {
-      return 'Could not apply admin match decision: $e';
+      return 'Could not apply match decision: $e';
     }
   }
 
@@ -11395,11 +11404,16 @@ class _NoShowReportsAdminPageState extends State<NoShowReportsAdminPage> {
       actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')), FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('CONFIRM'))],
     ));
     if (accepted != true) return;
+    final extendHours = decision == 'extend_deadline' ? int.tryParse(extension.text) : null;
+    if (decision == 'extend_deadline' && (extendHours == null || extendHours < 1 || extendHours > 168)) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter an extension between 1 and 168 hours.')));
+      return;
+    }
     try {
       await Store.instance.supabase.rpc('resolve_no_show_report', params: {
         'p_report_id': report['id'], 'p_decision': decision,
         'p_admin_note': note.text.trim().isEmpty ? null : note.text.trim(),
-        'p_extend_hours': decision == 'extend_deadline' ? int.tryParse(extension.text) : null,
+        'p_extend_hours': extendHours,
       });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No-show report updated.')));
       await load();
@@ -11419,7 +11433,7 @@ class _NoShowReportsAdminPageState extends State<NoShowReportsAdminPage> {
       ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Text('Could not load reports:\n$error')))
       : reports.isEmpty ? const Center(child: Text('No no-show reports yet.'))
       : ListView(padding: const EdgeInsets.all(14), children: [
-          if (widget.creatorMode) const Card(child: Padding(padding: EdgeInsets.all(12), child: Text('Read-only creator view for this league. Resolution controls remain admin-only until the creator-scoped decision RPC is installed.'))),
+          if (widget.creatorMode) const Card(child: Padding(padding: EdgeInsets.all(12), child: Text('Creator decisions are limited to this managed league. Supabase verifies your league-manager permission and records the decision in the activity log.'))),
           ...reports.map((r) {
             final status = r['status']?.toString() ?? 'unknown';
             final deadline = DateTime.tryParse(r['response_deadline']?.toString() ?? '')?.toLocal().toString() ?? 'Not set';
@@ -11429,7 +11443,7 @@ class _NoShowReportsAdminPageState extends State<NoShowReportsAdminPage> {
               const SizedBox(height: 6), Text('Reason: ${r['reason']}'),
               Text('Status: $status'), Text('Response deadline: $deadline'),
               if ((r['admin_note'] ?? '').toString().isNotEmpty) Text('Admin note: ${r['admin_note']}'),
-              if (pending && !widget.creatorMode) Wrap(spacing: 6, runSpacing: 4, children: [
+              if (pending) Wrap(spacing: 6, runSpacing: 4, children: [
                 TextButton(onPressed: () => resolve(r, 'award_reporter'), child: const Text('Award reporter')),
                 TextButton(onPressed: () => resolve(r, 'award_reported_player'), child: const Text('Award opponent')),
                 TextButton(onPressed: () => resolve(r, 'extend_deadline'), child: const Text('Extend deadline')),
