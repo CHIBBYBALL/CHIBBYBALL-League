@@ -4197,7 +4197,9 @@ class Store {
     required String startTime,
     required String endTime,
   }) async {
-    if (current?.admin != true) return 'Admin access required.';
+    if (!await isLeagueManager(leagueId)) {
+      return 'You do not manage this league.';
+    }
 
     try {
       await supabase.rpc(
@@ -9112,6 +9114,21 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
                                 return;
                               }
+                              Navigator.push(context, MaterialPageRoute(
+                                builder: (_) => const AdminMatchSchedulePage(creatorMode: true),
+                              ));
+                            },
+                            icon: const Icon(Icons.calendar_month),
+                            label: const Text('MATCH DAY SCHEDULE'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) {
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                                return;
+                              }
                               final result = await store.generateFixtures();
                               if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result ?? 'Fixtures generated successfully.')));
                             },
@@ -9657,7 +9674,8 @@ class _BadgeAdminPageState extends State<BadgeAdminPage> {
 // ============================================================
 
 class AdminMatchSchedulePage extends StatefulWidget {
-  const AdminMatchSchedulePage({super.key});
+  final bool creatorMode;
+  const AdminMatchSchedulePage({super.key, this.creatorMode = false});
 
   @override
   State<AdminMatchSchedulePage> createState() => _AdminMatchSchedulePageState();
@@ -9669,18 +9687,17 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
   DateTime? startDate;
   DateTime? endDate;
   bool loading = false;
+  List<LeagueInfo> visibleLeagues = [];
   final Map<int, DateTime?> roundDates = {};
 
   @override
   void initState() {
     super.initState();
-    selectedLeagueId = store.activeLeagueId ??
-        (store.leagues.isNotEmpty ? store.leagues.first.id : null);
     _loadSelectedLeague();
   }
 
   LeagueInfo? get selected =>
-      store.leagues.where((l) => l.id == selectedLeagueId).firstOrNull;
+      visibleLeagues.where((l) => l.id == selectedLeagueId).firstOrNull;
 
   String _dateForDb(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
@@ -9689,31 +9706,71 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
       date == null ? 'Not set' : '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
 
   Future<void> _loadSelectedLeague() async {
-    final league = selected;
-    if (league == null) return;
-    startDate = league.startDate;
-    endDate = league.endDate;
+    if (mounted) setState(() => loading = true);
     try {
+      await store.refreshLeagues();
+      if (widget.creatorMode && store.current?.admin != true) {
+        final managedIds = await store.myManagedLeagueIds();
+        visibleLeagues = store.leagues
+            .where((league) => managedIds.contains(league.id))
+            .toList();
+      } else {
+        visibleLeagues = List<LeagueInfo>.from(store.leagues);
+      }
+
+      if (visibleLeagues.isEmpty) {
+        selectedLeagueId = null;
+        startDate = null;
+        endDate = null;
+        roundDates.clear();
+        if (mounted) setState(() => loading = false);
+        return;
+      }
+
+      if (!visibleLeagues.any((l) => l.id == selectedLeagueId)) {
+        selectedLeagueId = store.activeLeagueId != null &&
+                visibleLeagues.any((l) => l.id == store.activeLeagueId)
+            ? store.activeLeagueId
+            : visibleLeagues.first.id;
+      }
+
+      final league = selected;
+      if (league == null) return;
+      startDate = league.startDate;
+      endDate = league.endDate;
       await store.selectLeague(league.id);
-    } catch (_) {}
-    roundDates
-      ..clear()
-      ..addEntries(
-        store.matches.map((m) => MapEntry(
-              m.round,
-              m.scheduledDate == null || m.scheduledDate!.isEmpty
-                  ? null
-                  : DateTime.tryParse(m.scheduledDate!),
-            )),
-      );
-    if (mounted) setState(() {});
+      roundDates
+        ..clear()
+        ..addEntries(
+          store.matches.map((m) => MapEntry(
+                m.round,
+                m.scheduledDate == null || m.scheduledDate!.isEmpty
+                    ? null
+                    : DateTime.tryParse(m.scheduledDate!),
+              )),
+        );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load Match Day schedule: $e')),
+        );
+      }
+    }
+    if (mounted) setState(() => loading = false);
   }
 
   Future<DateTime?> _pickDate(DateTime? initial) async {
+    final today = DateTime.now();
+    final firstAllowedDate = widget.creatorMode && store.current?.admin != true
+        ? DateTime(today.year, today.month, today.day)
+        : DateTime(2026);
+    final initialAllowed = initial ?? startDate ?? today;
     return showDatePicker(
       context: context,
-      initialDate: initial ?? startDate ?? DateTime.now(),
-      firstDate: DateTime(2026),
+      initialDate: initialAllowed.isBefore(firstAllowedDate)
+          ? firstAllowedDate
+          : initialAllowed,
+      firstDate: firstAllowedDate,
       lastDate: DateTime(2100),
     );
   }
@@ -9740,6 +9797,12 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
     final matchesForRound =
         store.matches.where((m) => m.round == round).toList();
     if (matchesForRound.isEmpty) return;
+    if (roundDates[round] == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose a Match Day date before saving.')),
+      );
+      return;
+    }
 
     setState(() => loading = true);
     final error = await store.updateRoundSchedule(
@@ -9766,8 +9829,19 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
     final rounds = store.matches.map((m) => m.round).toSet().toList()..sort();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Match Schedule')),
-      body: RefreshIndicator(
+      appBar: AppBar(title: Text(widget.creatorMode ? 'Creator Match Day Schedule' : 'Match Schedule')),
+      body: loading && visibleLeagues.isEmpty
+          ? const Center(child: CircularProgressIndicator())
+          : visibleLeagues.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(widget.creatorMode
+                        ? 'You do not manage any leagues yet.'
+                        : 'No leagues are available.'),
+                  ),
+                )
+              : RefreshIndicator(
         onRefresh: _loadSelectedLeague,
         child: ListView(
           padding: const EdgeInsets.all(14),
@@ -9784,7 +9858,7 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
             DropdownButtonFormField<String>(
               value: selectedLeagueId,
               decoration: const InputDecoration(labelText: 'SELECT LEAGUE'),
-              items: store.leagues
+              items: visibleLeagues
                   .map((l) => DropdownMenuItem(
                         value: l.id,
                         child: Text('${l.name} • ${l.status.toUpperCase()}'),
@@ -9874,19 +9948,20 @@ class _AdminMatchSchedulePageState extends State<AdminMatchSchedulePage> {
             Container(
               decoration: _neonBox(_yellow, radius: 18),
               child: Column(children: [
-                SwitchListTile(
-                  value: Store.instance.matchDayDateControlsEnabled,
-                  activeThumbColor: _yellow,
-                  title: const Text('ENABLE DATE CONTROLS', style: TextStyle(fontWeight: FontWeight.w900)),
-                  subtitle: const Text('OFF = fixtures stay open regardless of Match Day dates.'),
-                  onChanged: loading ? null : (value) async {
-                    setState(() => loading = true);
-                    final error = await Store.instance.setMatchDayDateControlsEnabled(value);
-                    if (!mounted) return;
-                    setState(() => loading = false);
-                    if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-                  },
-                ),
+                if (!widget.creatorMode || store.current?.admin == true)
+                  SwitchListTile(
+                    value: Store.instance.matchDayDateControlsEnabled,
+                    activeThumbColor: _yellow,
+                    title: const Text('ENABLE DATE CONTROLS', style: TextStyle(fontWeight: FontWeight.w900)),
+                    subtitle: const Text('OFF = fixtures stay open regardless of Match Day dates.'),
+                    onChanged: loading ? null : (value) async {
+                      setState(() => loading = true);
+                      final error = await Store.instance.setMatchDayDateControlsEnabled(value);
+                      if (!mounted) return;
+                      setState(() => loading = false);
+                      if (error != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+                    },
+                  ),
                 SwitchListTile(
                   value: (Store.instance.leagues.where((l) => l.id == Store.instance.activeLeagueId).firstOrNull?.sequentialMatchDayLockEnabled) ?? true,
                   activeThumbColor: _cyan,
