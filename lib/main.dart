@@ -3394,6 +3394,13 @@ class Store {
         .toList();
   }
 
+  Future<int> unreadMessageCount() async {
+    final player = current;
+    if (player == null) return 0;
+    final data = await supabase.from('messages').select('id').eq('recipient_id', player.id).eq('is_read', false);
+    return (data as List).length;
+  }
+
   Future<int> unreadNotificationCount() async {
     final player = current;
     if (player == null) return 0;
@@ -5255,12 +5262,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('CHIBBYBALL League'),
         actions: [
-          IconButton(
-            tooltip: 'Messages',
-            icon: const Icon(Icons.chat_bubble_outline),
-            onPressed: () => Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const MessagesPage()),
-            ).then((_) { if (mounted) setState(() {}); }),
+          FutureBuilder<int>(
+            future: Store.instance.unreadMessageCount(),
+            builder: (context, snapshot) {
+              final count = snapshot.data ?? 0;
+              return IconButton(
+                tooltip: count > 0 ? 'Messages ($count unread)' : 'Messages',
+                icon: Stack(clipBehavior: Clip.none, children: [
+                  const Icon(Icons.chat_bubble_outline),
+                  if (count > 0) Positioned(right: -7, top: -6, child: Container(
+                    constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: const BoxDecoration(color: Color(0xFFFF4D7D), shape: BoxShape.circle),
+                    child: Text(count > 99 ? '99+' : '$count', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900)),
+                  )),
+                ]),
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())).then((_) { if (mounted) setState(() {}); }),
+              );
+            },
           ),
           const NotificationBell(),
           if (player?.admin == true)
@@ -5297,54 +5316,130 @@ class MessagesPage extends StatefulWidget {
   State<MessagesPage> createState() => _MessagesPageState();
 }
 
+class _ConversationSummary {
+  final Player player;
+  final String preview;
+  final DateTime sentAt;
+  final int unreadCount;
+  const _ConversationSummary({required this.player, required this.preview, required this.sentAt, required this.unreadCount});
+}
+
 class _MessagesPageState extends State<MessagesPage> {
-  Timer? _presenceRefresh;
+  Timer? _refreshTimer;
+  bool _loading = true;
+  String? _error;
+  List<_ConversationSummary> _conversations = [];
 
   @override
   void initState() {
     super.initState();
-    _refreshPlayers();
-    _presenceRefresh = Timer.periodic(const Duration(seconds: 15), (_) => _refreshPlayers());
+    _loadInbox();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) => _loadInbox(silent: true));
   }
 
-  Future<void> _refreshPlayers() async {
+  Future<void> _loadInbox({bool silent = false}) async {
+    final me = Store.instance.current?.id;
+    if (me == null) return;
+    if (!silent && mounted) setState(() { _loading = true; _error = null; });
     try {
       await Store.instance.refreshPlayers();
-      if (mounted) setState(() {});
-    } catch (_) {}
+      final data = await Store.instance.supabase.from('messages')
+          .select('id,sender_id,recipient_id,body,created_at,is_read')
+          .or('sender_id.eq.$me,recipient_id.eq.$me')
+          .order('created_at', ascending: false)
+          .limit(1000);
+      final grouped = <String, Map<String, dynamic>>{};
+      for (final item in (data as List)) {
+        final row = Map<String, dynamic>.from(item as Map);
+        final sender = row['sender_id']?.toString() ?? '';
+        final recipient = row['recipient_id']?.toString() ?? '';
+        final otherId = sender == me ? recipient : sender;
+        if (otherId.isEmpty || otherId == me) continue;
+        final current = grouped.putIfAbsent(otherId, () => {
+          'preview': row['body']?.toString() ?? '',
+          'created_at': row['created_at'],
+          'unread': 0,
+        });
+        if (recipient == me && row['is_read'] != true) {
+          current['unread'] = (current['unread'] as int) + 1;
+        }
+      }
+      final summaries = <_ConversationSummary>[];
+      for (final entry in grouped.entries) {
+        final player = Store.instance.findPlayer(entry.key);
+        if (player == null) continue;
+        final row = entry.value;
+        summaries.add(_ConversationSummary(
+          player: player,
+          preview: row['preview']?.toString() ?? '',
+          sentAt: DateTime.tryParse(row['created_at']?.toString() ?? '') ?? DateTime.now(),
+          unreadCount: row['unread'] as int? ?? 0,
+        ));
+      }
+      summaries.sort((a, b) => b.sentAt.compareTo(a.sentAt));
+      if (!mounted) return;
+      setState(() { _conversations = summaries; _loading = false; _error = null; });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _loading = false; _error = e.toString(); });
+    }
+  }
+
+  String _timeLabel(DateTime value) {
+    final local = value.toLocal();
+    final now = DateTime.now();
+    if (local.year == now.year && local.month == now.month && local.day == now.day) {
+      return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    }
+    return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}';
   }
 
   @override
-  void dispose() {
-    _presenceRefresh?.cancel();
-    super.dispose();
-  }
+  void dispose() { _refreshTimer?.cancel(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
-    final me = Store.instance.current?.id;
-    final players = Store.instance.players.where((p) => !p.admin && p.id != me).toList();
+    final unreadTotal = _conversations.fold<int>(0, (sum, item) => sum + item.unreadCount);
     return Scaffold(
-      appBar: AppBar(title: const Text('Messages')),
-      body: players.isEmpty
-          ? const Center(child: Text('No other players available yet.'))
-          : RefreshIndicator(
-              onRefresh: _refreshPlayers,
-              child: ListView.builder(
-                padding: const EdgeInsets.all(14),
-                itemCount: players.length,
-                itemBuilder: (context, index) {
-                  final p = players[index];
-                  final online = p.isOnline && (p.lastSeen == null || DateTime.now().toUtc().difference(p.lastSeen!.toUtc()).inMinutes < 3);
-                  return _MessagePlayerTile(
-                    player: p,
-                    online: online,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: p))),
-                  );
-                },
-              ),
-            ),
+      appBar: AppBar(title: const Text('MESSAGE CENTRE'), actions: [
+        IconButton(tooltip: 'Find players', icon: const Icon(Icons.person_search), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _MessagePlayersPage())).then((_) => _loadInbox())),
+        IconButton(tooltip: 'Refresh messages', icon: const Icon(Icons.refresh), onPressed: _loading ? null : _loadInbox),
+      ]),
+      body: _loading ? const Center(child: CircularProgressIndicator()) : _error != null
+          ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Column(mainAxisSize: MainAxisSize.min, children: [Text('Could not load messages.\n$_error', textAlign: TextAlign.center), const SizedBox(height: 12), FilledButton.icon(onPressed: _loadInbox, icon: const Icon(Icons.refresh), label: const Text('RETRY'))])))
+          : RefreshIndicator(onRefresh: _loadInbox, child: ListView(padding: const EdgeInsets.all(14), children: [
+              Container(padding: const EdgeInsets.all(14), decoration: _neonBox(_yellow, radius: 16), child: Row(children: [const Icon(Icons.mark_chat_unread_outlined, color: _yellow, size: 28), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('YOUR INBOX', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1)), Text('$unreadTotal unread message${unreadTotal == 1 ? '' : 's'}', style: const TextStyle(color: _muted))])), Container(padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8), decoration: BoxDecoration(color: _yellow.withOpacity(.15), borderRadius: BorderRadius.circular(20)), child: Text('$unreadTotal', style: const TextStyle(color: _yellow, fontWeight: FontWeight.w900, fontSize: 18)))])),
+              const SizedBox(height: 12),
+              if (_conversations.isEmpty) Container(padding: const EdgeInsets.all(22), decoration: _neonBox(_blue, radius: 16), child: Column(children: [const Icon(Icons.forum_outlined, size: 42, color: _blue), const SizedBox(height: 8), const Text('No conversations yet', style: TextStyle(fontWeight: FontWeight.w900)), const SizedBox(height: 5), const Text('Start a conversation with another CHIBBYBALL player.', textAlign: TextAlign.center, style: TextStyle(color: _muted)), const SizedBox(height: 12), FilledButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const _MessagePlayersPage())).then((_) => _loadInbox()), icon: const Icon(Icons.chat), label: const Text('FIND PLAYERS'))]))
+              else ..._conversations.map((item) {
+                final online = item.player.isOnline && (item.player.lastSeen == null || DateTime.now().toUtc().difference(item.player.lastSeen!.toUtc()).inMinutes < 3);
+                return Container(margin: const EdgeInsets.only(bottom: 9), decoration: _neonBox(item.unreadCount > 0 ? _yellow : _blue, radius: 16), child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 5),
+                  leading: Stack(children: [CircleAvatar(radius: 25, backgroundImage: item.player.avatarUrl.isNotEmpty ? NetworkImage(item.player.avatarUrl) : null, child: item.player.avatarUrl.isEmpty ? const Icon(Icons.person) : null), Positioned(right: 0, bottom: 0, child: Container(width: 12, height: 12, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFFB7A77C), border: Border.all(color: _panel, width: 2))))]),
+                  title: Text(item.player.gamerTag, style: TextStyle(fontWeight: item.unreadCount > 0 ? FontWeight.w900 : FontWeight.w700)),
+                  subtitle: Text(item.preview, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: item.unreadCount > 0 ? Colors.white : _muted, fontWeight: item.unreadCount > 0 ? FontWeight.w800 : FontWeight.normal)),
+                  trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [Text(_timeLabel(item.sentAt), style: const TextStyle(color: _muted, fontSize: 10)), if (item.unreadCount > 0) Container(margin: const EdgeInsets.only(top: 5), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: const BoxDecoration(color: _yellow, shape: BoxShape.circle), child: Text('${item.unreadCount}', style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 11)))]),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: item.player))).then((_) => _loadInbox()),
+                ));
+              }),
+            ])),
     );
+  }
+}
+
+class _MessagePlayersPage extends StatefulWidget {
+  const _MessagePlayersPage();
+  @override State<_MessagePlayersPage> createState() => _MessagePlayersPageState();
+}
+class _MessagePlayersPageState extends State<_MessagePlayersPage> {
+  bool loading = true;
+  String? error;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async { try { await Store.instance.refreshPlayers(); } catch (e) { error = e.toString(); } if (mounted) setState(() => loading = false); }
+  @override Widget build(BuildContext context) {
+    final me = Store.instance.current?.id;
+    final players = Store.instance.players.where((p) => p.id != me).toList()..sort((a,b) => a.gamerTag.toLowerCase().compareTo(b.gamerTag.toLowerCase()));
+    return Scaffold(appBar: AppBar(title: const Text('FIND PLAYERS')), body: loading ? const Center(child: CircularProgressIndicator()) : error != null ? Center(child: Text(error!)) : ListView.builder(padding: const EdgeInsets.all(14), itemCount: players.length, itemBuilder: (context,index) { final p=players[index]; final online=p.isOnline && (p.lastSeen==null || DateTime.now().toUtc().difference(p.lastSeen!.toUtc()).inMinutes<3); return _MessagePlayerTile(player:p,online:online,onTap:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>ChatPage(player:p)))); }));
   }
 }
 
@@ -5353,44 +5448,12 @@ class _MessagePlayerTile extends StatelessWidget {
   final bool online;
   final VoidCallback onTap;
   const _MessagePlayerTile({required this.player, required this.online, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xDD171006),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: online ? const Color(0xFFFFC928) : const Color(0x443A5575)),
-        boxShadow: [BoxShadow(color: online ? const Color(0x2200D9FF) : Colors.transparent, blurRadius: 18)],
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-        leading: Stack(
-          children: [
-            CircleAvatar(
-              radius: 25,
-              backgroundImage: player.avatarUrl.isNotEmpty ? NetworkImage(player.avatarUrl) : null,
-              child: player.avatarUrl.isEmpty ? const Icon(Icons.person) : null,
-            ),
-            Positioned(right: 0, bottom: 0, child: Container(width: 13, height: 13, decoration: BoxDecoration(shape: BoxShape.circle, color: online ? const Color(0xFF20E070) : const Color(0xFFB7A77C), border: Border.all(color: const Color(0xFF171006), width: 2)))),
-          ],
-        ),
-        title: Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)),
-        subtitle: Text(online ? 'Online' : (player.lastSeen == null ? 'Offline' : 'Last seen ${_shortLastSeen(player.lastSeen!)}')),
-        trailing: const Icon(Icons.chat_bubble_outline, color: Color(0xFFFFC928)),
-        onTap: onTap,
-      ),
-    );
-  }
-
-  static String _shortLastSeen(DateTime d) {
-    final diff = DateTime.now().toUtc().difference(d.toUtc());
-    if (diff.inMinutes < 1) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
-  }
+  @override Widget build(BuildContext context) => Container(margin: const EdgeInsets.only(bottom: 10), decoration: _neonBox(online ? _yellow : _blue, radius: 16), child: ListTile(
+    leading: CircleAvatar(radius: 24, backgroundImage: player.avatarUrl.isNotEmpty ? NetworkImage(player.avatarUrl) : null, child: player.avatarUrl.isEmpty ? const Icon(Icons.person) : null),
+    title: Text(player.gamerTag, style: const TextStyle(fontWeight: FontWeight.w900)),
+    subtitle: Text(online ? 'Online' : 'Offline', style: TextStyle(color: online ? const Color(0xFF20E070) : _muted)),
+    trailing: const Icon(Icons.chat_bubble_outline, color: _yellow), onTap: onTap,
+  ));
 }
 
 class ChatPage extends StatefulWidget {
@@ -10729,6 +10792,27 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
     );
   }
 
+  Widget _contactDetail(String label, String value) => Padding(padding: const EdgeInsets.symmetric(vertical: 5), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [SizedBox(width: 112, child: Text(label, style: const TextStyle(color: _muted, fontWeight: FontWeight.w700))), Expanded(child: SelectableText(value, style: const TextStyle(fontWeight: FontWeight.w700)))]));
+
+  Future<void> _showPlayerContact(Player player) async {
+    final raw = player.whatsappNumber.trim();
+    final digits = raw.replaceAll(RegExp(r'[^0-9+]'), '');
+    var normalized = digits.startsWith('+') ? digits.substring(1) : digits;
+    if (!normalized.startsWith('234') && normalized.startsWith('0')) {
+      final cc = player.countryCode.replaceAll(RegExp(r'[^0-9]'), '');
+      normalized = '${cc.isEmpty ? '234' : cc}${normalized.substring(1)}';
+    }
+    await showModalBottomSheet<void>(context: context, isScrollControlled: true, backgroundColor: _panel, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))), builder: (sheetContext) => SafeArea(child: Padding(padding: const EdgeInsets.fromLTRB(20, 18, 20, 24), child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [_playerAvatar(player, radius: 27, accent: _yellow), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(player.gamerTag, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)), if (player.name.trim().isNotEmpty) Text(player.name, style: const TextStyle(color: _muted))]))]),
+      const SizedBox(height: 16),
+      _contactDetail('Phone number', player.phoneNumber.isEmpty ? 'Not provided' : player.phoneNumber),
+      _contactDetail('WhatsApp', raw.isEmpty ? 'Not provided' : raw),
+      _contactDetail('Country', player.country.isEmpty ? 'Not provided' : player.country),
+      const SizedBox(height: 14),
+      Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () { Navigator.pop(sheetContext); Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: player))); }, icon: const Icon(Icons.chat_bubble_outline), label: const Text('IN-APP CHAT'))), const SizedBox(width: 9), Expanded(child: FilledButton.icon(onPressed: normalized.isEmpty ? null : () async { final uri=Uri.parse('https://wa.me/$normalized'); final ok=await launchUrl(uri,mode:LaunchMode.externalApplication); if (sheetContext.mounted && !ok) ScaffoldMessenger.of(sheetContext).showSnackBar(const SnackBar(content: Text('Could not open WhatsApp.'))); }, icon: const Icon(Icons.phone), label: const Text('WHATSAPP')))]),
+    ]))));
+  }
+
   @override void dispose() { searchController.dispose(); super.dispose(); }
 
   @override
@@ -10759,6 +10843,7 @@ class _PlayerManagementPageState extends State<PlayerManagementPage> {
                  child: Text('SUSPENDED', style: TextStyle(color: Color(0xFFFF4D7D), fontSize: 10, fontWeight: FontWeight.w900)),
                ),
            ])),
+            IconButton(tooltip: 'Player contact details', onPressed: () => _showPlayerContact(player), icon: const Icon(Icons.contact_phone_outlined, color: _yellow)),
             if (!widget.creatorMode) IconButton(tooltip: 'Message', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatPage(player: player))), icon: const Icon(Icons.chat_bubble_outline, color: _purple)),
             if (!widget.creatorMode && selectedLeagueId != null) IconButton(tooltip: isMember ? 'Remove from league' : 'Add to league', onPressed: loading ? null : () => _toggleMember(player, !isMember), icon: Icon(isMember ? Icons.remove_circle_outline : Icons.add_circle_outline, color: isMember ? const Color(0xFFFF4D7D) : _cyan)),
             PopupMenuButton<String>(
@@ -11991,6 +12076,9 @@ class _ActivityHistoryPageState extends State<ActivityHistoryPage> {
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _rows = [];
+  final Map<String, String> _playerNames = {};
+  final Map<String, String> _leagueNames = {};
+  final Map<String, String> _matchNames = {};
   String _filter = 'all';
 
   @override
@@ -12016,6 +12104,37 @@ class _ActivityHistoryPageState extends State<ActivityHistoryPage> {
       if (widget.creatorMode) query = query.eq('league_id', widget.leagueId!);
       final result = await query.order('created_at', ascending: false).limit(200);
       _rows = (result as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+      // Resolve audit UUIDs to readable names without changing the audit data.
+      _playerNames.clear();
+      _leagueNames.clear();
+      _matchNames.clear();
+      try {
+        final profiles = await store.supabase
+            .from('profiles').select('id,gamer_tag,full_name').limit(1000);
+        for (final item in (profiles as List)) {
+          final p = Map<String, dynamic>.from(item as Map);
+          final id = p['id']?.toString();
+          if (id == null || id.isEmpty) continue;
+          final tag = (p['gamer_tag'] ?? '').toString().trim();
+          final name = (p['full_name'] ?? '').toString().trim();
+          _playerNames[id] = tag.isNotEmpty ? tag : (name.isNotEmpty ? name : 'Unknown player');
+        }
+      } catch (_) {}
+      try {
+        final leagues = await store.supabase.from('leagues').select('id,name').limit(1000);
+        for (final item in (leagues as List)) {
+          final l = Map<String, dynamic>.from(item as Map);
+          final id = l['id']?.toString();
+          if (id != null && id.isNotEmpty) _leagueNames[id] = (l['name'] ?? 'Unnamed league').toString();
+        }
+      } catch (_) {}
+      // Match labels are built from the already loaded match cache where possible.
+      for (final m in store.matches) {
+        final home = _playerNames[m.homeId] ?? 'Player';
+        final away = _playerNames[m.awayId] ?? 'Player';
+        _matchNames[m.id] = '$home vs $away';
+      }
     } catch (e) {
       _error = e.toString();
     }
@@ -12029,10 +12148,44 @@ class _ActivityHistoryPageState extends State<ActivityHistoryPage> {
     return d.length >= 16 ? d.substring(0, 16) : d;
   }
 
+  String _playerLabel(dynamic value) {
+    final id = value?.toString() ?? '';
+    if (id.isEmpty) return 'Not specified';
+    return _playerNames[id] ?? 'Unknown player';
+  }
+
+  String _leagueLabel(dynamic value) {
+    final id = value?.toString() ?? '';
+    if (id.isEmpty) return 'Not specified';
+    return _leagueNames[id] ?? 'Unknown league';
+  }
+
+  String _matchLabel(dynamic value) {
+    final id = value?.toString() ?? '';
+    if (id.isEmpty) return 'Not specified';
+    return _matchNames[id] ?? 'Match details unavailable';
+  }
+
   String _pretty(dynamic value) {
     if (value == null) return '';
-    if (value is Map || value is List) return value.toString();
-    return value.toString();
+    if (value is List) return value.map(_pretty).join(', ');
+    if (value is Map) {
+      return value.entries.map((entry) {
+        final key = entry.key.toString();
+        final raw = entry.value;
+        String label = key.replaceAll('_', ' ');
+        if (key == 'league_id' || key == 'original_league_id') return 'League: ${_leagueLabel(raw)}';
+        if (key == 'player_id' || key == 'affected_player_id' || key == 'original_player_id' || key == 'home_player_id' || key == 'away_player_id') return '${label[0].toUpperCase()}${label.substring(1)}: ${_playerLabel(raw)}';
+        if (key == 'admin_id' || key == 'recorded_admin_id' || key == 'actor_id') return 'Actor: ${_playerLabel(raw)}';
+        if (key == 'match_id' || key == 'related_match_id') return 'Match: ${_matchLabel(raw)}';
+        return '$label: ${_pretty(raw)}';
+      }).join(' • ');
+    }
+    final text = value.toString();
+    if (_playerNames.containsKey(text)) return _playerLabel(text);
+    if (_leagueNames.containsKey(text)) return _leagueLabel(text);
+    if (_matchNames.containsKey(text)) return _matchLabel(text);
+    return text;
   }
 
   @override
@@ -12054,10 +12207,10 @@ class _ActivityHistoryPageState extends State<ActivityHistoryPage> {
                 subtitle: Text('${row['actor_role'] ?? 'unknown'} • ${_stamp(row['created_at'])}\n${(row['reason'] ?? '').toString()}', maxLines: 3, overflow: TextOverflow.ellipsis),
                 childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
                 children: [
-                  _detail('Actor ID', row['actor_id']),
-                  _detail('League ID', row['league_id']),
-                  _detail('Affected player', row['affected_player_id']),
-                  _detail('Related match', row['related_match_id']),
+                  _detail('Actor', _playerLabel(row['actor_id'])),
+                  _detail('League', _leagueLabel(row['league_id'])),
+                  _detail('Affected player', _playerLabel(row['affected_player_id'])),
+                  _detail('Related match', _matchLabel(row['related_match_id'])),
                   _detail('Related complaint', row['related_complaint_id']),
                   _detail('Reason', row['reason']),
                   _detail('Previous values', _pretty(row['old_values'])),
