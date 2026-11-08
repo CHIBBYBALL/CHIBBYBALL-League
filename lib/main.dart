@@ -9294,6 +9294,16 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                             icon: const Icon(Icons.gavel),
                             label: const Text('DISCIPLINARY MANAGEMENT'),
                           ),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error))); return; }
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => ActivityHistoryPage(creatorMode: true, leagueId: selected.id)));
+                            },
+                            icon: const Icon(Icons.history),
+                            label: const Text('LEAGUE ACTIVITY HISTORY'),
+                          ),
                         ]),
                       ],
                       const SizedBox(height: 12),
@@ -11548,6 +11558,10 @@ class _AdminPageState extends State<AdminPage> {
         _neonAction(context, Icons.fact_check_outlined, 'LEAGUE REQUESTS', 'Approve or reject player league requests', _purple, () => open(const LeagueRequestsAdminPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.admin_panel_settings, 'CREATOR MANAGEMENT', 'Review creators, complaints, private messages and sanctions', _yellow, () => open(const CreatorManagementPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.policy_outlined, 'INVESTIGATION CENTRE', 'Central access to complaints, disputed results, no-show reports and match decisions', _yellow, () => open(const AdminInvestigationCentrePage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.history, 'ACTIVITY HISTORY', 'Review the platform-wide audit trail and recorded administrative actions', _cyan, () => open(const ActivityHistoryPage())),
          _neonAction(context, Icons.person_add_alt_1, 'PLAYER JOIN REQUESTS', 'Approve or reject requests to join admin and creator leagues', _cyan, () => open(const LeagueJoinRequestsAdminPage())),
          const SizedBox(height: 9),
         const SizedBox(height: 9),
@@ -11922,6 +11936,144 @@ class _CreatorManagementPageState extends State<CreatorManagementPage> {
               ))),
             ])),
     );
+  }
+}
+
+// ============================================================
+// BUILDER 3 — ADMIN INVESTIGATION CENTRE
+// Reuses the existing review workflows; does not duplicate decision logic.
+// ============================================================
+class AdminInvestigationCentrePage extends StatelessWidget {
+  const AdminInvestigationCentrePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (Store.instance.current?.admin != true) {
+      return const Scaffold(body: Center(child: Text('Admin access required.')));
+    }
+    void open(Widget page) => Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+    return Scaffold(
+      appBar: AppBar(title: const Text('ADMIN INVESTIGATION CENTRE')),
+      body: ListView(padding: const EdgeInsets.all(14), children: [
+        Container(padding: const EdgeInsets.all(16), decoration: _neonBox(_yellow, radius: 18), child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('PLATFORM OVERSIGHT', style: TextStyle(color: _yellow, fontWeight: FontWeight.w900, letterSpacing: 1)),
+          SizedBox(height: 7),
+          Text('Review reports and evidence, then make decisions through the existing protected management workflows.', style: TextStyle(color: _muted, height: 1.4)),
+        ])),
+        const SizedBox(height: 12),
+        _neonAction(context, Icons.flag_outlined, 'PLAYER COMPLAINTS & CREATOR ACCOUNTABILITY', 'Review player complaints, creator responses and creator sanctions', _yellow, () => open(const CreatorManagementPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.fact_check_outlined, 'DISPUTED MATCHES & RESULTS', 'Inspect submitted scores and screenshot evidence; resolve eligible disputes', _purple, () => open(const ResultReviewPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.report_gmailerrorred_outlined, 'NO-SHOW REPORTS', 'Review player no-show reports and record decisions', _cyan, () => open(const NoShowReportsAdminPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.gavel, 'FORFEIT & MATCH DECISIONS', 'Review fixtures and record a forfeit or rescheduling decision', _yellow, () => open(const AdminForfeitMatchesPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.history, 'ACTIVITY HISTORY', 'Inspect the audit trail associated with administrative and league actions', _blue, () => open(const ActivityHistoryPage())),
+      ]),
+    );
+  }
+}
+
+// ============================================================
+// BUILDER 3 — ACTIVITY HISTORY / AUDIT VIEWER
+// Creator queries are scoped to their selected league; Supabase RLS remains
+// the final access boundary. Admins can review the platform-wide log.
+// ============================================================
+class ActivityHistoryPage extends StatefulWidget {
+  final bool creatorMode;
+  final String? leagueId;
+  const ActivityHistoryPage({super.key, this.creatorMode = false, this.leagueId});
+  @override State<ActivityHistoryPage> createState() => _ActivityHistoryPageState();
+}
+
+class _ActivityHistoryPageState extends State<ActivityHistoryPage> {
+  bool _loading = true;
+  String? _error;
+  List<Map<String, dynamic>> _rows = [];
+  String _filter = 'all';
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final store = Store.instance;
+      final me = store.current;
+      if (me == null) throw Exception('Please sign in again.');
+      if (widget.creatorMode) {
+        if (widget.leagueId == null || !await store.isLeagueManager(widget.leagueId!)) {
+          throw Exception('You do not have access to this league activity history.');
+        }
+      } else if (!me.admin) {
+        throw Exception('Admin access required.');
+      }
+      dynamic query = store.supabase.from('creator_activity_log').select(
+        'id,actor_id,actor_role,league_id,affected_player_id,action_type,reason,old_values,new_values,metadata,related_match_id,related_complaint_id,reverses_activity_id,created_at'
+      );
+      if (widget.creatorMode) query = query.eq('league_id', widget.leagueId!);
+      final result = await query.order('created_at', ascending: false).limit(200);
+      _rows = (result as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (e) {
+      _error = e.toString();
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  String _stamp(dynamic value) {
+    final date = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
+    if (date == null) return 'Time unavailable';
+    final d = date.toString();
+    return d.length >= 16 ? d.substring(0, 16) : d;
+  }
+
+  String _pretty(dynamic value) {
+    if (value == null) return '';
+    if (value is Map || value is List) return value.toString();
+    return value.toString();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = _filter == 'all' ? _rows : _rows.where((r) => (r['actor_role']?.toString() ?? '').toLowerCase() == _filter).toList();
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.creatorMode ? 'LEAGUE ACTIVITY HISTORY' : 'PLATFORM ACTIVITY HISTORY'), actions: [IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh))]),
+      body: _loading ? const Center(child: CircularProgressIndicator()) : _error != null
+          ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Column(mainAxisSize: MainAxisSize.min, children: [Text('Could not load activity history:\n$_error', textAlign: TextAlign.center), const SizedBox(height: 12), FilledButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('RETRY'))])))
+          : RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(14), children: [
+              Container(padding: const EdgeInsets.all(13), decoration: _neonBox(_cyan, radius: 16), child: Row(children: [const Icon(Icons.history, color: _cyan), const SizedBox(width: 10), Expanded(child: Text(widget.creatorMode ? 'Showing activity for this managed league only.' : 'Showing the latest platform activity available to administrators.', style: const TextStyle(color: _muted))), Text('${visible.length}', style: const TextStyle(color: _cyan, fontSize: 20, fontWeight: FontWeight.w900))])),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(value: _filter, decoration: const InputDecoration(labelText: 'Filter by actor'), items: const [DropdownMenuItem(value: 'all', child: Text('All actors')), DropdownMenuItem(value: 'creator', child: Text('Creators')), DropdownMenuItem(value: 'admin', child: Text('Administrators')), DropdownMenuItem(value: 'system', child: Text('System'))], onChanged: (v) => setState(() => _filter = v ?? 'all')),
+              const SizedBox(height: 10),
+              if (visible.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No activity records found.'))),
+              ...visible.map((row) => Card(color: _panel, child: ExpansionTile(
+                leading: Icon(row['actor_role'] == 'admin' ? Icons.admin_panel_settings : row['actor_role'] == 'system' ? Icons.settings_suggest : Icons.manage_accounts, color: _cyan),
+                title: Text((row['action_type'] ?? 'Activity').toString().replaceAll('_', ' ').toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                subtitle: Text('${row['actor_role'] ?? 'unknown'} • ${_stamp(row['created_at'])}\n${(row['reason'] ?? '').toString()}', maxLines: 3, overflow: TextOverflow.ellipsis),
+                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                children: [
+                  _detail('Actor ID', row['actor_id']),
+                  _detail('League ID', row['league_id']),
+                  _detail('Affected player', row['affected_player_id']),
+                  _detail('Related match', row['related_match_id']),
+                  _detail('Related complaint', row['related_complaint_id']),
+                  _detail('Reason', row['reason']),
+                  _detail('Previous values', _pretty(row['old_values'])),
+                  _detail('New values', _pretty(row['new_values'])),
+                  _detail('Additional metadata', _pretty(row['metadata'])),
+                  _detail('Reverses activity', row['reverses_activity_id']),
+                ],
+              ))),
+              if (_rows.length >= 200) const Padding(padding: EdgeInsets.all(12), child: Text('Showing the latest 200 records. More advanced date/search filters can be added in a later refinement.', style: TextStyle(color: _muted, fontSize: 11))),
+            ])),
+    );
+  }
+
+  Widget _detail(String label, dynamic value) {
+    if (value == null || value.toString().isEmpty) return const SizedBox.shrink();
+    return Padding(padding: const EdgeInsets.only(bottom: 7), child: Align(alignment: Alignment.centerLeft, child: SelectableText('$label: ${value.toString()}', style: const TextStyle(fontSize: 11, color: _muted))));
   }
 }
 
