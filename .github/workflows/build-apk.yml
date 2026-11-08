@@ -23,10 +23,13 @@ jobs:
           channel: stable
           cache: true
 
+      # Cache Gradle distributions and downloaded dependencies.
+      - name: Set up Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Generate Android project
         run: flutter create --platforms=android --org com.chibbyball --project-name leaguecreator .
 
-      # FIX: Use the direct Gradle distribution host and bin package.
       - name: Configure Gradle distribution download
         run: |
           python3 - <<'PY'
@@ -548,9 +551,8 @@ jobs:
           flutter clean
           rm -rf android/.gradle android/app/build build
 
-      - name: Clear Gradle build cache
-        run: |
-          rm -rf "$HOME/.gradle/caches" "$HOME/.gradle/daemon"
+      # Do not delete ~/.gradle/caches here.
+      # setup-gradle needs the cache to persist between workflow runs.
 
       - name: Resolve dependencies and record versions
         run: |
