@@ -11324,23 +11324,24 @@ class _NoShowReportsAdminPageState extends State<NoShowReportsAdminPage> {
       : ListView(padding: const EdgeInsets.all(14), children: [
           if (widget.creatorMode) const Card(child: Padding(padding: EdgeInsets.all(12), child: Text('Read-only creator view for this league. Resolution controls remain admin-only until the creator-scoped decision RPC is installed.'))),
           ...reports.map((r) {
-          final status = r['status']?.toString() ?? 'unknown';
-          final deadline = DateTime.tryParse(r['response_deadline']?.toString() ?? '')?.toLocal().toString() ?? 'Not set';
-          final pending = !['resolved', 'rejected'].contains(status);
-          return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('${playerName(r['reporter_id'])} reported ${playerName(r['reported_player_id'])}', style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6), Text('Reason: ${r['reason']}'),
-            Text('Status: $status'), Text('Response deadline: $deadline'),
-            if ((r['admin_note'] ?? '').toString().isNotEmpty) Text('Admin note: ${r['admin_note']}'),
-            if (pending && !widget.creatorMode) Wrap(spacing: 6, runSpacing: 4, children: [
-              TextButton(onPressed: () => resolve(r, 'award_reporter'), child: const Text('Award reporter')),
-              TextButton(onPressed: () => resolve(r, 'award_reported_player'), child: const Text('Award opponent')),
-              TextButton(onPressed: () => resolve(r, 'extend_deadline'), child: const Text('Extend deadline')),
-              TextButton(onPressed: () => resolve(r, 'reject_report'), child: const Text('Reject')),
-              TextButton(onPressed: () => resolve(r, 'no_penalty'), child: const Text('No penalty')),
-            ]),
-          ])));
-        }).toList()),
+            final status = r['status']?.toString() ?? 'unknown';
+            final deadline = DateTime.tryParse(r['response_deadline']?.toString() ?? '')?.toLocal().toString() ?? 'Not set';
+            final pending = !['resolved', 'rejected'].contains(status);
+            return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${playerName(r['reporter_id'])} reported ${playerName(r['reported_player_id'])}', style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6), Text('Reason: ${r['reason']}'),
+              Text('Status: $status'), Text('Response deadline: $deadline'),
+              if ((r['admin_note'] ?? '').toString().isNotEmpty) Text('Admin note: ${r['admin_note']}'),
+              if (pending && !widget.creatorMode) Wrap(spacing: 6, runSpacing: 4, children: [
+                TextButton(onPressed: () => resolve(r, 'award_reporter'), child: const Text('Award reporter')),
+                TextButton(onPressed: () => resolve(r, 'award_reported_player'), child: const Text('Award opponent')),
+                TextButton(onPressed: () => resolve(r, 'extend_deadline'), child: const Text('Extend deadline')),
+                TextButton(onPressed: () => resolve(r, 'reject_report'), child: const Text('Reject')),
+                TextButton(onPressed: () => resolve(r, 'no_penalty'), child: const Text('No penalty')),
+              ]),
+            ])));
+          }),
+        ]),
   );
 }
 
