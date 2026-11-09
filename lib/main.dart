@@ -12334,7 +12334,49 @@ class _AdminPlayerDirectoryPageState extends State<AdminPlayerDirectoryPage> {
       _profileLine('Email',email),_profileLine('Phone',phone),_profileLine('Country code',code),_profileLine('WhatsApp',whatsapp),_profileLine('Country',country),_profileLine('Account role',_value(p,['role'])),_profileLine('Registered',_date(p['created_at'])),
       const SizedBox(height:12),const Text('LEAGUE MEMBERSHIPS',style:TextStyle(color:_cyan,fontWeight:FontWeight.w900)),const SizedBox(height:5),Text(leagues.isEmpty?'No league memberships found.':leagues.join(' • '),style:const TextStyle(color:_muted)),
       const SizedBox(height:12),Text('DISCIPLINARY HISTORY (${actions.length})',style:const TextStyle(color:_yellow,fontWeight:FontWeight.w900)),const SizedBox(height:5),if(actions.isEmpty)const Text('No disciplinary actions recorded.',style:TextStyle(color:_muted)),...actions.take(30).map((a)=>Container(margin:const EdgeInsets.only(bottom:7),padding:const EdgeInsets.all(10),decoration:_neonBox(_yellow,radius:12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text((a['action_type']??'Action').toString().replaceAll('_',' ').toUpperCase(),style:const TextStyle(fontWeight:FontWeight.w900)),Text('League: ${_leagueNames[a['league_id']?.toString()]??'Unknown league'} • ${_date(a['created_at'])}',style:const TextStyle(color:_muted,fontSize:11)),Text('Reason: ${a['reason']??'Not recorded'}',style:const TextStyle(color:_muted)),if(a['points_delta']!=null && (a['points_delta'] as num).toInt()!=0)Text('Points: ${a['points_delta']}'),if(a['suspended']==true)const Text('Suspension recorded',style:TextStyle(color:Color(0xFFFF4D7D))) ]))),
-      const SizedBox(height:12),Wrap(spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>Navigator.pop(ctx),icon:const Icon(Icons.close),label:const Text('CLOSE')),FilledButton.icon(onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>ChatPage(player:Player(id:id,name:full=='Not provided'?'':full,gamerTag:tag,phoneNumber:phone=='Not provided'?'':phone,country:country=='Not provided'?'':country,countryCode:code=='Not provided'?'':code,whatsappNumber:whatsapp=='Not provided'?'':whatsapp,avatarUrl:(p['avatar_url']??'').toString()))),icon:const Icon(Icons.chat),label:const Text('IN-APP CHAT')),FilledButton.icon(onPressed:wa.isEmpty?null:() async { await launchUrl(Uri.parse('https://wa.me/$wa'),mode:LaunchMode.externalApplication); },icon:const Icon(Icons.phone),label:const Text('WHATSAPP'))])
+      const SizedBox(height:12),
+      Wrap(
+        spacing:8,
+        runSpacing:8,
+        children:[
+          OutlinedButton.icon(
+            onPressed:()=>Navigator.pop(ctx),
+            icon:const Icon(Icons.close),
+            label:const Text('CLOSE'),
+          ),
+          FilledButton.icon(
+            onPressed:()=>Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder:(_)=>ChatPage(
+                  player:Player(
+                    id:id,
+                    name:full=='Not provided'?'':full,
+                    gamerTag:tag,
+                    phoneNumber:phone=='Not provided'?'':phone,
+                    country:country=='Not provided'?'':country,
+                    countryCode:code=='Not provided'?'':code,
+                    whatsappNumber:whatsapp=='Not provided'?'':whatsapp,
+                    avatarUrl:(p['avatar_url']??'').toString(),
+                  ),
+                ),
+              ),
+            ),
+            icon:const Icon(Icons.chat),
+            label:const Text('IN-APP CHAT'),
+          ),
+          FilledButton.icon(
+            onPressed:wa.isEmpty?null:() async {
+              await launchUrl(
+                Uri.parse('https://wa.me/$wa'),
+                mode:LaunchMode.externalApplication,
+              );
+            },
+            icon:const Icon(Icons.phone),
+            label:const Text('WHATSAPP'),
+          ),
+        ],
+      )
     ])))));
   }
 
