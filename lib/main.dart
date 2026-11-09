@@ -9380,6 +9380,16 @@ class _LeagueManagementPageState extends State<LeagueManagementPage> {
                               final error = await store.selectLeague(selected.id);
                               if (!mounted) return;
                               if (error != null) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error))); return; }
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => CreatorForfeitMatchesPage(leagueId: selected.id, leagueName: selected.name)));
+                            },
+                            icon: const Icon(Icons.gavel_outlined),
+                            label: const Text('FORFEIT & RESCHEDULE MATCHES'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: loading ? null : () async {
+                              final error = await store.selectLeague(selected.id);
+                              if (!mounted) return;
+                              if (error != null) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error))); return; }
                               Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerManagementPage(creatorMode: true, disciplineOnly: true)));
                             },
                             icon: const Icon(Icons.gavel),
@@ -11369,6 +11379,124 @@ class _LeagueJoinRequestsAdminPageState extends State<LeagueJoinRequestsAdminPag
 
 // ADMIN
 // ============================================================
+
+class CreatorForfeitMatchesPage extends StatefulWidget {
+  final String leagueId;
+  final String leagueName;
+  const CreatorForfeitMatchesPage({super.key, required this.leagueId, required this.leagueName});
+  @override State<CreatorForfeitMatchesPage> createState() => _CreatorForfeitMatchesPageState();
+}
+
+class _CreatorForfeitMatchesPageState extends State<CreatorForfeitMatchesPage> {
+  final store = Store.instance;
+  bool loading = true;
+  String? error;
+  final Set<String> forfeitMatchIds = {};
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() { loading = true; error = null; });
+    try {
+      final permission = await store.isLeagueManager(widget.leagueId);
+      if (!permission) throw Exception('Creator access required for this league.');
+      final selectedError = await store.selectLeague(widget.leagueId);
+      if (selectedError != null) throw Exception(selectedError);
+      final rows = await store.supabase
+          .from('match_forfeit_audit')
+          .select('match_id')
+          .eq('league_id', widget.leagueId);
+      forfeitMatchIds
+        ..clear()
+        ..addAll((rows as List).map((r) => r['match_id'].toString()));
+    } catch (e) { error = e.toString(); }
+    if (mounted) setState(() => loading = false);
+  }
+
+  String playerName(String id) {
+    final p = store.players.where((p) => p.id == id).firstOrNull;
+    return p?.gamerTag.isNotEmpty == true ? p!.gamerTag : (p?.name ?? 'Unknown player');
+  }
+
+  Future<void> _decide(MatchItem match, String action, String label) async {
+    final note = TextEditingController();
+    final accepted = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: Text(label),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('${playerName(match.homeId)} vs ${playerName(match.awayId)}'),
+        const SizedBox(height: 10),
+        Text(action == 'home_win'
+            ? 'This awards ${playerName(match.homeId)} a confirmed 3–0 forfeit win.'
+            : action == 'away_win'
+                ? 'This awards ${playerName(match.awayId)} a confirmed 3–0 forfeit win.'
+                : action == 'double_forfeit'
+                    ? 'This records a 0–0 double forfeit with no winner.'
+                    : 'This cancels the fixture result and returns the match to Scheduled for rescheduling.'),
+        const SizedBox(height: 10),
+        const Text('This decision will be recorded in the league audit history.'),
+        const SizedBox(height: 10),
+        TextField(controller: note, maxLines: 3, decoration: const InputDecoration(labelText: 'Reason (required)', border: OutlineInputBorder())),
+      ])),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('CONFIRM DECISION')),
+      ],
+    ));
+    if (accepted != true) { note.dispose(); return; }
+    if (note.text.trim().isEmpty) {
+      note.dispose();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a reason before applying this decision.')));
+      return;
+    }
+    setState(() => loading = true);
+    final result = await store.adminForfeitMatch(matchId: match.id, action: action, note: note.text.trim());
+    note.dispose();
+    if (!mounted) return;
+    if (result != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result)));
+      setState(() => loading = false);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$label saved.')));
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final matches = [...store.matches]..sort((a, b) => a.round.compareTo(b.round));
+    return Scaffold(
+      appBar: AppBar(title: Text('Creator Forfeiture • ${widget.leagueName}'), actions: [IconButton(onPressed: loading ? null : _load, icon: const Icon(Icons.refresh))]),
+      body: loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(14), children: [
+        const Text('CREATOR MATCH DECISIONS', style: TextStyle(color: _yellow, fontWeight: FontWeight.w900, fontSize: 17)),
+        const SizedBox(height: 6),
+        const Text('These controls apply only to this league. Use them after reviewing the situation. Every decision requires a reason and is recorded in the audit history.', style: TextStyle(color: _muted)),
+        if (error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text('Could not load creator forfeiture tools. Check league-manager access and the match-forfeit SQL migration.\n$error', style: const TextStyle(color: Colors.redAccent))),
+        const SizedBox(height: 10),
+        if (matches.isEmpty) const Padding(padding: EdgeInsets.all(20), child: Text('No fixtures found for this league.')),
+        ...matches.map((m) {
+          final done = m.status.toLowerCase() == 'confirmed';
+          final wasForfeit = forfeitMatchIds.contains(m.id);
+          return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('MATCH DAY ${m.round} • ${m.status.toUpperCase()}', style: const TextStyle(color: _cyan, fontWeight: FontWeight.w900, fontSize: 11)),
+            const SizedBox(height: 5),
+            Text('${playerName(m.homeId)}  vs  ${playerName(m.awayId)}', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+            if (m.homeScore != null && m.awayScore != null) Text('Current score: ${m.homeScore} – ${m.awayScore}'),
+            if (wasForfeit) const Padding(padding: EdgeInsets.only(top: 5), child: Text('⚠ FORFEIT / MATCH DECISION LOGGED', style: TextStyle(color: _yellow, fontWeight: FontWeight.w900, fontSize: 11))),
+            if (done) const Padding(padding: EdgeInsets.only(top: 5), child: Text('Already confirmed. This screen will not offer an action that overwrites a confirmed result.', style: TextStyle(color: _muted, fontSize: 12))),
+            if (!done && error == null) Wrap(spacing: 4, runSpacing: 4, children: [
+              TextButton(onPressed: loading ? null : () => _decide(m, 'home_win', 'Award home-player 3–0 win'), child: const Text('HOME WINS 3–0')),
+              TextButton(onPressed: loading ? null : () => _decide(m, 'away_win', 'Award away-player 3–0 win'), child: const Text('AWAY WINS 3–0')),
+              TextButton(onPressed: loading ? null : () => _decide(m, 'double_forfeit', 'Record double forfeit'), child: const Text('DOUBLE FORFEIT 0–0')),
+              TextButton(onPressed: loading ? null : () => _decide(m, 'cancel_reschedule', 'Cancel / reschedule fixture'), child: const Text('CANCEL / RESCHEDULE')),
+            ]),
+          ])));
+        }),
+      ]),
+    );
+  }
+}
 
 class AdminForfeitMatchesPage extends StatefulWidget {
   const AdminForfeitMatchesPage({super.key});
