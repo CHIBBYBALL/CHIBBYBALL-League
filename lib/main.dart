@@ -6049,6 +6049,7 @@ class DashboardPage extends StatelessWidget {
             quickAction(Icons.leaderboard, 'LEAGUE TABLE', 'See the live standings', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TablePage()))),
             quickAction(Icons.group_add, 'JOIN A LEAGUE', 'Find a competition to enter', _blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const JoinLeaguePage()))),
             quickAction(Icons.verified, 'CREATOR HUB', 'Explore creator leagues', _purple, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatorHubPage()))),
+            quickAction(Icons.shield_outlined, 'CREATOR ACCOUNTABILITY', 'Report a league creator or respond to a complaint', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PlayerCreatorAccountabilityPage()))),
             quickAction(Icons.dashboard_customize, 'CREATOR DASHBOARD', 'Create and manage your own leagues', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LeagueManagementPage(creatorMode: true)))),
             quickAction(Icons.emoji_events, 'CHAMPIONS LEAGUE', 'Follow the championship', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChampionsLeaguePage()))),
             quickAction(Icons.military_tech, 'ACHIEVEMENTS', 'Unlock badges from confirmed results', _yellow, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AchievementsPage()))),
@@ -11849,6 +11850,172 @@ class _AdminPageState extends State<AdminPage> {
 
 
 // ============================================================
+// GLOBAL CREATOR ACCOUNTABILITY & APPEALS CENTRE — player/creator portal
+// Players can submit a complaint against the verified manager of a league
+// they belong to. Reported creators can submit a response through the RPC.
+// ============================================================
+class PlayerCreatorAccountabilityPage extends StatefulWidget {
+  const PlayerCreatorAccountabilityPage({super.key});
+  @override
+  State<PlayerCreatorAccountabilityPage> createState() => _PlayerCreatorAccountabilityPageState();
+}
+
+class _PlayerCreatorAccountabilityPageState extends State<PlayerCreatorAccountabilityPage> {
+  final Store _store = Store.instance;
+  final TextEditingController _details = TextEditingController();
+  final TextEditingController _response = TextEditingController();
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+  String? _leagueId;
+  String _category = 'Unfair treatment';
+  XFile? _evidence;
+  List<LeagueInfo> _memberLeagues = [];
+  List<Map<String, dynamic>> _complaints = [];
+
+  @override
+  void initState() { super.initState(); _load(); }
+  @override
+  void dispose() { _details.dispose(); _response.dispose(); super.dispose(); }
+
+  Future<void> _load() async {
+    final me = _store.current;
+    if (me == null) { setState(() { _loading = false; _error = 'Please sign in again.'; }); return; }
+    setState(() { _loading = true; _error = null; });
+    try {
+      await _store.refreshLeagues();
+      final memberships = await _store.supabase.from('league_members').select('league_id').eq('player_id', me.id);
+      final memberIds = (memberships as List).map((r) => r['league_id'].toString()).toSet();
+      _memberLeagues = _store.leagues.where((l) => memberIds.contains(l.id)).toList();
+      if (_leagueId == null || !_memberLeagues.any((l) => l.id == _leagueId)) {
+        _leagueId = _memberLeagues.isEmpty ? null : _memberLeagues.first.id;
+      }
+      final rows = await _store.supabase.from('creator_complaints')
+          .select('id, creator_id, player_id, league_id, category, details, status, creator_response, admin_notes, evidence_paths, created_at')
+          .or('player_id.eq.${me.id},creator_id.eq.${me.id}')
+          .order('created_at', ascending: false);
+      _complaints = (rows as List).map((r) => Map<String, dynamic>.from(r)).toList();
+    } catch (e) { _error = e.toString(); }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _pickEvidence() async {
+    try {
+      final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (picked != null && mounted) setState(() => _evidence = picked);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not select evidence: $e')));
+    }
+  }
+
+  Future<void> _submit() async {
+    final me = _store.current;
+    if (me == null || _leagueId == null || _details.text.trim().length < 10) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Choose a league and provide at least 10 characters of detail.')));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final result = await _store.supabase.rpc('submit_player_creator_complaint', params: {
+        'p_league_id': _leagueId,
+        'p_category': _category,
+        'p_details': _details.text.trim(),
+      });
+      final complaintId = result.toString();
+      if (_evidence != null) {
+        final bytes = await _evidence!.readAsBytes();
+        final extension = _evidence!.name.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
+        final path = '$complaintId/${DateTime.now().microsecondsSinceEpoch}.$extension';
+        await _store.supabase.storage.from('creator-complaint-evidence').uploadBinary(
+          path, bytes,
+          fileOptions: FileOptions(contentType: extension == 'png' ? 'image/png' : 'image/jpeg', upsert: false),
+        );
+        await _store.supabase.rpc('player_attach_creator_complaint_evidence', params: {
+          'p_complaint_id': complaintId,
+          'p_evidence_path': path,
+        });
+      }
+      _details.clear();
+      if (mounted) {
+        setState(() => _evidence = null);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Your complaint has been submitted to CHIBBYBALL Global Admin.')));
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Complaint submission failed: $e')));
+    } finally { if (mounted) setState(() => _saving = false); }
+  }
+
+  Future<void> _respond(Map<String, dynamic> complaint) async {
+    _response.clear();
+    final send = await showDialog<bool>(context: context, builder: (d) => AlertDialog(
+      title: const Text('Respond to complaint'),
+      content: TextField(controller: _response, minLines: 3, maxLines: 7,
+        decoration: const InputDecoration(labelText: 'Your explanation for Global Admin', border: OutlineInputBorder())),
+      actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('CANCEL')),
+        FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('SUBMIT RESPONSE'))],
+    ));
+    if (send != true || _response.text.trim().isEmpty) return;
+    try {
+      await _store.supabase.rpc('creator_respond_to_complaint', params: {
+        'p_complaint_id': complaint['id'], 'p_response': _response.text.trim(),
+      });
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Your response has been submitted.')));
+      await _load();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Response failed: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final me = _store.current;
+    if (me == null) return const Scaffold(body: Center(child: Text('Please sign in.')));
+    final creatorComplaints = _complaints.where((c) => c['creator_id']?.toString() == me.id).toList();
+    return Scaffold(
+      appBar: AppBar(title: const Text('CREATOR ACCOUNTABILITY'), actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))]),
+      body: _loading ? const Center(child: CircularProgressIndicator()) : _error != null
+        ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Text('Could not load accountability centre:\n$_error', textAlign: TextAlign.center)))
+        : RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(14), children: [
+          Container(padding: const EdgeInsets.all(15), decoration: _neonBox(_yellow, radius: 16), child: const Text('A player can report a league creator to CHIBBYBALL Global Admin. The reported creator cannot decide the complaint; only Global Admin can issue the final judgment.', style: TextStyle(color: _muted, height: 1.4))),
+          if (_memberLeagues.isNotEmpty) ...[
+            const SizedBox(height: 16), _neonSectionTitle('REPORT A LEAGUE CREATOR', accent: _yellow),
+            const SizedBox(height: 9),
+            DropdownButtonFormField<String>(value: _leagueId, decoration: const InputDecoration(labelText: 'League', border: OutlineInputBorder()),
+              items: _memberLeagues.map((l) => DropdownMenuItem(value: l.id, child: Text(l.name, overflow: TextOverflow.ellipsis))).toList(),
+              onChanged: _saving ? null : (v) => setState(() => _leagueId = v)),
+            const SizedBox(height: 9),
+            DropdownButtonFormField<String>(value: _category, decoration: const InputDecoration(labelText: 'Complaint category', border: OutlineInputBorder()),
+              items: const ['Unfair treatment', 'Unfair match decision', 'Misuse of creator powers', 'League rules violation', 'Points or standings issue', 'Other'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+              onChanged: _saving ? null : (v) { if (v != null) setState(() => _category = v); }),
+            const SizedBox(height: 9),
+            TextField(controller: _details, minLines: 4, maxLines: 7, maxLength: 5000,
+              decoration: const InputDecoration(labelText: 'Explain what happened', hintText: 'Include relevant dates, match details and why you believe the decision was unfair.', border: OutlineInputBorder())),
+            OutlinedButton.icon(onPressed: _saving ? null : _pickEvidence, icon: const Icon(Icons.attach_file), label: Text(_evidence == null ? 'ATTACH IMAGE EVIDENCE (OPTIONAL)' : 'EVIDENCE: ${_evidence!.name}')),
+            const SizedBox(height: 8),
+            FilledButton.icon(onPressed: _saving ? null : _submit, icon: const Icon(Icons.send), label: Text(_saving ? 'SUBMITTING...' : 'SUBMIT TO GLOBAL ADMIN')),
+          ] else ...[
+            const SizedBox(height: 16), const Text('You are not currently a member of a league eligible for a creator complaint.'),
+          ],
+          const SizedBox(height: 22), _neonSectionTitle('COMPLAINTS INVOLVING YOUR ACCOUNT', accent: _cyan),
+          const SizedBox(height: 8),
+          if (_complaints.isEmpty) const Text('No complaints to display.'),
+          ..._complaints.map((c) {
+            final isReportedCreator = c['creator_id']?.toString() == me.id;
+            final status = c['status']?.toString() ?? 'submitted';
+            return Card(color: _panel, child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [Expanded(child: Text(isReportedCreator ? 'COMPLAINT AGAINST YOU' : 'YOUR COMPLAINT', style: const TextStyle(fontWeight: FontWeight.w900, color: _yellow))), Text(status.toUpperCase(), style: const TextStyle(color: _cyan, fontSize: 10, fontWeight: FontWeight.w900))]),
+              const SizedBox(height: 5), Text('${c['category'] ?? 'Complaint'} • ${c['details'] ?? ''}'),
+              if ((c['creator_response'] ?? '').toString().isNotEmpty) ...[const SizedBox(height: 8), const Text('Creator response', style: TextStyle(fontWeight: FontWeight.bold)), Text(c['creator_response'].toString())],
+              if (isReportedCreator && (status == 'submitted' || status == 'under_review')) Align(alignment: Alignment.centerRight, child: TextButton.icon(onPressed: () => _respond(c), icon: const Icon(Icons.reply), label: const Text('RESPOND'))),
+            ])));
+          }),
+        ])),
+    );
+  }
+}
+
+// ============================================================
 // CREATOR ACCOUNTABILITY — admin-only management interface
 // Uses creator_disciplinary_status, creator_sanctions,
 // creator_complaints, creator_messages and admin RPCs.
@@ -11954,7 +12121,7 @@ class _CreatorManagementPageState extends State<CreatorManagementPage> {
 
       final complaints = await _store.supabase
           .from('creator_complaints')
-          .select('id, creator_id, player_id, league_id, category, details, status, creator_response, admin_notes, created_at')
+          .select('id, creator_id, player_id, league_id, category, details, status, creator_response, admin_notes, evidence_paths, created_at')
           .order('created_at', ascending: false);
       _complaints = (complaints as List)
           .map((e) => Map<String, dynamic>.from(e))
@@ -12069,48 +12236,118 @@ class _CreatorManagementPageState extends State<CreatorManagementPage> {
     controller.dispose();
   }
 
+  Future<void> _openComplaintEvidence(String path) async {
+    try {
+      final url = await _store.supabase.storage
+          .from('creator-complaint-evidence').createSignedUrl(path, 300);
+      final uri = Uri.parse(url);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        throw Exception('Could not open evidence file.');
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Evidence unavailable: $e')));
+    }
+  }
+
   Future<void> _reviewComplaint(Map<String, dynamic> complaint) async {
-    String status = complaint['status']?.toString() ?? 'submitted';
-    final notes = TextEditingController(text: complaint['admin_notes']?.toString() ?? '');
+    String outcome = 'under_review';
+    String action = 'none';
+    final findings = TextEditingController(text: complaint['admin_notes']?.toString() ?? '');
+    final actionDetails = TextEditingController();
+    final paths = (complaint['evidence_paths'] is List)
+        ? List<String>.from((complaint['evidence_paths'] as List).map((e) => e.toString()))
+        : <String>[];
+    List<Map<String, dynamic>> audit = [];
+    try {
+      final rows = await _store.supabase.from('creator_complaint_audit')
+          .select('actor_role, event_type, details, created_at')
+          .eq('complaint_id', complaint['id']).order('created_at');
+      audit = (rows as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (_) { /* Audit panel remains optional if the read policy blocks it. */ }
+
     final save = await showDialog<bool>(context: context, builder: (d) => StatefulBuilder(
       builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Review player complaint'),
-        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        title: const Text('Global creator complaint review'),
+        content: SizedBox(width: 520, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Creator: ${_tag(complaint['creator_id'].toString())}'),
           Text('Player: ${_tag(complaint['player_id'].toString())}'),
+          if (complaint['league_id'] != null) Text('League ID: ${complaint['league_id']}'),
           const SizedBox(height: 8), Text('Category: ${complaint['category']}'),
           const SizedBox(height: 8), Text(complaint['details']?.toString() ?? ''),
+          if (paths.isNotEmpty) ...[
+            const SizedBox(height: 12), const Text('SUBMITTED EVIDENCE', style: TextStyle(fontWeight: FontWeight.w900)),
+            ...paths.map((path) => Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+              onPressed: () => _openComplaintEvidence(path), icon: const Icon(Icons.open_in_new), label: Text('Open ${path.split('/').last}')))),
+          ],
           if ((complaint['creator_response'] ?? '').toString().isNotEmpty) ...[
-            const SizedBox(height: 10), const Text('Creator response', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10), const Text('CREATOR RESPONSE', style: TextStyle(fontWeight: FontWeight.bold)),
             Text(complaint['creator_response'].toString()),
           ],
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(value: status,
+          if (audit.isNotEmpty) ...[
+            const SizedBox(height: 12), const Text('COMPLAINT AUDIT HISTORY', style: TextStyle(fontWeight: FontWeight.w900)),
+            ...audit.map((a) => Padding(padding: const EdgeInsets.only(top: 5), child: Text(
+              '${a['event_type']} • ${a['actor_role']} • ${a['created_at']}', style: const TextStyle(color: _muted, fontSize: 11)))),
+          ],
+          const SizedBox(height: 14),
+          DropdownButtonFormField<String>(value: outcome,
+            decoration: const InputDecoration(labelText: 'Admin action / final judgment'),
             items: const [
-              DropdownMenuItem(value: 'under_review', child: Text('Under review')),
-              DropdownMenuItem(value: 'resolved', child: Text('Resolved')),
-              DropdownMenuItem(value: 'dismissed', child: Text('Dismissed')),
-            ], onChanged: (v) { if (v != null) setDialogState(() => status = v); }),
+              DropdownMenuItem(value: 'under_review', child: Text('Move to under review (not final)')),
+              DropdownMenuItem(value: 'upheld', child: Text('Complaint upheld')),
+              DropdownMenuItem(value: 'partially_upheld', child: Text('Partially upheld')),
+              DropdownMenuItem(value: 'dismissed', child: Text('Dismiss complaint')),
+              DropdownMenuItem(value: 'insufficient_evidence', child: Text('Insufficient evidence')),
+            ], onChanged: (v) { if (v != null) setDialogState(() => outcome = v); }),
+          if (outcome != 'under_review') ...[
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(value: action,
+              decoration: const InputDecoration(labelText: 'Corrective action'),
+              items: const [
+                DropdownMenuItem(value: 'none', child: Text('No corrective action')),
+                DropdownMenuItem(value: 'reverse_creator_action', child: Text('Reverse creator action')),
+                DropdownMenuItem(value: 'restore_player_points', child: Text('Restore player points')),
+                DropdownMenuItem(value: 'restore_player_membership', child: Text('Restore player membership')),
+                DropdownMenuItem(value: 'temporary_creator_suspension', child: Text('Temporary creator suspension')),
+                DropdownMenuItem(value: 'permanent_creator_suspension', child: Text('Permanent creator suspension')),
+                DropdownMenuItem(value: 'other', child: Text('Other corrective action')),
+              ], onChanged: (v) { if (v != null) setDialogState(() => action = v); }),
+            const SizedBox(height: 10),
+            TextField(controller: actionDetails, minLines: 1, maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Corrective action details (optional)', border: OutlineInputBorder())),
+          ],
           const SizedBox(height: 10),
-          TextField(controller: notes, minLines: 2, maxLines: 4,
-            decoration: const InputDecoration(labelText: 'Private admin notes', border: OutlineInputBorder())),
-        ])),
+          TextField(controller: findings, minLines: 3, maxLines: 6,
+            decoration: InputDecoration(labelText: outcome == 'under_review' ? 'Private investigation notes' : 'Final findings (required)', border: const OutlineInputBorder())),
+        ]))),
         actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('CANCEL')),
-          FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('SAVE REVIEW'))],
+          FilledButton(onPressed: () => Navigator.pop(d, true), child: Text(outcome == 'under_review' ? 'SAVE REVIEW' : 'RECORD FINAL JUDGMENT'))],
       ),
     ));
     if (save == true) {
       try {
-        await _store.supabase.rpc('admin_review_creator_complaint', params: {
-          'p_complaint_id': complaint['id'], 'p_status': status,
-          'p_admin_notes': notes.text.trim(),
-        });
+        if (outcome == 'under_review') {
+          await _store.supabase.rpc('admin_review_creator_complaint', params: {
+            'p_complaint_id': complaint['id'], 'p_status': 'under_review',
+            'p_admin_notes': findings.text.trim(),
+          });
+        } else {
+          if (findings.text.trim().length < 10) throw Exception('Final findings must contain at least 10 characters.');
+          await _store.supabase.rpc('admin_finalize_creator_complaint', params: {
+            'p_complaint_id': complaint['id'],
+            'p_decision': outcome,
+            'p_findings': findings.text.trim(),
+            'p_corrective_action': action,
+            'p_corrective_action_details': actionDetails.text.trim().isEmpty ? null : actionDetails.text.trim(),
+          });
+        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(outcome == 'under_review' ? 'Complaint moved to investigation.' : 'Final judgment recorded.')));
         await _load();
       } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Review failed: $e')));
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Complaint review failed: $e')));
       }
     }
-    notes.dispose();
+    findings.dispose();
+    actionDetails.dispose();
   }
 
   @override
