@@ -6008,6 +6008,34 @@ class DashboardPage extends StatelessWidget {
             Text('$goalsFor GF  ·  $goalsAgainst GA', style: const TextStyle(color: _muted, fontSize: 10, fontWeight: FontWeight.w800)),
           ]),
         ),
+        const SizedBox(height: 16),
+        FutureBuilder<int>(
+          future: Store.instance.unreadMessageCount(),
+          builder: (context, snapshot) {
+            final unread = snapshot.data ?? 0;
+            return Container(
+              decoration: _neonBox(unread > 0 ? _yellow : _cyan, radius: 18),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessagesPage())).then((_) { if (context.mounted) (context as Element).markNeedsBuild(); }),
+                child: Padding(
+                  padding: const EdgeInsets.all(15),
+                  child: Row(children: [
+                    Container(width: 46, height: 46, decoration: BoxDecoration(color: (unread > 0 ? _yellow : _cyan).withOpacity(.14), borderRadius: BorderRadius.circular(14)), child: Icon(Icons.mark_chat_unread_outlined, color: unread > 0 ? _yellow : _cyan, size: 25)),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('MESSAGE CENTRE', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: .8)),
+                      const SizedBox(height: 3),
+                      Text(unread > 0 ? '$unread unread message${unread == 1 ? '' : 's'} waiting in your inbox' : 'Open your inbox and continue conversations', style: const TextStyle(color: _muted, fontSize: 11)),
+                    ])),
+                    if (unread > 0) Container(padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7), decoration: const BoxDecoration(color: Color(0xFFFF4D7D), shape: BoxShape.circle), child: Text(unread > 99 ? '99+' : '$unread', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900))),
+                    const Icon(Icons.chevron_right, color: _cyan),
+                  ]),
+                ),
+              ),
+            );
+          },
+        ),
         const SizedBox(height: 22),
         _neonSectionTitle('ENTER THE ACTION', accent: _yellow),
         const SizedBox(height: 12),
@@ -12055,6 +12083,10 @@ class AdminInvestigationCentrePage extends StatelessWidget {
         _neonAction(context, Icons.gavel, 'FORFEIT & MATCH DECISIONS', 'Review fixtures and record a forfeit or rescheduling decision', _yellow, () => open(const AdminForfeitMatchesPage())),
         const SizedBox(height: 9),
         _neonAction(context, Icons.history, 'ACTIVITY HISTORY', 'Inspect the audit trail associated with administrative and league actions', _blue, () => open(const ActivityHistoryPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.people_alt_outlined, 'ADMIN PLAYER DIRECTORY', 'Open player profiles, contact details, league memberships and disciplinary history', _cyan, () => open(const AdminPlayerDirectoryPage())),
+        const SizedBox(height: 9),
+        _neonAction(context, Icons.gavel_outlined, 'DISCIPLINARY ACTION REVIEW', 'Inspect recorded player sanctions and their supporting reasons', _yellow, () => open(const AdminDisciplinaryReviewPage())),
       ]),
     );
   }
@@ -12173,13 +12205,20 @@ class _ActivityHistoryPageState extends State<ActivityHistoryPage> {
       return value.entries.map((entry) {
         final key = entry.key.toString();
         final raw = entry.value;
+        // Internal row identifiers are retained in Supabase but are not useful
+        // to a human-readable audit viewer.
+        if (key == 'id' || key.endsWith('_id') && !const {
+          'league_id', 'original_league_id', 'player_id', 'affected_player_id',
+          'original_player_id', 'home_player_id', 'away_player_id', 'admin_id',
+          'recorded_admin_id', 'actor_id', 'match_id', 'related_match_id',
+        }.contains(key)) return '';
         String label = key.replaceAll('_', ' ');
         if (key == 'league_id' || key == 'original_league_id') return 'League: ${_leagueLabel(raw)}';
         if (key == 'player_id' || key == 'affected_player_id' || key == 'original_player_id' || key == 'home_player_id' || key == 'away_player_id') return '${label[0].toUpperCase()}${label.substring(1)}: ${_playerLabel(raw)}';
         if (key == 'admin_id' || key == 'recorded_admin_id' || key == 'actor_id') return 'Actor: ${_playerLabel(raw)}';
         if (key == 'match_id' || key == 'related_match_id') return 'Match: ${_matchLabel(raw)}';
         return '$label: ${_pretty(raw)}';
-      }).join(' • ');
+      }).where((part) => part.isNotEmpty).join(' • ');
     }
     final text = value.toString();
     if (_playerNames.containsKey(text)) return _playerLabel(text);
@@ -12228,6 +12267,127 @@ class _ActivityHistoryPageState extends State<ActivityHistoryPage> {
     if (value == null || value.toString().isEmpty) return const SizedBox.shrink();
     return Padding(padding: const EdgeInsets.only(bottom: 7), child: Align(alignment: Alignment.centerLeft, child: SelectableText('$label: ${value.toString()}', style: const TextStyle(fontSize: 11, color: _muted))));
   }
+}
+
+// ============================================================
+// BUILDER 3 — GLOBAL ADMIN PLAYER DIRECTORY
+// Read-only profile/contact/investigation view. All data is admin-gated.
+// ============================================================
+class AdminPlayerDirectoryPage extends StatefulWidget {
+  const AdminPlayerDirectoryPage({super.key});
+  @override State<AdminPlayerDirectoryPage> createState() => _AdminPlayerDirectoryPageState();
+}
+
+class _AdminPlayerDirectoryPageState extends State<AdminPlayerDirectoryPage> {
+  bool _loading = true;
+  String? _error;
+  String _query = '';
+  List<Map<String, dynamic>> _profiles = [];
+  final Map<String, List<String>> _memberships = {};
+  final Map<String, List<Map<String, dynamic>>> _discipline = {};
+  final Map<String, String> _leagueNames = {};
+
+  @override void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final store = Store.instance;
+      if (store.current?.admin != true) throw Exception('Global administrator access required.');
+      final rawProfiles = await store.supabase.from('profiles').select('*').order('gamer_tag');
+      _profiles = (rawProfiles as List).map((e) => Map<String, dynamic>.from(e as Map)).where((p) => p['admin'] != true && (p['role']?.toString().toLowerCase() != 'admin')).toList();
+      _memberships.clear(); _discipline.clear(); _leagueNames.clear();
+      final rawLeagues = await store.supabase.from('leagues').select('id,name');
+      for (final e in rawLeagues as List) { final m = Map<String,dynamic>.from(e); _leagueNames[m['id'].toString()] = (m['name'] ?? 'Unnamed league').toString(); }
+      final rawMembers = await store.supabase.from('league_members').select('player_id,league_id');
+      for (final e in rawMembers as List) {
+        final m = Map<String,dynamic>.from(e); final pid = m['player_id']?.toString() ?? ''; final lid = m['league_id']?.toString() ?? '';
+        if (pid.isNotEmpty && lid.isNotEmpty) (_memberships[pid] ??= []).add(_leagueNames[lid] ?? 'League');
+      }
+      final rawActions = await store.supabase.from('disciplinary_actions').select('id,league_id,player_id,admin_id,action_type,reason,points_delta,fine_amount,suspended,created_at').order('created_at', ascending: false).limit(2000);
+      for (final e in rawActions as List) { final m=Map<String,dynamic>.from(e); final pid=m['player_id']?.toString() ?? ''; if (pid.isNotEmpty) (_discipline[pid] ??= []).add(m); }
+    } catch (e) { _error = e.toString(); }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  String _value(Map<String,dynamic> p, List<String> keys) { for (final k in keys) { final v=p[k]?.toString().trim() ?? ''; if (v.isNotEmpty && v!='null') return v; } return 'Not provided'; }
+  String _date(dynamic v) { final d=DateTime.tryParse(v?.toString() ?? '')?.toLocal(); return d==null?'Not available':d.toString().substring(0,16); }
+
+  Future<void> _openProfile(Map<String,dynamic> p) async {
+    final id=p['id']?.toString() ?? ''; if (id.isEmpty) return;
+    final tag=_value(p,['gamer_tag','gamerTag']);
+    final full=_value(p,['full_name','name']);
+    final phone=_value(p,['phone_number','phoneNumber','phone']);
+    final whatsapp=_value(p,['whatsapp_number','whatsappNumber','whatsapp']);
+    final country=_value(p,['country']);
+    final code=_value(p,['country_code','countryCode']);
+    final email=_value(p,['email']);
+    final leagues=_memberships[id] ?? [];
+    final actions=_discipline[id] ?? [];
+    final raw=(whatsapp=='Not provided'?phone:whatsapp).replaceAll(RegExp(r'[^0-9+]'),'');
+    var wa=raw.startsWith('+')?raw.substring(1):raw;
+    if (wa.startsWith('0')) wa='234${wa.substring(1)}';
+    await showModalBottomSheet<void>(context:context,isScrollControlled:true,backgroundColor:_panel,shape:const RoundedRectangleBorder(borderRadius:BorderRadius.vertical(top:Radius.circular(22))),builder:(ctx)=>SafeArea(child:Padding(padding:const EdgeInsets.fromLTRB(18,18,18,24),child:ConstrainedBox(constraints:BoxConstraints(maxHeight:MediaQuery.of(ctx).size.height*.82),child:ListView(shrinkWrap:true,children:[
+      Row(children:[CircleAvatar(radius:28,backgroundImage: (p['avatar_url']??p['avatarUrl'])?.toString().isNotEmpty==true?NetworkImage((p['avatar_url']??p['avatarUrl']).toString()):null,child:(p['avatar_url']??p['avatarUrl'])?.toString().isNotEmpty==true?null:const Icon(Icons.person)),const SizedBox(width:12),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(tag,style:const TextStyle(fontWeight:FontWeight.w900,fontSize:19)),Text(full,style:const TextStyle(color:_muted))]))]),
+      const SizedBox(height:14),
+      _profileLine('Email',email),_profileLine('Phone',phone),_profileLine('Country code',code),_profileLine('WhatsApp',whatsapp),_profileLine('Country',country),_profileLine('Account role',_value(p,['role'])),_profileLine('Registered',_date(p['created_at'])),
+      const SizedBox(height:12),const Text('LEAGUE MEMBERSHIPS',style:TextStyle(color:_cyan,fontWeight:FontWeight.w900)),const SizedBox(height:5),Text(leagues.isEmpty?'No league memberships found.':leagues.join(' • '),style:const TextStyle(color:_muted)),
+      const SizedBox(height:12),Text('DISCIPLINARY HISTORY (${actions.length})',style:const TextStyle(color:_yellow,fontWeight:FontWeight.w900)),const SizedBox(height:5),if(actions.isEmpty)const Text('No disciplinary actions recorded.',style:TextStyle(color:_muted)),...actions.take(30).map((a)=>Container(margin:const EdgeInsets.only(bottom:7),padding:const EdgeInsets.all(10),decoration:_neonBox(_yellow,radius:12),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text((a['action_type']??'Action').toString().replaceAll('_',' ').toUpperCase(),style:const TextStyle(fontWeight:FontWeight.w900)),Text('League: ${_leagueNames[a['league_id']?.toString()]??'Unknown league'} • ${_date(a['created_at'])}',style:const TextStyle(color:_muted,fontSize:11)),Text('Reason: ${a['reason']??'Not recorded'}',style:const TextStyle(color:_muted)),if(a['points_delta']!=null && (a['points_delta'] as num).toInt()!=0)Text('Points: ${a['points_delta']}'),if(a['suspended']==true)const Text('Suspension recorded',style:TextStyle(color:Color(0xFFFF4D7D))) ]))),
+      const SizedBox(height:12),Wrap(spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>Navigator.pop(ctx),icon:const Icon(Icons.close),label:const Text('CLOSE')),FilledButton.icon(onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>ChatPage(player:Player(id:id,name:full=='Not provided'?'':full,gamerTag:tag,phoneNumber:phone=='Not provided'?'':phone,country:country=='Not provided'?'':country,countryCode:code=='Not provided'?'':code,whatsappNumber:whatsapp=='Not provided'?'':whatsapp,avatarUrl:(p['avatar_url']??'').toString()))),icon:const Icon(Icons.chat),label:const Text('IN-APP CHAT')),FilledButton.icon(onPressed:wa.isEmpty?null:() async { await launchUrl(Uri.parse('https://wa.me/$wa'),mode:LaunchMode.externalApplication); },icon:const Icon(Icons.phone),label:const Text('WHATSAPP'))])
+    ])))));
+  }
+
+  Widget _profileLine(String label,String value)=>Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[SizedBox(width:112,child:Text(label,style:const TextStyle(color:_muted,fontWeight:FontWeight.w700))),Expanded(child:SelectableText(value))]));
+
+  @override Widget build(BuildContext context) {
+    final q=_query.toLowerCase(); final rows=_profiles.where((p)=>q.isEmpty || ['gamer_tag','full_name','email','phone_number','whatsapp_number'].any((k)=>(p[k]??'').toString().toLowerCase().contains(q))).toList();
+    return Scaffold(appBar:AppBar(title:const Text('ADMIN PLAYER DIRECTORY'),actions:[IconButton(onPressed:_loading?null:_load,icon:const Icon(Icons.refresh))]),body:_loading?const Center(child:CircularProgressIndicator()):_error!=null?Center(child:Padding(padding:const EdgeInsets.all(20),child:Text('Could not load player directory:\n$_error',textAlign:TextAlign.center))):RefreshIndicator(onRefresh:_load,child:ListView(padding:const EdgeInsets.all(14),children:[TextField(onChanged:(v)=>setState(()=>_query=v),decoration:const InputDecoration(prefixIcon:Icon(Icons.search),labelText:'Search gamer tag, name, email or phone')),const SizedBox(height:10),Text('${rows.length} players',style:const TextStyle(color:_muted)),...rows.map((p){final id=p['id']?.toString()??'';final tag=_value(p,['gamer_tag','gamerTag']);return Card(color:_panel,child:ListTile(leading:const CircleAvatar(child:Icon(Icons.person)),title:Text(tag,style:const TextStyle(fontWeight:FontWeight.w900)),subtitle:Text('${_value(p,['full_name','name'])} • ${_memberships[id]?.length??0} leagues'),trailing:const Icon(Icons.chevron_right,color:_yellow),onTap:()=>_openProfile(p)));})])));
+  }
+}
+
+// ============================================================
+// BUILDER 3 — DISCIPLINARY ACTION REVIEW
+// Reversals are performed only by a protected transactional Supabase RPC.
+// ============================================================
+class AdminDisciplinaryReviewPage extends StatefulWidget {
+  const AdminDisciplinaryReviewPage({super.key});
+  @override State<AdminDisciplinaryReviewPage> createState()=>_AdminDisciplinaryReviewPageState();
+}
+class _AdminDisciplinaryReviewPageState extends State<AdminDisciplinaryReviewPage> {
+  bool _loading=true; bool _reversalReady=true; String? _error; List<Map<String,dynamic>> _rows=[]; final Map<String,String> _players={}; final Map<String,String> _leagues={}; final Set<String> _reversed={};
+  @override void initState(){super.initState();_load();}
+  Future<void> _load() async {
+    if(!mounted)return; setState(()=>_loading=true);
+    try {
+      final st=Store.instance; if(st.current?.admin!=true)throw Exception('Global administrator access required.');
+      final data=await st.supabase.from('disciplinary_actions').select('id,league_id,player_id,admin_id,action_type,reason,points_delta,fine_amount,suspended,created_at').order('created_at',ascending:false).limit(500);
+      _rows=(data as List).map((e)=>Map<String,dynamic>.from(e)).toList();
+      _players.clear();_leagues.clear();_reversed.clear();
+      final ps=await st.supabase.from('profiles').select('id,gamer_tag,full_name');for(final e in ps as List){final m=Map<String,dynamic>.from(e);_players[m['id'].toString()]=(m['gamer_tag']??m['full_name']??'Unknown player').toString();}
+      final ls=await st.supabase.from('leagues').select('id,name');for(final e in ls as List){final m=Map<String,dynamic>.from(e);_leagues[m['id'].toString()]=(m['name']??'Unknown league').toString();}
+      try { final rev=await st.supabase.from('disciplinary_action_reversals').select('original_action_id');for(final e in rev as List){_reversed.add(e['original_action_id'].toString());} _reversalReady=true; } catch (_) { _reversalReady=false; }
+    } catch(e){_error=e.toString();}
+    if(mounted)setState(()=>_loading=false);
+  }
+  String _date(dynamic v)=>DateTime.tryParse(v?.toString()??'')?.toLocal().toString().substring(0,16)??'Time unavailable';
+  Future<void> _reverse(Map<String,dynamic> row) async {
+    final id=row['id']?.toString()??''; if(id.isEmpty||_reversed.contains(id))return;
+    final reason=TextEditingController();
+    final confirmed=await showDialog<bool>(context:context,builder:(ctx)=>AlertDialog(title:const Text('Reverse disciplinary action?'),content:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[const Text('This will recalculate the player’s league points, fine total and suspension state from the remaining active disciplinary records. The original record will remain in the audit history.'),const SizedBox(height:12),TextField(controller:reason,minLines:2,maxLines:4,decoration:const InputDecoration(labelText:'Reason for reversal',hintText:'Explain why this action is being overturned.'))]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(ctx,reason.text.trim().isNotEmpty),child:const Text('CONFIRM REVERSAL'))]));
+    if(confirmed!=true){reason.dispose();return;}
+    try {
+      await Store.instance.supabase.rpc('admin_reverse_disciplinary_action',params:{'p_action_id':id,'p_reason':reason.text.trim()});
+      if(!mounted)return; ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Disciplinary action reversed. Player records recalculated and audit entry created.'))); await _load();
+    } on PostgrestException catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Reversal failed: ${e.message}')));}
+      catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Reversal failed: $e')));}
+    finally{reason.dispose();}
+  }
+  @override Widget build(BuildContext context){
+    if(Store.instance.current?.admin!=true)return const Scaffold(body:Center(child:Text('Admin access required.')));
+    return Scaffold(appBar:AppBar(title:const Text('DISCIPLINARY ACTION REVIEW'),actions:[IconButton(onPressed:_loading?null:_load,icon:const Icon(Icons.refresh))]),body:_loading?const Center(child:CircularProgressIndicator()):_error!=null?Center(child:Padding(padding:const EdgeInsets.all(18),child:Text('Could not load disciplinary actions:\n$_error',textAlign:TextAlign.center))):RefreshIndicator(onRefresh:_load,child:ListView(padding:const EdgeInsets.all(14),children:[Container(padding:const EdgeInsets.all(13),decoration:_neonBox(_yellow,radius:15),child: Text(_reversalReady ? 'Review recorded sanctions and reverse an incorrect action with a required reason. Reversals preserve the original record and create a separate audit entry.' : 'Review recorded sanctions. To enable secure reversals, first run the Builder 3 SQL migration in Supabase SQL Editor.',style:const TextStyle(color:_muted))),const SizedBox(height:10),if(_rows.isEmpty)const Text('No disciplinary actions recorded.'),..._rows.map((r){final id=r['id']?.toString()??'';final reversed=_reversed.contains(id);return Card(color:_panel,child:ExpansionTile(leading:Icon(reversed?Icons.undo:Icons.gavel,color:reversed?_muted:_yellow),title:Text((r['action_type']??'Action').toString().replaceAll('_',' ').toUpperCase()),subtitle:Text('${_players[r['player_id']?.toString()]??'Unknown player'} • ${_leagues[r['league_id']?.toString()]??'Unknown league'}\n${_date(r['created_at'])} • ${reversed?'REVERSED':'ACTIVE'}'),childrenPadding:const EdgeInsets.fromLTRB(16,0,16,14),children:[_detail('Reason',r['reason']),_detail('Points delta',r['points_delta']),_detail('Fine amount',r['fine_amount']),_detail('Suspended state recorded',r['suspended']),_detail('Recorded by',_players[r['admin_id']?.toString()]??'Unknown administrator'),const SizedBox(height:8),if(reversed)const Text('This action has already been reversed. The original record is retained.',style:TextStyle(color:_muted,fontWeight:FontWeight.w700))else if(!_reversalReady)const Text('Secure reversal is unavailable until the Builder 3 SQL migration is installed.',style:TextStyle(color:_muted,fontWeight:FontWeight.w700))else SizedBox(width:double.infinity,child:FilledButton.icon(onPressed:()=>_reverse(r),icon:const Icon(Icons.undo),label:const Text('OVERTURN / REVERSE ACTION')))]));})])));
+  }
+  Widget _detail(String label,dynamic value)=>Padding(padding:const EdgeInsets.only(bottom:6),child:Align(alignment:Alignment.centerLeft,child:Text('$label: ${value??'Not recorded'}',style:const TextStyle(color:_muted,fontSize:12))));
 }
 
 // ============================================================
